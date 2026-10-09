@@ -69,6 +69,9 @@ def _read_state() -> dict[str, Any]:
 
 
 def _write_state(state: dict[str, Any]) -> None:
+    # The proxy records its own "proxy" entry in this file; don't clobber it.
+    if "proxy" not in state and isinstance(_read_state().get("proxy"), dict):
+        state = {**state, "proxy": _read_state()["proxy"]}
     save_private_object(state_path(), state)
 
 

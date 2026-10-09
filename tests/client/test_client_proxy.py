@@ -583,7 +583,7 @@ def test_start_proxy_serves_records_state_and_stops(home, monkeypatch):
             "url": f"http://127.0.0.1:{port}",
             "error": None,
         }
-        assert runtime.read_proxy_state() == handle.state
+        assert runtime.read_proxy_state() == {**handle.state, "pid": os.getpid()}
         data = httpx.get(f"http://127.0.0.1:{port}/v1/models").json()
         assert data["data"][0]["id"] == "m"
     finally:

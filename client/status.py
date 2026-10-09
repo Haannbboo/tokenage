@@ -28,7 +28,13 @@ def collect() -> dict[str, Any]:
     }
     if credentials.get("device_name"):
         account["device_name"] = credentials["device_name"]
-    return {**health_payload(), "account": account}
+    return {**health_payload(), "account": account, "proxy": _proxy()}
+
+
+def _proxy() -> dict[str, Any] | None:
+    from client.proxy.runtime import live_proxy_state
+
+    return live_proxy_state()
 
 
 def _agents(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -115,6 +121,11 @@ def render(data: dict[str, Any]) -> str:
                 else "needs configuration; run setup to check the file"
             )
             row("agents", f"{agent['name']} {detail}")
+
+    from client.proxy.runtime import proxy_line
+
+    if line := proxy_line(data.get("proxy")):
+        row("proxy", line)
 
     hint = _fix_hint(data)
     if hint:

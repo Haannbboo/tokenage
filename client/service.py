@@ -38,6 +38,7 @@ from protocol.device_status import DeviceStatusReport
 
 CHECK_INTERVAL_SECONDS = 60.0
 REPORT_TIMEOUT_SECONDS = 10.0
+PROXY_WAIT_SECONDS = 10.0
 
 UNIT_NAME = "tokenage-client.service"
 LAUNCHD_LABEL = "ai.tokenage.client"
@@ -232,7 +233,22 @@ def start(*, restart: bool = False) -> int:
             )
     print(f"  started   client service ({manager})")
     print(f"  log       {log_path()}")
+    _print_proxy()
     return 0
+
+
+def _print_proxy() -> None:
+    """Show the proxy's outcome once the fresh service has recorded it."""
+    from client.proxy.runtime import live_proxy_state, proxy_line
+
+    deadline = time.monotonic() + PROXY_WAIT_SECONDS
+    state = live_proxy_state()
+    while state is None and time.monotonic() < deadline:
+        time.sleep(0.2)
+        state = live_proxy_state()
+    line = proxy_line(state)
+    if line:
+        print(f"  proxy     {line}")
 
 
 def stop() -> int:
@@ -268,10 +284,13 @@ def _manager_active(manager: str | None) -> bool:
 
 
 def service_status() -> dict[str, Any]:
+    from client.proxy.runtime import live_proxy_state
+
     manager = _manager()
     state = _read_state()
+    running = _manager_active(manager)
     return {
-        "running": _manager_active(manager),
+        "running": running,
         "manager": manager,
         "log": str(log_path()),
         "client_version": client_version(),
@@ -279,6 +298,9 @@ def service_status() -> dict[str, Any]:
         "last_check_at": state.get("last_check_at"),
         "last_report_at": state.get("last_report_at"),
         "last_report_status": state.get("last_report_status"),
+        # The manager says the service lives; the recorded pid says the proxy
+        # record is its own, not a dead predecessor's.
+        "proxy": live_proxy_state() if running else None,
     }
 
 
@@ -395,6 +417,11 @@ def run_foreground() -> int:
     }
     print(f"tokenage client service running (pid {os.getpid()})")
     logger.info("client service started (pid %s)", os.getpid())
+    # Never raises: a proxy that cannot bind is recorded as failed and the
+    # service keeps reporting.
+    from client.proxy.runtime import start_proxy
+
+    proxy = start_proxy()
     try:
         while not stop:
             try:
@@ -407,6 +434,7 @@ def run_foreground() -> int:
             while not stop and time.monotonic() < deadline:
                 time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
     finally:
+        proxy.stop()
         logger.info("client service stopped (pid %s)", os.getpid())
     return 0
 
@@ -429,6 +457,10 @@ def run_status(*, as_json: bool) -> int:
             print(f"  last report {stamp} ({data.get('last_report_status')})")
         elif data.get("last_report_status"):
             print(f"  last report {data['last_report_status']}")
+        from client.proxy.runtime import proxy_line
+
+        if line := proxy_line(data.get("proxy")):
+            print(f"  proxy       {line}")
         print(f"  log         {data['log']}")
     elif data["manager"] is None:
         print("tokenage client service is not managed here; run `tokenage client run`")

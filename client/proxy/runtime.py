@@ -10,6 +10,7 @@ the ``proxy`` key of ``run/client.json``::
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import threading
 import time
@@ -73,7 +74,7 @@ def record_proxy_state(state: dict[str, Any]) -> None:
     from client.service import _read_state, state_path
 
     current = _read_state()
-    current["proxy"] = state
+    current["proxy"] = {**state, "pid": os.getpid()}
     save_private_object(state_path(), current)
 
 
@@ -82,6 +83,32 @@ def read_proxy_state() -> dict[str, Any] | None:
 
     state = _read_state().get("proxy")
     return state if isinstance(state, dict) else None
+
+
+def live_proxy_state() -> dict[str, Any] | None:
+    """The recorded proxy state, or None when the process that wrote it is gone
+    (a crashed or stopped service must not read as a running proxy)."""
+    state = read_proxy_state()
+    pid = state.get("pid") if state else None
+    if not isinstance(pid, int):
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except OSError:  # alive, owned by someone else
+        pass
+    return state
+
+
+def proxy_line(state: dict[str, Any] | None) -> str | None:
+    """One line for status output; None when there is nothing worth showing
+    (no proxy configured, or no live service)."""
+    if not state or state.get("state") == "disabled":
+        return None
+    if state.get("state") == "running":
+        return str(state.get("url"))
+    return f"failed: {state.get('error')}"
 
 
 def _state(kind: str, port: int | None = None, error: str | None = None):

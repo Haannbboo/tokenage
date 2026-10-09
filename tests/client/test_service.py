@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import socket
 import subprocess
 import sys
 import time
@@ -396,6 +398,7 @@ def managed(device_home: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(service, "_launcher", lambda: launcher)
     monkeypatch.setenv("TOKENAGE_ROOT", "/dev/checkout")
     monkeypatch.setenv("PATH", "/home/u/.local/bin:/usr/bin")
+    monkeypatch.setattr(service, "PROXY_WAIT_SECONDS", 0)
     install.launcher = launcher
     return install
 
@@ -550,7 +553,9 @@ def test_run_foreground_daemon_writes_state_and_stops_on_sigterm(
     )
     try:
         deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and not service.state_path().exists():
+        while time.monotonic() < deadline and not service._read_state().get(
+            "last_check_at"
+        ):
             time.sleep(0.05)
         assert service._read_state()["last_check_at"] is not None
         process.terminate()
@@ -664,3 +669,135 @@ def test_kilo_outside_path_is_detected_and_wired(device_home: Path) -> None:
 
     assert setup.installed_agents() == ["kilo"]
     assert service.health_payload()["detected"]["kilo"] == {"found": True}
+
+
+# ------------------------------------------------------------------- local proxy
+
+
+def _record(state: dict, pid: int | None = None) -> None:
+    from client.proxy import runtime
+
+    runtime.record_proxy_state(state)
+    if pid is not None:  # pretend another process wrote it
+        data = service._read_state()
+        data["proxy"]["pid"] = pid
+        _write_json(service.state_path(), data)
+
+
+RUNNING = {"state": "running", "port": 4000, "url": "http://127.0.0.1:4000"}
+FAILED = {"state": "failed", "error": "port 4000 (from client.yaml) is in use"}
+
+
+def test_foreground_starts_proxy_and_stops_it_on_shutdown(
+    device_home: Path, monkeypatch
+) -> None:
+    from client.proxy import runtime
+
+    events: list[str] = []
+
+    class Handle:
+        def stop(self) -> None:
+            events.append("stop")
+
+    monkeypatch.setattr(
+        runtime, "start_proxy", lambda: events.append("start") or Handle()
+    )
+    handlers: dict = {}
+    monkeypatch.setattr(service.signal, "signal", lambda n, h: handlers.update({n: h}))
+
+    def check(state):
+        events.append("check")
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+
+    monkeypatch.setattr(service, "_check_once", check)
+    monkeypatch.setattr(service.logging, "basicConfig", lambda **kw: None)
+    assert service.run_foreground() == 0
+    assert events[0] == "start" and "check" in events and events[-1] == "stop"
+
+
+def test_service_keeps_running_when_proxy_cannot_bind(device_home: Path) -> None:
+    blocker = socket.socket()
+    blocker.bind(("127.0.0.1", 0))
+    port = blocker.getsockname()[1]
+    _write(
+        device_home / ".tokenage" / "client.yaml",
+        f"proxy:\n  port: {port}\n  providers: {{}}\n",
+    )
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO_ROOT),
+        "TOKENAGE_HOME": str(device_home / ".tokenage"),
+        "HOME": str(device_home),
+        "TOKENAGE_CLIENT_COMMIT": "a" * 40,
+    }
+    process = subprocess.Popen(
+        [sys.executable, "-P", "-m", "client", "client", "run"],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not service._read_state().get(
+            "last_check_at"
+        ):
+            time.sleep(0.05)
+        state = service._read_state()
+        assert state["last_check_at"] is not None  # still reporting
+        assert state["proxy"]["state"] == "failed"
+        assert state["proxy"]["pid"] == process.pid
+        assert process.poll() is None
+        process.terminate()
+        assert process.wait(timeout=10) == 0
+    finally:
+        blocker.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
+def test_client_status_shows_proxy_only_while_the_service_is_alive(
+    managed, capsys
+) -> None:
+    _record(RUNNING)
+    managed("systemd")
+    assert service.run_status(as_json=False) == 0
+    assert "  proxy       http://127.0.0.1:4000\n" in capsys.readouterr().out
+    assert service.service_status()["proxy"]["url"] == RUNNING["url"]
+
+    managed("systemd", fail=("is-active",))  # service stopped: record is stale
+    assert service.service_status()["proxy"] is None
+
+    _record(RUNNING, pid=2**22 + 12345)  # active unit, but dead writer
+    managed("systemd")
+    assert service.service_status()["proxy"] is None
+
+
+def test_client_status_shows_failure_and_hides_disabled(managed, capsys) -> None:
+    managed("systemd")
+    _record(FAILED)
+    service.run_status(as_json=False)
+    assert (
+        "  proxy       failed: port 4000 (from client.yaml) is in use"
+        in capsys.readouterr().out
+    )
+    _record({"state": "disabled"})
+    service.run_status(as_json=False)
+    assert "proxy" not in capsys.readouterr().out
+
+
+def test_client_start_prints_proxy_outcome(managed, capsys) -> None:
+    managed("systemd")
+    _record(RUNNING)
+    assert service.start() == 0
+    assert "  proxy     http://127.0.0.1:4000" in capsys.readouterr().out
+    _record(FAILED)
+    service.restart()
+    assert "  proxy     failed: port 4000" in capsys.readouterr().out
+    _record({"state": "disabled"})
+    service.start()
+    assert "  proxy " not in capsys.readouterr().out
+    _record(RUNNING, pid=2**22 + 12345)  # old service's record: not shown
+    service.start()
+    assert "  proxy " not in capsys.readouterr().out

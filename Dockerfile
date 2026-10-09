@@ -28,7 +28,7 @@ RUN chmod +x /entrypoint.sh
 # Copy supervisord config
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
 
-EXPOSE 4000 4001 4002
+EXPOSE 4001 4002
 
 ENV TOKENAGE_CONFIG=/root/.tokenage/config.yaml
 

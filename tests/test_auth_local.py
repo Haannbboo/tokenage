@@ -1,4 +1,4 @@
-"""The local sign-in provider: loopback owner, login links, OTLP, proxy, migration."""
+"""The local sign-in provider: loopback owner, login links, OTLP, migration."""
 
 from __future__ import annotations
 
@@ -287,17 +287,6 @@ def test_otlp_tokenless_loopback_is_401_under_google(
     response = TestClient(otlp_module.app).post("/v1/logs", json=_otlp_body())
     assert response.status_code == 401
     assert captured == []
-
-
-# ------------------------------------------------------------------- proxy
-
-
-def test_proxy_forward_needs_a_token_under_google(proxy_module, monkeypatch):
-    _set_provider(monkeypatch, "google")
-    response = TestClient(proxy_module.app).post(
-        "/v1/chat/completions", json={"model": "test-model", "messages": []}
-    )
-    assert response.status_code == 401
 
 
 # --------------------------------------------------------------- migration

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse, urlsplit
 
-import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -29,7 +28,6 @@ from src.config.app import (
     set_evaluation_evaluator,
 )
 from src.config.server_config import (
-    load_server_config,
     resolve_otlp_host_port,
     resolve_server_urls,
 )
@@ -956,22 +954,6 @@ async def get_session_tool_calls_summary(request: Request, session_id: str):
     return summary
 
 
-async def _notify_proxy_refresh() -> None:
-    """Ask the proxy process to reload its runtime config.
-
-    Fire-and-forget: failures are logged but never surfaced to the caller.
-    """
-    try:
-        server = load_server_config()
-        proxy_url = f"http://{server.host}:{server.port}/config/refresh"
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(proxy_url)
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "Failed to notify proxy to refresh config", exc_info=True
-        )
-
-
 @app.patch("/config", dependencies=[Depends(_require_local_owner)])
 async def patch_config(update: ConfigPatchUpdate):
     from ruamel.yaml import YAML
@@ -1002,7 +984,6 @@ async def patch_config(update: ConfigPatchUpdate):
             yaml_parser.dump(config, f)
 
         await asyncio.to_thread(refresh_runtime_config, path)
-        asyncio.create_task(_notify_proxy_refresh())
         return {"status": "success"}
     except RuamelYAMLError as e:
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(e)}")
@@ -1375,5 +1356,5 @@ _assert_api_routes_classified()
 if __name__ == "__main__":
     import uvicorn
 
-    port = CONFIG["server"].get("api_port", CONFIG["server"]["port"] + 1)
+    port = CONFIG["server"]["api_port"]
     uvicorn.run(app, host=CONFIG["server"]["host"], port=port)

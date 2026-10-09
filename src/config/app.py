@@ -4,10 +4,9 @@ from typing import Any
 
 import yaml
 
-from ..utils import normalize_provider_name
 from ..utils import replace_contents as _replace_contents
 from . import merge as merge_helpers
-from .models import ProviderConfig, expand_path, get_tracker_home
+from .models import expand_path, get_tracker_home
 
 CONFIG_ENV_VAR = "TOKENAGE_CONFIG"
 
@@ -34,14 +33,9 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     server = config.setdefault("server", {})
     db = config.setdefault("db", {})
     config.setdefault("models", {})
-    config["providers"] = {
-        normalize_provider_name(name): provider
-        for name, provider in config.get("providers", {}).items()
-    }
 
     server.setdefault("host", "127.0.0.1")
-    server.setdefault("port", 4000)
-    server.setdefault("api_port", server["port"] + 1)
+    server.setdefault("api_port", 4001)
     server.setdefault("otlp_port", server["api_port"] + 1)
 
     auth = config.setdefault("auth", {})
@@ -49,8 +43,7 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     if auth["provider"] not in ("local", "google"):
         raise ValueError("auth.provider must be 'local' or 'google'")
     auth.setdefault("allowlist", [])
-    # Google OAuth credentials: config.yaml by default (0600, alongside the
-    # provider api_keys), with TOKENAGE_AUTH__GOOGLE_CLIENT_* overriding when
+    # Google OAuth credentials: config.yaml by default (0600), with TOKENAGE_AUTH__GOOGLE_CLIENT_* overriding when
     # set — so a deployment can still inject them without touching the file.
     for key in ("google_client_id", "google_client_secret"):
         env_value = os.environ.get(f"TOKENAGE_AUTH__{key.upper()}")
@@ -88,15 +81,6 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     return config
 
 
-def _iter_provider_models(provider: dict[str, Any]) -> list[str]:
-    models = provider.get("models", {})
-    if isinstance(models, dict):
-        return list(models)
-    if isinstance(models, list):
-        return models
-    return []
-
-
 def _apply_patch(config: dict[str, Any], path: list[str], op: str, value: Any) -> None:
     if not path:
         raise ValueError("Patch path cannot be empty")
@@ -124,33 +108,6 @@ def _apply_patch(config: dict[str, Any], path: list[str], op: str, value: Any) -
     raise ValueError(f"Unsupported patch operation: {op}")
 
 
-def build_maps(
-    config: dict[str, Any],
-) -> tuple[dict[str, ProviderConfig], dict[str, ProviderConfig]]:
-    provider_map: dict[str, ProviderConfig] = {}
-    model_map: dict[str, ProviderConfig] = {}
-
-    for provider_name, provider in config["providers"].items():
-        # `enabled: false` keeps the provider stanza (base_url/api_key/pricing)
-        # but takes it out of routing entirely: no prefixed route, no model
-        # list entry, nothing forwarded upstream. Costs stay intact because
-        # pricing maps read the config, not these maps.
-        if not provider.get("enabled", True):
-            continue
-        provider_name = normalize_provider_name(provider_name)
-        provider_config = ProviderConfig(
-            name=provider_name,
-            base_url=provider["base_url"],
-            api_key=provider.get("api_key") or None,
-            auth_scheme=provider.get("auth_scheme", "bearer"),
-        )
-        provider_map[provider_name] = provider_config
-        for model in _iter_provider_models(provider):
-            model_map[model] = provider_config
-
-    return provider_map, model_map
-
-
 _config_lock = threading.Lock()
 
 
@@ -164,23 +121,17 @@ def refresh_runtime_config(path: str | None = None) -> dict[str, Any]:
     auto_fetch = updated_config.get("pricing", {}).get("auto_fetch", True)
     fetched = fetch_sources(updated_config) if auto_fetch else []
 
-    provider_map, model_map = build_maps(updated_config)
-
-    # Swap the pricing maps and PROVIDER_MAP under one lock so a record never
+    # Swap the pricing maps and CONFIG under one lock so a record never
     # observes them half-applied.
     with MAPS_LOCK:
         refresh_pricing_maps(updated_config, fetched)
         with _config_lock:
             _replace_contents(CONFIG, updated_config)
-            _replace_contents(PROVIDER_MAP, provider_map)
-            _replace_contents(MODEL_MAP, model_map)
 
     return CONFIG
 
 
 CONFIG: dict[str, Any] = {}
-PROVIDER_MAP: dict[str, ProviderConfig] = {}
-MODEL_MAP: dict[str, ProviderConfig] = {}
 refresh_runtime_config(CONFIG_PATH)
 
 

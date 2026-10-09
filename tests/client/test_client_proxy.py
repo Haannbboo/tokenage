@@ -22,7 +22,12 @@ from client.proxy.app import (
     resolve_provider,
 )
 from client.proxy.config import ProviderConfig, parse_proxy_config
-from client.proxy.usage import compute_prompt_length, parse_client_source
+from client.proxy.usage import (
+    compute_prompt_length,
+    extract_usage,
+    find_stream_usage,
+    parse_client_source,
+)
 
 RAW = {
     "port": 4000,
@@ -619,3 +624,114 @@ def test_proxy_state_keeps_service_keys_and_survives_service_writes(home):
     state = service._read_state()
     assert state["last_check_at"] == 2 and state["proxy"]["port"] == 4000
     assert oct(os.stat(service.state_path()).st_mode & 0o777) == "0o600"
+
+
+def test_extract_usage_supports_responses_format_and_details():
+    usage = extract_usage(
+        {
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "input_tokens_details": {"cached_tokens": 3},
+            "output_tokens_details": {"reasoning_tokens": 5},
+        }
+    )
+
+    assert usage == {
+        "prompt_tokens": 11,
+        "completion_tokens": 7,
+        "reasoning_tokens": 5,
+        "cached_tokens": 3,
+        "cache_creation_tokens": 0,
+        "total_tokens": 18,
+    }
+
+
+def test_extract_usage_supports_chat_completion_format_and_explicit_total(
+    utils_module,
+):
+    usage = extract_usage(
+        {
+            "prompt_tokens": 12,
+            "completion_tokens": 8,
+            "total_tokens": 25,
+            "prompt_tokens_details": {"cached_tokens": 4},
+            "completion_tokens_details": {"reasoning_tokens": 6},
+        }
+    )
+
+    assert usage == {
+        "prompt_tokens": 12,
+        "completion_tokens": 8,
+        "reasoning_tokens": 6,
+        "cached_tokens": 4,
+        "cache_creation_tokens": 0,
+        "total_tokens": 25,
+    }
+
+
+def test_extract_usage_supports_anthropic_cache_creation_tokens():
+    usage = extract_usage(
+        {
+            "input_tokens": 25,
+            "output_tokens": 15,
+            "cache_creation_input_tokens": 8,
+            "cache_read_input_tokens": 3,
+        }
+    )
+
+    # Anthropic's input_tokens excludes cache_read/cache_creation tokens (they're
+    # disjoint buckets), so cache_read folds into prompt_tokens: 25 + 3 = 28.
+    assert usage == {
+        "prompt_tokens": 28,
+        "completion_tokens": 15,
+        "reasoning_tokens": 0,
+        "cached_tokens": 3,
+        "cache_creation_tokens": 8,
+        "total_tokens": 51,
+    }
+
+
+def test_extract_usage_defaults_missing_values_to_zero():
+    assert extract_usage({}) == {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "reasoning_tokens": 0,
+        "cached_tokens": 0,
+        "cache_creation_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def test_find_stream_usage_merges_across_anthropic_events():
+    """message_start carries input/cache tokens; message_delta carries the
+    final output token count. Callers must merge the raw dicts, not treat
+    each event's usage as a complete replacement."""
+    raw_usage: dict = {}
+
+    start = find_stream_usage(
+        {
+            "type": "message_start",
+            "message": {
+                "usage": {
+                    "input_tokens": 25,
+                    "cache_creation_input_tokens": 8,
+                    "cache_read_input_tokens": 3,
+                    "output_tokens": 1,
+                }
+            },
+        }
+    )
+    raw_usage.update(start)
+
+    delta = find_stream_usage({"type": "message_delta", "usage": {"output_tokens": 15}})
+    raw_usage.update(delta)
+
+    merged = extract_usage(raw_usage)
+    assert merged == {
+        "prompt_tokens": 28,
+        "completion_tokens": 15,
+        "reasoning_tokens": 0,
+        "cached_tokens": 3,
+        "cache_creation_tokens": 8,
+        "total_tokens": 51,
+    }

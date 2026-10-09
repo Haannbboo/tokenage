@@ -36,9 +36,9 @@ from src.config.runtime_ports import (
 from src.config.server_config import resolve_server_urls
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICES = ("proxy", "api", "otlp")
+SERVICES = ("api", "otlp")
 PROGRAMS = tuple(f"tokenage-{s}" for s in SERVICES)
-PORT_KEYS = ("port", "api_port", "otlp_port")
+PORT_KEYS = ("api_port", "otlp_port")
 
 
 # ── Output ──────────────────────────────────────────────────────────
@@ -180,9 +180,9 @@ def _port_issues(config: dict[str, Any], strict: bool) -> list[str]:
 def _assign_free_ports(path: Path, config: dict[str, Any]) -> None:
     server = config.setdefault("server", {})
     host = str(server.get("host", "127.0.0.1"))
-    free = [p for p in range(4000, 4200) if _bindable(host, p)][: len(PORT_KEYS)]
+    free = [p for p in range(4001, 4200) if _bindable(host, p)][: len(PORT_KEYS)]
     if len(free) < len(PORT_KEYS):
-        raise die(f"Could not find {len(PORT_KEYS)} free ports on {host} (4000-4199)")
+        raise die(f"Could not find {len(PORT_KEYS)} free ports on {host} (4001-4199)")
     _set_server_keys(path, dict(zip(PORT_KEYS, free, strict=True)))
 
 
@@ -548,7 +548,6 @@ def bootstrap(args: list[str] | None = None) -> int:
     )
     for service, label, good, key in (
         ("API", "API reachable", "API running", "api_url"),
-        ("Proxy", "Proxy listening", "Proxy listening", "proxy_url"),
         ("OTLP", "OTLP listening", "OTLP listening", "otlp_url"),
     ):
         up = _wait_for_port(host, port_of[service])

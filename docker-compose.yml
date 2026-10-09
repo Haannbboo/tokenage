@@ -4,7 +4,6 @@ services:
     container_name: tokenage
     restart: unless-stopped
     ports:
-      - "4000:4000"   # proxy
       - "4001:4001"   # api + frontend
       - "4002:4002"   # otlp
     volumes:

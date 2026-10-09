@@ -716,8 +716,8 @@ def _finalize_usage_summary(
     if ttft_values:
         summary["avg_ttft_ms"] = sum(ttft_values) / len(ttft_values)
 
-    # prompt_tokens already includes cached_tokens as a subset (see extract_usage
-    # in src/utils.py); cache_creation_tokens is a disjoint bucket on top of that,
+    # prompt_tokens already includes cached_tokens as a subset (see the client
+    # proxy's extract_usage); cache_creation_tokens is a disjoint bucket on top of that,
     # so it must be added to the denominator to get true cache efficiency.
     total_input_tokens = summary["prompt_tokens"] + summary["cache_creation_tokens"]
     summary["cache_hit_rate"] = (

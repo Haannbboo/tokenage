@@ -14,7 +14,6 @@ OTEL_EXPORTER_OTLP_LOGS_ENDPOINT_ENV = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
 @dataclass(frozen=True)
 class ServerConfig:
     host: str
-    port: int
     api_port: int
     otlp_host: str
     otlp_port: int
@@ -34,19 +33,17 @@ def resolve_otlp_host_port(config: dict) -> tuple[str, int]:
 
     server = config.get("server", {})
     host = str(server.get("host", "127.0.0.1"))
-    proxy_port = int(server.get("port", 4000))
-    api_port = int(server.get("api_port", proxy_port + 1))
+    api_port = int(server.get("api_port", 4001))
     otlp_port = int(server.get("otlp_port", api_port + 1))
     return host, otlp_port
 
 
 def resolve_server_urls(config: dict) -> dict[str, str]:
-    """Return full URLs for proxy, api, and otlp services.
+    """Return full URLs for api and otlp services.
 
     Uses ``server.base_url`` when set (e.g. ``http://my-nas``), otherwise
-    derives the host from ``server.host``.  Ports always come from the
-    existing ``server.port``, ``server.api_port``, and ``server.otlp_port``
-    fields.
+    derives the host from ``server.host``.  Ports come from
+    ``server.api_port`` and ``server.otlp_port``.
     """
     server = config.get("server", {})
     base_url = server.get("base_url")
@@ -68,11 +65,9 @@ def resolve_server_urls(config: dict) -> dict[str, str]:
         elif ":" in host and not host.startswith("["):
             host = f"[{host}]"
         base = f"http://{host}"
-    port = int(server.get("port", 4000))
-    api_port = int(server.get("api_port", port + 1))
+    api_port = int(server.get("api_port", 4001))
     otlp_port = int(server.get("otlp_port", api_port + 1))
     return {
-        "proxy_url": f"{base}:{port}",
         "api_url": f"{base}:{api_port}",
         "otlp_url": f"{base}:{otlp_port}",
     }
@@ -89,13 +84,11 @@ def load_server_config() -> ServerConfig:
     server = cfg.get("server", {})
     host = str(server.get("host", "127.0.0.1"))
     base_url = server.get("base_url")
-    port = int(server.get("port", 4000))
     otlp_host, otlp_port = resolve_otlp_host_port(cfg)
 
     return ServerConfig(
         host=host,
-        port=port,
-        api_port=int(server.get("api_port", port + 1)),
+        api_port=int(server.get("api_port", 4001)),
         otlp_host=otlp_host,
         otlp_port=otlp_port,
         base_url=base_url,

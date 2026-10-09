@@ -39,7 +39,6 @@ pricing:
   auto_fetch: false
 server:
   host: 127.0.0.1
-  port: 4000
   api_port: 4001
 db:
   path: {db_path}
@@ -57,13 +56,6 @@ models:
       input: 2.0
       output: 8.0
       cacheRead: 0.5
-providers:
-  test-provider:
-    base_url: https://api.example.com/v1
-    api_key: test-key
-    models:
-      test-model: {{}}
-      gpt-4.1: {{}}
 """
 
 
@@ -79,7 +71,6 @@ PROJECT_MODULES = [
     "src.pricing",
     "src.schema_migrations",
     "src.otlp",
-    "src.proxy",
     "src.recorder",
     "src.utils",
     "src.provider_parser",
@@ -136,7 +127,7 @@ def isolated_home(
 def load_module(isolated_home: Path) -> Callable[[str], ModuleType]:
     def load(module_name: str) -> ModuleType:
         module = importlib.import_module(module_name)
-        if module_name in ("src.api", "src.otlp", "src.proxy"):
+        if module_name in ("src.api", "src.otlp"):
             # Every request resolves to a user (the local owner is created on
             # demand), so these apps always need the schema.
             importlib.import_module("src.database").init_db()
@@ -188,11 +179,6 @@ def evaluation_worker_module(load_module: Callable[[str], ModuleType]) -> Module
 @pytest.fixture
 def schema_migrations_module(load_module: Callable[[str], ModuleType]) -> ModuleType:
     return load_module("src.schema_migrations")
-
-
-@pytest.fixture
-def proxy_module(load_module: Callable[[str], ModuleType]) -> ModuleType:
-    return load_module("src.proxy")
 
 
 @pytest.fixture

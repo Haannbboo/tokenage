@@ -53,11 +53,9 @@ def get_configured_service_ports(config: dict[str, Any]) -> list[ServicePort]:
     """Expand effective service ports, including OTLP endpoint env override."""
     server = config.get("server", {})
     host = str(server.get("host", "127.0.0.1"))
-    proxy_port = int(server.get("port", 4000))
-    api_port = int(server.get("api_port", proxy_port + 1))
+    api_port = int(server.get("api_port", 4001))
 
     return [
-        ServicePort("Proxy", "tokenage-proxy", host, proxy_port),
         ServicePort("API", "tokenage-api", host, api_port),
         resolve_otlp_service_port(config),
     ]
@@ -74,8 +72,7 @@ def resolve_otlp_service_port(config: dict[str, Any]) -> ServicePort:
             return ServicePort("OTLP", "tokenage-otlp", host, port)
 
     host = str(server.get("host", "127.0.0.1"))
-    proxy_port = int(server.get("port", 4000))
-    api_port = int(server.get("api_port", proxy_port + 1))
+    api_port = int(server.get("api_port", 4001))
     otlp_port = int(server.get("otlp_port", api_port + 1))
     return ServicePort("OTLP", "tokenage-otlp", host, otlp_port)
 

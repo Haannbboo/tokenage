@@ -43,7 +43,7 @@ Keep scope tight:
 Typical code areas:
 
 - Backend API: `src/api.py`
-- Proxy/collector: `src/proxy.py`, OTLP code, trace ingestion code
+- Proxy/collector: `client/proxy/`, OTLP code, trace and usage ingestion code
 - Database/schema: `src/database/`, `src/schema_migrations.py`
 - Pricing: pricing config, LiteLLM/OpenRouter fetch/cache code
 - Frontend: `frontend/src/`, `frontend/vite-api-proxy.js`

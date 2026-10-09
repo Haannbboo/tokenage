@@ -13,7 +13,7 @@ never runs from the server clone, even on the same machine.
 
 - **Client** — the tracking wrapper, agent configuration, sign-in, the component
   report. Reports to whichever collector it is pointed at.
-- **Server** — the API, the OTLP collector, the proxy, the dashboard, the
+- **Server** — the API, the OTLP collector, the dashboard, the
   evaluation worker. Reached through `tokenage server ...`.
 
 Anything that is not one of the subcommands below is run as a child command with
@@ -185,7 +185,7 @@ tokenage server status                              # supervisord table, ports, 
 tokenage server status tokenage-api              # one program
 tokenage server start                               # services on; refuses if src/pyproject.toml changed
 tokenage server stop                                # all services
-tokenage server stop tokenage-proxy              # one program
+tokenage server stop tokenage-otlp               # one program
 tokenage server restart                             # migrate, then SIGHUP the running services
 tokenage server restart --otlp-port 5002            # persist a new OTLP port, then restart the collector
 tokenage server bootstrap                           # install, build, start, verify, restart the API
@@ -193,7 +193,7 @@ tokenage server token create --email ops@example.com
 tokenage server login-link                          # open the printed URL in a remote browser
 ```
 
-Valid program names: `tokenage-proxy`, `tokenage-api`, `tokenage-otlp`.
+Valid program names: `tokenage-api`, `tokenage-otlp`.
 `tokenage server <command>` runs `python -m src.cli <command>` (`src/ops.py`);
 `bootstrap` goes through `src/scripts/bootstrap.sh` first, because it must run
 before the virtualenv exists. `restart`, `stop` and `status` accept program names.
@@ -225,15 +225,8 @@ models:
       output: 15.0       # USD per million output tokens
       cacheRead: 0.25    # USD per million cached input tokens
 
-providers:
-  my-provider:
-    base_url: https://api.example.com/v1
-    models:
-      gpt-5.4: {}
-
 server:
   host: 127.0.0.1
-  port: 4000        # Proxy port
   api_port: 4001    # API port
   otlp_port: 4002   # OTLP collector port
 
@@ -241,6 +234,8 @@ db:
   path: ~/.tokenage/usage.db   # SQLite (default)
   # url: postgresql+psycopg://user:pass@host:5432/db
 ```
+
+The local proxy is configured in `~/.tokenage/client.yaml`, not here (see the README, "Point clients at the proxy").
 
 `tokenage server start` merges missing defaults from `config.example.yaml`
 into the user config without overwriting existing values. `tokenage server

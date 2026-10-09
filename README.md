@@ -18,7 +18,7 @@ The default setup is local: config in `~/.tokenage/config.yaml`, usage data in S
 ## What it does
 
 - **Tracks popular coding agents**: Claude Code, Codex, OpenCode, and Kilo Code through local OTLP telemetry.
-- **Tracks OpenAI/Anthropic-compatible clients**: route clients through the optional local proxy.
+- **Tracks OpenAI/Anthropic-compatible clients**: route clients through the optional local proxy that runs in the client service.
 - **Shows a dashboard**: usage, cost, latency, models, sources, request logs, setup health, and first-event onboarding.
 - **Prints command summaries**: run an agent through `tokenage` and get usage for that run.
 - **Keeps setup inspectable**: plain YAML config, SQLite by default, logs in `logs/`, no hosted backend required.
@@ -41,13 +41,14 @@ OpenAI-compatible or Anthropic-compatible client
         │
         │ HTTP
         ▼
-tokenage proxy ──► upstream provider
+tokenage client proxy (127.0.0.1) ──► upstream provider
         │
+        │ usage report (metadata only)
         ▼
-     database
+tokenage server ──► database
 ```
 
-Agent telemetry is best for agent-specific fields such as sessions and tool/reasoning metadata. The proxy is useful for clients that support custom base URLs.
+Agent telemetry is best for agent-specific fields such as sessions and tool/reasoning metadata. The proxy is useful for clients that support custom base URLs. It runs on your machine, keeps your provider keys there, and sends the server only token counts and timings.
 
 ## Quick start
 
@@ -81,7 +82,7 @@ From a checkout, `bash src/scripts/bootstrap.sh` is the server install alone. It
 2. builds the dashboard when Node/npm are available
 3. creates a launcher symlink at `~/.local/bin/tokenage` if there is none (steps 1 and 3 are shell, the rest `src/ops.py`)
 4. creates `~/.tokenage/config.yaml` if needed
-5. starts proxy, API, and OTLP services with Supervisor
+5. starts the API and OTLP services with Supervisor
 6. verifies service ports and the dashboard
 7. restarts the API so the freshly built dashboard is served
 
@@ -138,7 +139,7 @@ The empty dashboard automatically checks for your first event. No fake demo data
 
 ## Docker deployment
 
-Run all three servers in a single container for NAS or remote server deployment. See [docker/README.md](docker/README.md).
+Run the API and OTLP servers in a single container for NAS or remote server deployment. See [docker/README.md](docker/README.md).
 
 ## CLI examples
 
@@ -208,7 +209,6 @@ Frontend-specific notes live in [frontend/README.md](frontend/README.md).
 
 | Service | Default URL | Purpose |
 | --- | --- | --- |
-| Proxy | `http://127.0.0.1:4000` | OpenAI/Anthropic-compatible forwarding and usage capture |
 | API + dashboard | `http://127.0.0.1:4001` | REST API and built dashboard |
 | OTLP collector | `http://127.0.0.1:4002` | Local agent telemetry ingestion |
 
@@ -235,7 +235,7 @@ Main config:
 ~/.tokenage/config.yaml
 ```
 
-Minimal provider and database config:
+Minimal server and database config:
 
 ```yaml
 models:
@@ -245,15 +245,8 @@ models:
       output: 15.0
       cacheRead: 0.25
 
-providers:
-  my-provider:
-    base_url: https://api.example.com/v1
-    models:
-      gpt-5.4: {}
-
 server:
   host: 127.0.0.1
-  port: 4000
   api_port: 4001
   otlp_port: 4002
 
@@ -272,6 +265,26 @@ db:
 
 ## Point clients at the proxy
 
+The proxy runs in the client service (`tokenage client start`), not in the server. It binds to `127.0.0.1` only and is configured in `~/.tokenage/client.yaml` (kept mode `0600`; keys are literal). Without a `proxy:` section there is no proxy.
+
+```yaml
+proxy:
+  port: 4000              # optional
+  providers:
+    my-provider:
+      base_url: https://api.example.com/v1
+      api_key: sk-...
+      models: [gpt-5.4]
+    anthropic:
+      base_url: https://api.anthropic.com/v1
+      api_key: sk-ant-...
+      auth_scheme: x-api-key   # default is bearer
+      enabled: true            # default
+      models: [claude-sonnet-4-6]
+```
+
+After editing, run `tokenage client restart`. `tokenage status`, `tokenage client status` and `tokenage client start` print the proxy URL, or `proxy failed: <reason>`. An explicit `port` is bound or fails; without one the proxy reuses its last port, else tries 4000 and scans upward. The default is `http://127.0.0.1:4000`, but read the real URL from `tokenage status`.
+
 For OpenAI-compatible clients:
 
 ```bash
@@ -284,23 +297,9 @@ For Anthropic-compatible clients:
 export ANTHROPIC_BASE_URL=http://127.0.0.1:4000
 ```
 
-The proxy spends your provider keys, so every model call is signed in. Put this device's ingest token (`ingest_token` in `~/.tokenage/credentials.json`, written by `tokenage login`) where the client expects its API key — it arrives as `Authorization: Bearer …` or `x-api-key` — and usage is recorded under your account. The token is never forwarded upstream. Under the `local` provider, calls straight from this machine need no token.
+The client's own API key is ignored: the proxy injects the provider's `api_key` upstream as `Authorization: Bearer <key>`, or `x-api-key: <key>` with `auth_scheme: x-api-key` (e.g. `api.anthropic.com`). The client must still send its own `anthropic-version` header (real Anthropic clients like Claude Code always do; the proxy passes it through unchanged and does not set a default).
 
-```bash
-export OPENAI_API_KEY="$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.tokenage/credentials.json")))["ingest_token"])')"
-```
-
-If a provider sets `api_key`, the proxy injects it upstream as `Authorization: Bearer <key>`. For providers using Anthropic's native auth scheme (e.g. `api.anthropic.com`), set `auth_scheme: x-api-key` on that provider so the proxy sends `x-api-key: <key>` instead. The client must still send its own `anthropic-version` header (real Anthropic clients like Claude Code always do; the proxy passes it through unchanged and does not set a default):
-
-```yaml
-providers:
-  anthropic:
-    base_url: https://api.anthropic.com/v1
-    api_key: sk-ant-...
-    auth_scheme: x-api-key
-    models:
-      claude-sonnet-4-6: {}
-```
+For each model call the client posts a metadata-only usage report (model, token counts, timings; no prompts, responses or keys) to the server's `POST /ingest/v1/usage` with this device's ingest token. It makes a single attempt and drops the report on failure; the server prices it. This works the same whether the server is on this machine or elsewhere.
 
 Supported proxy paths include:
 
@@ -388,7 +387,7 @@ That check runs `src/scripts/bootstrap.sh` in a fresh Docker or Apple `container
 - `tokenage` is intended to run locally.
 - Usage is stored in `~/.tokenage/usage.db` by default.
 - If you configure `db.url`, usage data is written to that database instead.
-- The proxy requires a tokenage ingest token (or a loopback call under the `local` provider) and replaces it with the provider key from `config.yaml`; the client's own credential headers are never forwarded upstream.
+- The proxy listens on loopback only and replaces the client's credentials with the provider key from `client.yaml`; the client's own credential headers are never forwarded upstream. Provider keys stay on your machine; only usage metadata goes to the server.
 - OTLP payloads are emitted by the agents themselves; review agent telemetry settings if you need strict metadata control.
 
 ## Contributing

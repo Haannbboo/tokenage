@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urljoin
 
@@ -111,11 +112,9 @@ class ProxyApp:
     ) -> None:
         self.config = config
         self.sink = sink
-        self.transport = transport  # tests inject a mock upstream
-
-    def client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            timeout=REQUEST_TIMEOUT_SECONDS, transport=self.transport
+        # One pooled client for the app's lifetime; tests inject a mock upstream.
+        self.http = httpx.AsyncClient(
+            timeout=REQUEST_TIMEOUT_SECONDS, transport=transport
         )
 
     def report(self, **fields: Any) -> None:
@@ -139,16 +138,8 @@ class ProxyApp:
         prompt_length: int,
     ) -> Response:
         """Open an upstream streaming connection, check status, and relay or error."""
-        client = self.client()
-        try:
-            req = client.build_request("POST", url, headers=headers, content=body)
-            upstream = await client.send(req, stream=True)
-        except Exception:
-            try:
-                await client.aclose()
-            except Exception:
-                pass
-            raise
+        req = self.http.build_request("POST", url, headers=headers, content=body)
+        upstream = await self.http.send(req, stream=True)
 
         if upstream.status_code >= 400:
             logger.warning(
@@ -159,13 +150,8 @@ class ProxyApp:
             )
             try:
                 error_body = await upstream.aread()
-            except Exception:
-                try:
-                    await client.aclose()
-                except Exception:
-                    pass
-                raise
-            await client.aclose()
+            finally:
+                await upstream.aclose()
             return JSONResponse(
                 content=_parse_upstream_error_body(error_body),
                 status_code=upstream.status_code,
@@ -203,7 +189,7 @@ class ProxyApp:
                     except Exception:
                         continue
             finally:
-                await client.aclose()
+                await upstream.aclose()
                 self.report(
                     provider=provider.name,
                     model=model,
@@ -265,8 +251,7 @@ class ProxyApp:
                 prompt_length=prompt_length,
             )
 
-        async with self.client() as client:
-            response = await client.post(url, headers=headers, content=body)
+        response = await self.http.post(url, headers=headers, content=body)
 
         latency_ms = int((time.monotonic() - started_at) * 1000)
         response_json: Any = None
@@ -362,4 +347,12 @@ def create_app(
         Route(p, proxy.get_model, methods=["GET"])
         for p in ("/models/{model_id:path}", "/v1/models/{model_id:path}")
     ]
-    return Starlette(routes=routes)
+
+    @asynccontextmanager
+    async def lifespan(_: Starlette):
+        try:
+            yield
+        finally:
+            await proxy.http.aclose()
+
+    return Starlette(routes=routes, lifespan=lifespan)

@@ -595,6 +595,20 @@ def test_start_proxy_serves_records_state_and_stops(home, monkeypatch):
         handle.stop()
 
 
+def test_shutdown_closes_the_shared_upstream_client(cfg):
+    closed = []
+
+    class Transport(httpx.MockTransport):
+        async def aclose(self):
+            closed.append(True)
+
+    with TestClient(create_app(cfg, transport=Transport(Upstream(ok_json)))) as c:
+        c.post("/v1/chat/completions", json={"model": "test-model"})
+        c.post("/v1/chat/completions", json={"model": "test-model"})
+        assert not closed
+    assert closed == [True]
+
+
 def test_start_proxy_port_in_use_records_failed_without_raising(home):
     blocker = occupy()
     try:

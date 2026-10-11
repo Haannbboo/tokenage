@@ -50,11 +50,9 @@ class ProxyConfig:
 
 def _model_names(provider: dict[str, Any]) -> list[str]:
     models = provider.get("models") or []
-    if isinstance(models, dict):
-        return [str(m) for m in models]
-    if isinstance(models, list):
-        return [str(m) for m in models]
-    raise ValueError("models must be a list or a mapping")
+    if not isinstance(models, (list, dict)):
+        raise ValueError("models must be a list or a mapping")
+    return [str(m) for m in models]  # a mapping iterates its names
 
 
 def parse_proxy_config(raw: Any) -> ProxyConfig:

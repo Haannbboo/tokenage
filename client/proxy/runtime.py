@@ -151,9 +151,7 @@ def start_proxy(config: ProxyConfig | None = None) -> ProxyHandle:
             config.port, recorded if isinstance(recorded, int) else None
         )
         port = sock.getsockname()[1]
-        server = uvicorn.Server(
-            uvicorn.Config(create_app(config), log_level="warning", lifespan="off")
-        )
+        server = uvicorn.Server(uvicorn.Config(create_app(config), log_level="warning"))
         thread = threading.Thread(
             target=server.run, kwargs={"sockets": [sock]}, daemon=True
         )

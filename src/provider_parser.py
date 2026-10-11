@@ -5,12 +5,11 @@ Reads agent config files to find base URLs, then maps them to provider names.
 
 import json
 import os
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-
-import tomllib
 
 from .utils import normalize_provider_name
 

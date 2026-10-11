@@ -1,9 +1,8 @@
 """The client installs on machines that have no server, so it stays light."""
 
 import re
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 
 def test_client_dependencies_stay_small() -> None:

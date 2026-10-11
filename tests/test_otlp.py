@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -436,7 +436,7 @@ def test_parse_claude_record_uses_prompt_length_from_prior_prompt_event(
     }
     otlp_module._parse_log_record(prompt_record, "claude-code", "claude-session-1")
 
-    response_ts = datetime(2026, 4, 22, 21, 0, 0, tzinfo=timezone.utc)
+    response_ts = datetime(2026, 4, 22, 21, 0, 0, tzinfo=UTC)
     response_record = {
         "timeUnixNano": str(int(response_ts.timestamp() * 1_000_000_000)),
         "attributes": _attrs(
@@ -466,7 +466,7 @@ def test_parse_claude_record_uses_otlp_status_code(otlp_module, monkeypatch):
     captured = {}
     monkeypatch.setattr(otlp_module, "record_usage", _capture_usage(captured))
 
-    response_ts = datetime(2026, 4, 22, 21, 0, 0, tzinfo=timezone.utc)
+    response_ts = datetime(2026, 4, 22, 21, 0, 0, tzinfo=UTC)
     response_record = {
         "timeUnixNano": str(int(response_ts.timestamp() * 1_000_000_000)),
         "attributes": _attrs(
@@ -513,7 +513,7 @@ def test_parse_codex_record_uses_prompt_length_from_prior_prompt_event(
     }
     otlp_module._parse_log_record(prompt_record, "codex_cli_rs", "")
 
-    response_ts = datetime(2026, 4, 22, 21, 5, 0, tzinfo=timezone.utc)
+    response_ts = datetime(2026, 4, 22, 21, 5, 0, tzinfo=UTC)
     response_record = {
         "timeUnixNano": str(int(response_ts.timestamp() * 1_000_000_000)),
         "attributes": _attrs(
@@ -561,7 +561,7 @@ def test_parse_codex_exec_record_uses_same_usage_parser(otlp_module, monkeypatch
     }
     otlp_module._parse_log_record(prompt_record, "codex_exec", "")
 
-    response_ts = datetime(2026, 5, 3, 17, 0, 0, tzinfo=timezone.utc)
+    response_ts = datetime(2026, 5, 3, 17, 0, 0, tzinfo=UTC)
     response_record = {
         "timeUnixNano": str(int(response_ts.timestamp() * 1_000_000_000)),
         "attributes": _attrs(
@@ -593,7 +593,7 @@ def test_parse_codex_app_server_record_uses_same_usage_parser(otlp_module, monke
     captured = {}
     monkeypatch.setattr(otlp_module, "record_usage", _capture_usage(captured))
 
-    response_ts = datetime(2026, 9, 25, 6, 35, 12, tzinfo=timezone.utc)
+    response_ts = datetime(2026, 9, 25, 6, 35, 12, tzinfo=UTC)
     response_record = {
         "timeUnixNano": str(int(response_ts.timestamp() * 1_000_000_000)),
         "attributes": _attrs(
@@ -752,7 +752,7 @@ def test_parse_codex_record_persists_integer_conversation_id_as_string(
     captured = {}
     monkeypatch.setattr(otlp_module, "record_usage", _capture_usage(captured))
 
-    response_ts = datetime(2026, 4, 22, 21, 5, 0, tzinfo=timezone.utc)
+    response_ts = datetime(2026, 4, 22, 21, 5, 0, tzinfo=UTC)
     response_record = {
         "timeUnixNano": str(int(response_ts.timestamp() * 1_000_000_000)),
         "attributes": _attrs(
@@ -776,7 +776,7 @@ def test_parse_codex_record_uses_http_response_status_code(otlp_module, monkeypa
     captured = {}
     monkeypatch.setattr(otlp_module, "record_usage", _capture_usage(captured))
 
-    response_ts = datetime(2026, 4, 22, 21, 5, 0, tzinfo=timezone.utc)
+    response_ts = datetime(2026, 4, 22, 21, 5, 0, tzinfo=UTC)
     response_record = {
         "timeUnixNano": str(int(response_ts.timestamp() * 1_000_000_000)),
         "attributes": _attrs(
@@ -809,7 +809,7 @@ def test_inline_prompt_length_is_not_queued_for_next_request(otlp_module, monkey
         lambda **fields: captured.append(SimpleNamespace(**fields)),
     )
 
-    response_ts_1 = datetime(2026, 4, 22, 21, 15, 0, tzinfo=timezone.utc)
+    response_ts_1 = datetime(2026, 4, 22, 21, 15, 0, tzinfo=UTC)
     response_record_1 = {
         "timeUnixNano": str(int(response_ts_1.timestamp() * 1_000_000_000)),
         "attributes": _attrs(
@@ -826,7 +826,7 @@ def test_inline_prompt_length_is_not_queued_for_next_request(otlp_module, monkey
     }
     otlp_module._parse_log_record(response_record_1, "codex_cli_rs", "")
 
-    response_ts_2 = datetime(2026, 4, 22, 21, 16, 0, tzinfo=timezone.utc)
+    response_ts_2 = datetime(2026, 4, 22, 21, 16, 0, tzinfo=UTC)
     response_record_2 = {
         "timeUnixNano": str(int(response_ts_2.timestamp() * 1_000_000_000)),
         "attributes": _attrs(

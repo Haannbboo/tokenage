@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select, tuple_
@@ -89,9 +89,9 @@ def parse_rates(payload: str) -> ModelCost:
 
 
 def _ts_date(ts_micros: int | None) -> str:
-    return datetime.fromtimestamp(
-        micros_to_secs(ts_micros or 0), tz=timezone.utc
-    ).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(micros_to_secs(ts_micros or 0), tz=UTC).strftime(
+        "%Y-%m-%d"
+    )
 
 
 def ensure_price_snapshot(

@@ -10,7 +10,7 @@ import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -55,9 +55,9 @@ def _iso_to_micros(value: str) -> int:
     """
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc)
+        dt = dt.astimezone(UTC)
     else:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     epoch_s = calendar.timegm(dt.timetuple())
     return secs_to_micros(epoch_s) + dt.microsecond
 
@@ -263,9 +263,7 @@ def log_usage(usage: Usage, db_path: str | None = None) -> None:
 
 def _usage_date(usage: Usage) -> str:
     """UTC date bucket for a usage row's daily aggregate."""
-    return datetime.fromtimestamp(micros_to_secs(usage.ts), tz=timezone.utc).strftime(
-        "%Y-%m-%d"
-    )
+    return datetime.fromtimestamp(micros_to_secs(usage.ts), tz=UTC).strftime("%Y-%m-%d")
 
 
 def _usage_daily_match(usage: Usage, date: str) -> Any:
@@ -532,7 +530,7 @@ def recalculate_usage_cost(
                 session_row.providers_json = json.dumps(providers_costs)
                 session_row.primary_model = _primary_by_cost(models_costs)
                 session_row.primary_provider = _primary_by_cost(providers_costs)
-                session_row.updated_at = datetime.now(timezone.utc).isoformat()
+                session_row.updated_at = datetime.now(UTC).isoformat()
 
         usage.input_cost_usd = new_costs["input_cost_usd"]
         usage.output_cost_usd = new_costs["output_cost_usd"]
@@ -869,7 +867,7 @@ def _daily_usage_filters(
         filters.append(UsageDaily.user_id == user_id)
     if since:
         filters.append(UsageDaily.date >= since[:10])
-    _until = until or datetime.now(timezone.utc).isoformat()
+    _until = until or datetime.now(UTC).isoformat()
     if _until:
         filters.append(UsageDaily.date <= _until[:10])
     if provider:
@@ -892,13 +890,13 @@ def _should_use_daily_table(since: str | None, until: str | None) -> bool:
     try:
         since_dt = datetime.fromisoformat(since)
         if since_dt.tzinfo is None:
-            since_dt = since_dt.replace(tzinfo=timezone.utc)
+            since_dt = since_dt.replace(tzinfo=UTC)
         if until is None:
-            until_dt = datetime.now(timezone.utc)
+            until_dt = datetime.now(UTC)
         else:
             until_dt = datetime.fromisoformat(until)
             if until_dt.tzinfo is None:
-                until_dt = until_dt.replace(tzinfo=timezone.utc)
+                until_dt = until_dt.replace(tzinfo=UTC)
         return (until_dt - since_dt).total_seconds() >= 2 * 86400
     except (ValueError, TypeError):
         return True

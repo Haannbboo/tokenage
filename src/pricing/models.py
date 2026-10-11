@@ -7,7 +7,7 @@ config and path helpers remain in ``config/models.py``.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 @dataclass(frozen=True)
@@ -111,7 +111,7 @@ def resolve_effective_cost(cost: ModelCost, ts_micros: int) -> ModelCost:
     if not cost.time_rates:
         return cost
     ts_seconds = ts_micros // 1_000_000
-    dt = datetime.fromtimestamp(ts_seconds, tz=timezone.utc)
+    dt = datetime.fromtimestamp(ts_seconds, tz=UTC)
     minute = dt.hour * 60 + dt.minute
     weekday = dt.weekday()
 

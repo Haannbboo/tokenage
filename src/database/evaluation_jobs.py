@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -21,15 +21,15 @@ VALID_EVALUATION_JOB_TRIGGERS = {"manual", "auto"}
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _parse_iso(value: str) -> datetime:
     normalized = f"{value[:-1]}+00:00" if value.endswith(("Z", "z")) else value
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _job_to_dict(job: EvaluationJob) -> dict[str, Any]:
@@ -244,7 +244,7 @@ def fail_stale_running_evaluation_jobs(
     now: str | None = None,
     db_path: str | None = None,
 ) -> int:
-    now_dt = _parse_iso(now) if now is not None else datetime.now(timezone.utc)
+    now_dt = _parse_iso(now) if now is not None else datetime.now(UTC)
     stale_before = now_dt - timedelta(seconds=EVALUATION_JOB_TIMEOUT_SECONDS)
     failed = 0
     with Session(get_engine(db_path)) as session:
@@ -458,7 +458,7 @@ def find_active_session_evaluation_job(
     now: str | None = None,
     db_path: str | None = None,
 ) -> dict[str, Any] | None:
-    now_dt = _parse_iso(now) if now is not None else datetime.now(timezone.utc)
+    now_dt = _parse_iso(now) if now is not None else datetime.now(UTC)
     stale_before = now_dt - timedelta(seconds=EVALUATION_JOB_TIMEOUT_SECONDS)
 
     with Session(get_engine(db_path)) as session:

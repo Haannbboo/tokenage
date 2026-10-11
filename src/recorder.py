@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
@@ -145,9 +145,7 @@ def _record_price_snapshot(
     """Persist the exact rates used for this row, returning the snapshot id."""
     if resolved.match is None:
         return None
-    date = datetime.fromtimestamp(micros_to_secs(usage_ts), tz=timezone.utc).strftime(
-        "%Y-%m-%d"
-    )
+    date = datetime.fromtimestamp(micros_to_secs(usage_ts), tz=UTC).strftime("%Y-%m-%d")
     try:
         return ensure_price_snapshot(
             date=date,

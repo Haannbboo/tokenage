@@ -17,7 +17,7 @@ import secrets
 import socket
 import sys
 import webbrowser
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
@@ -336,7 +336,7 @@ def login(
                 "cli_token": payload["cli_token"],
                 "ingest_token": token,
                 "otlp_logs_endpoint": endpoint,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             }
         )
     except (KeyError, TypeError, ValueError, OSError) as exc:

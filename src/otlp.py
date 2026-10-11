@@ -179,7 +179,7 @@ async def _resolve_ingest_user_async(request: Request):
             loop.run_in_executor(_auth_executor, _resolve_ingest_user, request),
             timeout=AUTH_LOOKUP_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise HTTPException(
             status_code=503, detail="authentication unavailable"
         ) from exc

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from src.pricing.models import ModelCost, TimeRate, resolve_effective_cost
 from src.pricing.sources.openrouter import _hhmm_to_minutes, parse_openrouter_json
@@ -61,9 +61,7 @@ def _payload() -> dict:
 
 
 def _at(iso: str) -> int:
-    return int(
-        datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).timestamp() * 1_000_000
-    )
+    return int(datetime.fromisoformat(iso).replace(tzinfo=UTC).timestamp() * 1_000_000)
 
 
 def test_parse_skips_variants_and_converts_to_per_million():

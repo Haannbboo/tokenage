@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from src.pricing.models import ModelCost
 
-TS = int(datetime(2026, 5, 19, 12, 0, tzinfo=timezone.utc).timestamp() * 1_000_000)
+TS = int(datetime(2026, 5, 19, 12, 0, tzinfo=UTC).timestamp() * 1_000_000)
 
 
 def _snapshots():

@@ -12,12 +12,12 @@ import io
 import json
 import os
 import subprocess
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 import pytest
-import tomllib
 
 from client.agents import claude, codex, kilo, opencode
 

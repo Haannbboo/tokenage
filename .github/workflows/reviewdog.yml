@@ -23,7 +23,7 @@ jobs:
           cache: pip
 
       - name: Install ruff
-        run: python -m pip install "ruff>=0.6"
+        run: python -m pip install "ruff==0.17.0"
 
       - name: Set up reviewdog
         uses: reviewdog/action-setup@v1

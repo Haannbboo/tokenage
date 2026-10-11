@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, exists, func, or_, select
@@ -81,12 +81,12 @@ def load_evaluation_worker_config(
 def _parse_iso(value: str | int | float) -> datetime:
     if isinstance(value, (int, float)):
         seconds, us = divmod(int(value), 1_000_000)
-        return datetime.fromtimestamp(seconds, tz=timezone.utc).replace(microsecond=us)
+        return datetime.fromtimestamp(seconds, tz=UTC).replace(microsecond=us)
     normalized = f"{value[:-1]}+00:00" if value.endswith(("Z", "z")) else value
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def select_auto_evaluation_candidates(
@@ -99,7 +99,7 @@ def select_auto_evaluation_candidates(
     if limit <= 0:
         return []
 
-    now_dt = _parse_iso(now) if now is not None else datetime.now(timezone.utc)
+    now_dt = _parse_iso(now) if now is not None else datetime.now(UTC)
     quiet_cutoff = (now_dt - timedelta(seconds=quiet_delay_seconds)).isoformat()
     same_user = or_(
         EvaluationJob.user_id == SessionRecord.user_id,
@@ -361,7 +361,7 @@ def classify_transcriptless_evaluator_telemetry(
         return 0
 
     index = local_index or build_local_session_transcript_index()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     classified = 0
     for record in records:
         if any(record.session_id in path_name for path_name in index.codex_path_names):
@@ -470,7 +470,7 @@ async def run_evaluation_worker(
                 stop_event.wait(),
                 timeout=worker_config.idle_sleep_cap_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
     if tick_task is not None and not tick_task.done():
         tick_task.cancel()

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import calendar
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -149,7 +149,7 @@ def upsert_session_from_usage(usage: Usage, db_path: str | None = None) -> None:
     latency = usage.latency_ms or 0
     ttft = usage.ttft_ms or 0
     total_cost = Decimal(str(usage.total_cost_usd))
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     engine = get_engine(db_path)
     with Session(engine) as session:
@@ -243,7 +243,7 @@ def upsert_session_from_tool_call(
         tools = _load_tool_calls_json(existing.tool_calls_json)
         tools[tool_call.tool_name] = tools.get(tool_call.tool_name, 0) + 1
         existing.tool_calls_json = json.dumps(tools)
-        existing.updated_at = datetime.now(timezone.utc).isoformat()
+        existing.updated_at = datetime.now(UTC).isoformat()
         session.commit()
 
 
@@ -299,7 +299,7 @@ def rebuild_sessions_from_usage(db_path: str | None = None) -> int:
         counts = tool_calls_by_session.setdefault(session_id, {})
         counts[tool_name] = counts.get(tool_name, 0) + 1
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     count = 0
 
     with Session(engine) as session:
@@ -337,7 +337,7 @@ def upsert_session_evaluation(
     if source not in VALID_SOURCES:
         raise ValueError(f"Invalid source: {source}. Must be one of {VALID_SOURCES}")
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     engine = get_engine(db_path)
     with Session(engine) as session:
         record = get_session_record(session, session_id, user_id=user_id)
@@ -452,9 +452,9 @@ def _normalize_timestamp_filter(value: str) -> int:
     except ValueError:
         return secs_to_micros(float(value))
     if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(timezone.utc)
+        parsed = parsed.astimezone(UTC)
     else:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     epoch_s = calendar.timegm(parsed.timetuple())
     return secs_to_micros(epoch_s) + parsed.microsecond
 
@@ -670,7 +670,7 @@ def _parse_report_date(value: str) -> datetime:
         day = datetime.strptime(value, "%Y-%m-%d").date()
     except ValueError as exc:
         raise ValueError(f"Invalid date: {value}. Expected YYYY-MM-DD") from exc
-    return datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+    return datetime.combine(day, datetime.min.time(), tzinfo=UTC)
 
 
 def _count_when(condition: Any) -> Any:

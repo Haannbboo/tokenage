@@ -3,10 +3,9 @@
 import json
 import re
 import sys
+import tomllib
 from copy import deepcopy
 from pathlib import Path
-
-import tomllib
 
 from client.agents import (
     DONE,

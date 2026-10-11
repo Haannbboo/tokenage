@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -108,3 +109,19 @@ def test_malformed_payload_is_422(api_module, fresh_db):
     )
     r = client.post("/ingest/v1/usage", json=_report(prompt_tokens=-1), headers=h)
     assert r.status_code == 422
+
+
+@pytest.mark.parametrize("provider", ["local", "google"])
+def test_ingest_works_under_every_auth_provider(
+    api_module, fresh_db, monkeypatch, provider
+):
+    import src.config.app
+
+    monkeypatch.setitem(
+        src.config.app.CONFIG, "auth", {"provider": provider, "allowlist": []}
+    )
+    token, _ = _token(fresh_db)
+    client = TestClient(api_module.app)
+    h = {"x-tokenage-token": token}
+    assert client.post("/ingest/v1/usage", json=_report(), headers=h).status_code == 204
+    assert client.post("/ingest/v1/usage", json=_report()).status_code == 401

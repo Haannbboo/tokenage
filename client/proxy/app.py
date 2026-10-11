@@ -13,6 +13,7 @@ from urllib.parse import urljoin
 
 import httpx
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
@@ -81,8 +82,16 @@ def build_forward_headers(
         k: v
         for k, v in headers_in.items()
         # The caller's credential is whatever its SDK insists on sending
-        # (often a placeholder): never forward it; the provider key is ours.
-        if k.lower() not in {"host", "content-length", "authorization", "x-api-key"}
+        # (often a placeholder), and x-tokenage-token is ours: never forward
+        # either; the provider key is the only credential that goes upstream.
+        if k.lower()
+        not in {
+            "host",
+            "content-length",
+            "authorization",
+            "x-api-key",
+            "x-tokenage-token",
+        }
     }
     if provider and provider.api_key:
         if provider.auth_scheme == "x-api-key":
@@ -204,7 +213,13 @@ class ProxyApp:
                     status=upstream.status_code,
                 )
 
-        return StreamingResponse(_relay(), media_type="text/event-stream")
+        # The background task closes the upstream if the caller disconnects
+        # before _relay() ever starts (its finally never runs then).
+        return StreamingResponse(
+            _relay(),
+            media_type="text/event-stream",
+            background=BackgroundTask(upstream.aclose),
+        )
 
     async def forward(self, request: Request, path: str) -> Response:
         """Core proxy logic: resolve provider, forward request, and report usage."""
@@ -234,8 +249,9 @@ class ProxyApp:
         started_at = time.monotonic()
 
         if body_json.get("stream", False):
-            # Ensure usage is included in the stream if not explicitly disabled
-            if "stream_options" not in body_json:
+            # chat/completions only reports stream usage on request; the other
+            # APIs report it natively and may reject the unknown field.
+            if path == "/v1/chat/completions" and "stream_options" not in body_json:
                 body_json["stream_options"] = {"include_usage": True}
                 body = json.dumps(body_json).encode()
 

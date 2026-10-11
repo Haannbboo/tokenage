@@ -187,6 +187,7 @@ def test_forward_headers_never_pass_inbound_credentials():
     inbound = {
         "authorization": "Bearer llmt_ingest_secret",
         "x-api-key": "llmt_ingest_secret",
+        "X-Tokenage-Token": "tokenage_ingest_secret",
         "anthropic-version": "2023-06-01",
         "host": "localhost:4000",
         "content-length": "9",
@@ -321,9 +322,7 @@ def test_streaming_passthrough_split_chunks_anthropic_merge(cfg):
         "/v1/messages", json={"model": "claude-x", "stream": True}
     )
     assert r.content == data  # byte-for-byte passthrough
-    assert json.loads(up.requests[0].content)["stream_options"] == {
-        "include_usage": True
-    }
+    assert "stream_options" not in json.loads(up.requests[0].content)
     (rep,) = reports
     assert (rep.prompt_tokens, rep.cached_tokens, rep.completion_tokens) == (10, 3, 9)
     assert rep.ttft_ms is not None
@@ -344,6 +343,17 @@ def test_streaming_responses_usage_and_prompt_length(cfg):
     )
     assert (reports[0].prompt_tokens, reports[0].completion_tokens) == (10, 5)
     assert reports[0].prompt_length == 4
+
+
+def test_chat_completions_stream_requests_usage_but_keeps_caller_options(cfg):
+    up = Upstream(lambda r: httpx.Response(200, content=b"data: [DONE]\n\n"))
+    client = make_client(cfg, up, [])
+    body = {"model": "test-model", "stream": True}
+    client.post("/v1/chat/completions", json=body)
+    own = {"include_usage": False}
+    client.post("/v1/chat/completions", json={**body, "stream_options": own})
+    sent = [json.loads(r.content)["stream_options"] for r in up.requests]
+    assert sent == [{"include_usage": True}, own]
 
 
 def test_streaming_upstream_error_is_relayed(cfg):
@@ -568,7 +578,9 @@ def test_recorded_port_preferred_then_scan_upward(monkeypatch):
     first = occupy(runtime.DEFAULT_PORT)
     try:
         sock = runtime.bind_proxy_socket(None, recorded)
-        assert sock.getsockname()[1] == runtime.DEFAULT_PORT + 1
+        got = sock.getsockname()[1]  # next free one up, whichever that is
+        assert got not in (recorded, runtime.DEFAULT_PORT)
+        assert runtime.DEFAULT_PORT < got < runtime.DEFAULT_PORT + runtime.SCAN_LIMIT
         sock.close()
     finally:
         blocker.close()

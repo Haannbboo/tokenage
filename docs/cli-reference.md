@@ -13,7 +13,7 @@ never runs from the server clone, even on the same machine.
 
 - **Client** — the tracking wrapper, agent configuration, sign-in, the component
   report. Reports to whichever collector it is pointed at.
-- **Server** — the API, the OTLP collector, the proxy, the dashboard, the
+- **Server** — the API, the OTLP collector, the dashboard, the
   evaluation worker. Reached through `tokenage server ...`.
 
 Anything that is not one of the subcommands below is run as a child command with
@@ -44,9 +44,9 @@ as a wrapper option.
 | `tokenage login [--server URL] [--device-name NAME] [--no-browser]` | client | Register this machine and sign in; wires detected agents. Persists an installation key (survives logout) so re-login rotates the machine's tokens instead of duplicating it. Stores the server's `otlp_logs_endpoint`. |
 | `tokenage logout [--keep-agents]` | client | Delete this machine's credentials, then un-wire the agents. |
 | `tokenage setup [--disable]` | client | Point detected agents at a collector, or take tokenage's telemetry keys back off. |
-| `tokenage status [--json]` | client | Report this client: version, sign-in (server URL), detected agents and where they point. `--json` is the device status report the client service sends to the server, plus `account`. Exits 1 when a detected agent points at the wrong collector. The service view is `tokenage server status`. |
-| `tokenage client start\|stop\|restart` | client | Install and start the client service under systemd `--user` (Linux) or launchd (macOS), so it also starts at login. `stop` stops it and disables start at login; `start` re-enables. Elsewhere these exit 1: run `tokenage client run` under your own supervisor. |
-| `tokenage client status [--json]` | client | Ask the OS service manager whether the client service runs (exit 0 running, 1 not), plus its last check and report. |
+| `tokenage status [--json]` | client | Report this client: version, sign-in (server URL), detected agents and where they point, and the local proxy URL or failure when the service runs one. `--json` is the device status report the client service sends to the server, plus `account`. Exits 1 when a detected agent points at the wrong collector. The service view is `tokenage server status`. |
+| `tokenage client start\|stop\|restart` | client | Install and start the client service under systemd `--user` (Linux) or launchd (macOS), so it also starts at login. `stop` stops it and disables start at login; `start` re-enables. The service runs the local proxy when `client.yaml` has a `proxy:` section; `start` prints its URL or failure, and editing `client.yaml` takes effect on `restart`. Elsewhere these exit 1: run `tokenage client run` under your own supervisor. |
+| `tokenage client status [--json]` | client | Ask the OS service manager whether the client service runs (exit 0 running, 1 not), plus its last check and report and the proxy URL (or failure). |
 | `tokenage client run` | client | Run the client service in the foreground; the unit/agent executes this. |
 | `tokenage update [--check\|--dry-run]` | client | Update the client snapshot from the signed-in server; client availability is not published. The server clone updates with `tokenage server update`. |
 | `tokenage check-server --server URL` | client | Internal: verify reachability and wire protocol. Writes nothing. |
@@ -185,7 +185,7 @@ tokenage server status                              # supervisord table, ports, 
 tokenage server status tokenage-api              # one program
 tokenage server start                               # services on; refuses if src/pyproject.toml changed
 tokenage server stop                                # all services
-tokenage server stop tokenage-proxy              # one program
+tokenage server stop tokenage-otlp               # one program
 tokenage server restart                             # migrate, then SIGHUP the running services
 tokenage server restart --otlp-port 5002            # persist a new OTLP port, then restart the collector
 tokenage server bootstrap                           # install, build, start, verify, restart the API
@@ -193,7 +193,7 @@ tokenage server token create --email ops@example.com
 tokenage server login-link                          # open the printed URL in a remote browser
 ```
 
-Valid program names: `tokenage-proxy`, `tokenage-api`, `tokenage-otlp`.
+Valid program names: `tokenage-api`, `tokenage-otlp`.
 `tokenage server <command>` runs `python -m src.cli <command>` (`src/ops.py`);
 `bootstrap` goes through `src/scripts/bootstrap.sh` first, because it must run
 before the virtualenv exists. `restart`, `stop` and `status` accept program names.
@@ -225,15 +225,8 @@ models:
       output: 15.0       # USD per million output tokens
       cacheRead: 0.25    # USD per million cached input tokens
 
-providers:
-  my-provider:
-    base_url: https://api.example.com/v1
-    models:
-      gpt-5.4: {}
-
 server:
   host: 127.0.0.1
-  port: 4000        # Proxy port
   api_port: 4001    # API port
   otlp_port: 4002   # OTLP collector port
 
@@ -241,6 +234,8 @@ db:
   path: ~/.tokenage/usage.db   # SQLite (default)
   # url: postgresql+psycopg://user:pass@host:5432/db
 ```
+
+The local proxy is configured in `~/.tokenage/client.yaml`, not here (see the README, "Point clients at the proxy").
 
 `tokenage server start` merges missing defaults from `config.example.yaml`
 into the user config without overwriting existing values. `tokenage server

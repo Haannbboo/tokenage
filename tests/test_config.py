@@ -13,10 +13,8 @@ def test_load_config_expands_database_path(config_module, tmp_path, monkeypatch)
         """
 server:
   host: 127.0.0.1
-  port: 4000
 db:
   path: ~/.tokenage/usage.db
-providers: {}
 """,
         encoding="utf-8",
     )
@@ -33,7 +31,6 @@ def test_load_config_sets_default_models_mapping(config_module, tmp_path):
         """
 server:
   host: 127.0.0.1
-providers: {}
 """,
         encoding="utf-8",
     )
@@ -43,17 +40,6 @@ providers: {}
     assert config["models"] == {}
 
 
-def test_load_config_normalizes_provider_keys(config_module, tmp_path):
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        "providers:\n  OpenAI:\n    base_url: https://api.example.com/v1\n",
-        encoding="utf-8",
-    )
-    config = config_module.load_config(str(config_path))
-    assert set(config["providers"]) == {"openai"}
-    assert config["providers"]["openai"]["base_url"] == "https://api.example.com/v1"
-
-
 def test_load_config_rejects_nonpositive_record_cap(config_module, tmp_path):
     """A 0/negative record cap would silently drop every export; default wins."""
     config_path = tmp_path / "config.yaml"
@@ -61,7 +47,6 @@ def test_load_config_rejects_nonpositive_record_cap(config_module, tmp_path):
         """
 server:
   host: 127.0.0.1
-providers: {}
 otlp:
   max_records_per_request: 0
 """,
@@ -81,7 +66,6 @@ server:
   host: 127.0.0.1
 db:
   url: postgresql+psycopg://user:pass@db.example.edu:5432/tokenage
-providers: {}
 """,
         encoding="utf-8",
     )
@@ -108,163 +92,12 @@ def test_get_tracker_home_prefers_env_override(config_module, tmp_path, monkeypa
     assert config_module.get_tracker_home() == str(tracker_home)
 
 
-def test_build_maps_returns_provider_configs(config_module):
-    provider_map, model_map = config_module.build_maps(
-        {
-            "models": {
-                "alpha-1": {},
-                "alpha-2": {},
-                "beta-1": {},
-            },
-            "providers": {
-                "alpha": {
-                    "base_url": "https://alpha.example/v1",
-                    "api_key": "alpha-key",
-                    "models": {"alpha-1": {}, "alpha-2": {}},
-                },
-                "beta": {
-                    "base_url": "https://beta.example/v1",
-                    "api_key": "beta-key",
-                    "models": {"beta-1": {}},
-                },
-            },
-        }
-    )
-
-    assert model_map["alpha-1"] == config_module.ProviderConfig(
-        name="alpha",
-        base_url="https://alpha.example/v1",
-        api_key="alpha-key",
-    )
-    assert model_map["beta-1"].name == "beta"
-    assert provider_map["alpha"].name == "alpha"
-
-
-def test_build_maps_allows_provider_model_mapping(config_module):
-    provider_map, model_map = config_module.build_maps(
-        {
-            "models": {
-                "alpha-1": {},
-                "alpha-2": {},
-            },
-            "providers": {
-                "alpha": {
-                    "base_url": "https://alpha.example/v1",
-                    "models": {
-                        "alpha-1": {},
-                        "alpha-2": {
-                            "cost": {"input": 1.0, "output": 2.0, "cacheRead": 0.1}
-                        },
-                    },
-                },
-            },
-        }
-    )
-
-    assert provider_map["alpha"] == config_module.ProviderConfig(
-        name="alpha",
-        base_url="https://alpha.example/v1",
-    )
-    assert model_map["alpha-1"] == provider_map["alpha"]
-    assert model_map["alpha-2"] == provider_map["alpha"]
-
-
-def test_build_maps_allows_provider_without_models(config_module):
-    provider_map, model_map = config_module.build_maps(
-        {
-            "models": {},
-            "providers": {
-                "empty": {
-                    "base_url": "https://empty.example/v1",
-                    "api_key": "empty-key",
-                },
-            },
-        }
-    )
-
-    assert provider_map["empty"] == config_module.ProviderConfig(
-        name="empty",
-        base_url="https://empty.example/v1",
-        api_key="empty-key",
-    )
-    assert model_map == {}
-
-
-def test_build_maps_skips_disabled_provider(config_module):
-    provider_map, model_map = config_module.build_maps(
-        {
-            "models": {},
-            "providers": {
-                "live": {
-                    "base_url": "https://live.example/v1",
-                    "models": {"live-1": {}},
-                },
-                "paused": {
-                    "enabled": False,
-                    "base_url": "https://paused.example/v1",
-                    "api_key": "paused-key",
-                    "models": {"paused-1": {}},
-                },
-            },
-        }
-    )
-
-    assert "paused" not in provider_map
-    assert "paused-1" not in model_map
-    assert provider_map["live"].name == "live"
-    assert model_map["live-1"].name == "live"
-
-
-def test_build_maps_treats_missing_enabled_as_enabled(config_module):
-    provider_map, _ = config_module.build_maps(
-        {
-            "models": {},
-            "providers": {
-                "alpha": {
-                    "base_url": "https://alpha.example/v1",
-                    "enabled": True,
-                    "models": {"alpha-1": {}},
-                },
-            },
-        }
-    )
-
-    assert provider_map["alpha"].name == "alpha"
-
-
-def test_build_maps_normalizes_empty_api_key_to_none(config_module):
-    provider_map, _ = config_module.build_maps(
-        {
-            "models": {},
-            "providers": {
-                "empty-key": {
-                    "base_url": "https://empty.example/v1",
-                    "api_key": "",
-                },
-            },
-        }
-    )
-
-    assert provider_map["empty-key"].api_key is None
-
-
 def test_resolve_all_costs_parses_model_costs(config_module, pricing_maps_module):
     resolved = pricing_maps_module.resolve_all_costs(
         {
             "models": {
                 "alpha-1": {"cost": {"input": 1.5, "output": 2.5, "cacheRead": 0.15}},
                 "beta-1": {},
-            },
-            # Provider-scoped model costs are no longer read.
-            "providers": {
-                "alpha": {
-                    "base_url": "https://alpha.example/v1",
-                    "models": {
-                        "alpha-1": {
-                            "cost": {"input": 3.0, "output": 4.0, "cacheRead": 0.3}
-                        },
-                    },
-                },
             },
         }
     )
@@ -341,34 +174,17 @@ models:
       input: 1.0
       output: 2.0
       cacheRead: 0.1
-providers:
-  alpha:
-    base_url: https://alpha.example/v1
-    models:
-      alpha-1: {}
 """,
         encoding="utf-8",
     )
 
     config_id = id(config_module.CONFIG)
-    provider_map_id = id(config_module.PROVIDER_MAP)
-    model_map_id = id(config_module.MODEL_MAP)
 
     refreshed = config_module.refresh_runtime_config(str(config_path))
 
     assert id(config_module.CONFIG) == config_id
-    assert id(config_module.PROVIDER_MAP) == provider_map_id
-    assert id(config_module.MODEL_MAP) == model_map_id
     assert refreshed is config_module.CONFIG
     assert config_module.CONFIG["server"]["host"] == "127.0.0.1"
-    assert config_module.PROVIDER_MAP["alpha"] == config_module.ProviderConfig(
-        name="alpha",
-        base_url="https://alpha.example/v1",
-    )
-    assert config_module.MODEL_MAP["alpha-1"] == config_module.ProviderConfig(
-        name="alpha",
-        base_url="https://alpha.example/v1",
-    )
     assert pricing_maps_module.MODEL_COSTS["alpha-1"] == pricing_maps_module.ModelCost(
         input=1.0,
         output=2.0,
@@ -385,14 +201,8 @@ def test_merge_missing_config_defaults_backfills_missing_fields(config_module):
                 }
             }
         },
-        "providers": {
-            "anthropic": {
-                "base_url": "https://api.anthropic.com/v1",
-                "models": {"claude-sonnet-4": {}},
-            }
-        },
         "server": {
-            "port": 4100,
+            "api_port": 4100,
         },
     }
     default_config = {
@@ -412,15 +222,8 @@ def test_merge_missing_config_defaults_backfills_missing_fields(config_module):
                 }
             },
         },
-        "providers": {
-            "my-provider": {
-                "base_url": "https://api.example.com/v1",
-                "models": {"gpt-5": {}},
-            }
-        },
         "server": {
             "host": "127.0.0.1",
-            "port": 4000,
             "api_port": 4001,
             "otlp_port": 4002,
         },
@@ -437,36 +240,10 @@ def test_merge_missing_config_defaults_backfills_missing_fields(config_module):
     assert merged_config["models"]["gpt-5"]["cost"]["output"] == 10.0
     assert merged_config["models"]["gpt-5"]["cost"]["cacheRead"] == 0.125
     assert merged_config["models"]["gpt-5-mini"]["cost"]["output"] == 2.0
-    assert merged_config["server"]["port"] == 4100
+    assert merged_config["server"]["api_port"] == 4100
     assert merged_config["server"]["host"] == "127.0.0.1"
-    assert merged_config["server"]["api_port"] == 4001
+    assert merged_config["server"]["otlp_port"] == 4002
     assert merged_config["db"]["path"] == "~/.tokenage/usage.db"
-
-
-def test_merge_missing_config_defaults_skips_example_provider_backfill(config_module):
-    user_config = {
-        "models": {},
-        "providers": {
-            "anthropic": {
-                "base_url": "https://api.anthropic.com/v1",
-                "models": {"claude-sonnet-4": {}},
-            }
-        },
-    }
-    default_config = {
-        "providers": {
-            "my-provider": {
-                "base_url": "https://api.example.com/v1",
-                "models": {"gpt-5": {}},
-            }
-        }
-    }
-
-    merged_config = config_module.merge_missing_config_defaults(
-        user_config, default_config
-    )
-
-    assert "my-provider" not in merged_config["providers"]
 
 
 def test_otlp_gunicorn_config_prefers_otlp_endpoint_env(tmp_path, monkeypatch):
@@ -477,12 +254,10 @@ def test_otlp_gunicorn_config_prefers_otlp_endpoint_env(tmp_path, monkeypatch):
         """
 server:
   host: 127.0.0.1
-  port: 4000
   api_port: 4001
   otlp_port: 4005
 db:
   path: usage.db
-providers: {}
 models: {}
 """,
         encoding="utf-8",
@@ -506,12 +281,10 @@ def test_otlp_gunicorn_config_uses_configured_port_without_env(tmp_path, monkeyp
         """
 server:
   host: 127.0.0.1
-  port: 4000
   api_port: 4001
   otlp_port: 4005
 db:
   path: usage.db
-providers: {}
 models: {}
 """,
         encoding="utf-8",
@@ -532,19 +305,17 @@ def test_gunicorn_configs_resolve_log_paths_to_repo_root(tmp_path, monkeypatch):
         """
 server:
   host: 127.0.0.1
-  port: 4000
   api_port: 4001
   otlp_port: 4005
 db:
   path: usage.db
-providers: {}
 models: {}
 """,
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    for conf in ("api.conf.py", "proxy.conf.py", "otlp.conf.py"):
+    for conf in ("api.conf.py", "otlp.conf.py"):
         namespace = runpy.run_path(str(repo_root / "src" / "config" / conf))
         assert namespace["ROOT"] == str(repo_root)
 
@@ -609,7 +380,7 @@ def test_load_config_auth_defaults(config_module, tmp_path, monkeypatch):
     monkeypatch.delenv("TOKENAGE_AUTH__GOOGLE_CLIENT_ID", raising=False)
     monkeypatch.delenv("TOKENAGE_AUTH__GOOGLE_CLIENT_SECRET", raising=False)
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("providers: {}\n", encoding="utf-8")
+    config_path.write_text("server: {}\n", encoding="utf-8")
 
     config = config_module.load_config(str(config_path))
 

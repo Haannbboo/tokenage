@@ -45,6 +45,7 @@ def test_status_json_is_the_service_report_plus_account(
     status.run_status(as_json=True)
     data = json.loads(capsys.readouterr().out.strip())
     assert data.pop("account")["signed_in"] is False
+    assert data.pop("proxy") is None
     assert data == service.health_payload()
     assert all(found["found"] is False for found in data["detected"].values())
 
@@ -280,3 +281,27 @@ def test_status_redacts_collector_secrets_in_all_output(
     state = setup.read_agent_states("https://tracker.example/v1/logs")[agent]
     assert state["configured_endpoint"] == endpoint
     assert state["endpoint_matches"] is False
+
+
+def test_status_shows_live_proxy_url_or_failure_and_ignores_stale(
+    tracker_home: Path, capsys
+) -> None:
+    from client.proxy import runtime
+
+    runtime.record_proxy_state(
+        {"state": "running", "port": 4000, "url": "http://127.0.0.1:4000"}
+    )
+    assert status.run_status(as_json=False) == 0
+    assert "  proxy       http://127.0.0.1:4000\n" in capsys.readouterr().out
+    status.run_status(as_json=True)
+    assert json.loads(capsys.readouterr().out)["proxy"]["port"] == 4000
+
+    runtime.record_proxy_state({"state": "failed", "error": "port 4000 is in use"})
+    status.run_status(as_json=False)
+    assert "  proxy       failed: port 4000 is in use" in capsys.readouterr().out
+
+    state = service._read_state()
+    state["proxy"]["pid"] = 2**22 + 12345  # the writing service is gone
+    service._write_state(state)
+    status.run_status(as_json=False)
+    assert "proxy" not in capsys.readouterr().out

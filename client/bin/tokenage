@@ -173,8 +173,8 @@ usage: tokenage server <command>
   start                  turn the services on
   stop [program...]      stop all services, or the named ones
   restart [program...] [--otlp-port N]
-                         reload running services (programs: tokenage-proxy,
-                         tokenage-api, tokenage-otlp)
+                         reload running services (programs: tokenage-api,
+                         tokenage-otlp)
   status [program...]    supervisord table, ports, port check
   update [--check|--dry-run]
                          fast-forward the server clone, bootstrap, restart

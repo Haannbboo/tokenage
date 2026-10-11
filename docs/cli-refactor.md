@@ -31,7 +31,7 @@ Two components, one command:
   the component report. Owns `$TOKENAGE_HOME/credentials.json`, mode `0600`.
   Depends only on `httpx` and `pyyaml`,
   and never imports `src`.
-- **Server** (`src/`, `scripts/`) — the API, the OTLP collector, the proxy, the
+- **Server** (`src/`, `scripts/`) — the API, the OTLP collector, the
   dashboard, pricing, storage and the evaluation worker. Owns
   `~/.tokenage/config.yaml`, `supervisord.conf` and the database.
 
@@ -123,7 +123,7 @@ columns, in this order, each printed only when it applies:
 ```
 $ tokenage status
 tokenage 0.1.0 (client 89075ce) · server 0.2.19 (self-hosted)
-  services    proxy :4000 up · api :4001 up · otlp :4002 up
+  services    api :4001 up · otlp :4002 up
   account     signed in as you@example.com → http://localhost:4001
   agents      codex, claude, opencode → http://localhost:4002/v1/logs
   dashboard   http://localhost:4001
@@ -139,7 +139,7 @@ agents are detected but none points at the intended collector.
 ```
 $ tokenage status
 tokenage 0.1.0 (client 89075ce) · server 0.2.19 (self-hosted)
-  services    proxy :4000 down · api :4001 down · otlp :4002 down
+  services    api :4001 down · otlp :4002 down
   account     signed in as you@example.com → http://localhost:4001
   agents      codex, claude, opencode → http://localhost:4002/v1/logs (not reachable)
   dashboard   http://localhost:4001
@@ -191,7 +191,7 @@ One compact line, same fields, for scripts:
 
 ```
 $ tokenage status --json
-{"client":{"version":"0.1.0","commit":"89075ce1f4b7d2e6a9c0b3d8e5f2a7c1b4d90e33"},"server":{"installed":true,"version":"0.2.19","mode":"self-hosted","services":[{"name":"proxy","port":4000,"state":"up","supervised":true},{"name":"api","port":4001,"state":"up","supervised":true},{"name":"otlp","port":4002,"state":"up","supervised":true}]},"account":{"signed_in":true,"email":"you@example.com","server_url":"http://localhost:4001","device_name":"hanbo-macbook"},"agents":[{"name":"codex","installed":true,"detected":true,"configured":true,"endpoint_matches":true,"endpoint":"http://localhost:4002/v1/logs"},{"name":"claude","installed":true,"detected":true,"configured":true,"endpoint_matches":true,"endpoint":"http://localhost:4002/v1/logs"},{"name":"opencode","installed":true,"detected":true,"configured":true,"endpoint_matches":true,"endpoint":"http://localhost:4002/v1/logs"},{"name":"kilo","installed":true,"detected":false,"configured":false,"endpoint_matches":false,"endpoint":null}],"dashboard":"http://localhost:4001"}
+{"client":{"version":"0.1.0","commit":"89075ce1f4b7d2e6a9c0b3d8e5f2a7c1b4d90e33"},"server":{"installed":true,"version":"0.2.19","mode":"self-hosted","services":[{"name":"api","port":4001,"state":"up","supervised":true},{"name":"otlp","port":4002,"state":"up","supervised":true}]},"account":{"signed_in":true,"email":"you@example.com","server_url":"http://localhost:4001","device_name":"hanbo-macbook"},"agents":[{"name":"codex","installed":true,"detected":true,"configured":true,"endpoint_matches":true,"endpoint":"http://localhost:4002/v1/logs"},{"name":"claude","installed":true,"detected":true,"configured":true,"endpoint_matches":true,"endpoint":"http://localhost:4002/v1/logs"},{"name":"opencode","installed":true,"detected":true,"configured":true,"endpoint_matches":true,"endpoint":"http://localhost:4002/v1/logs"},{"name":"kilo","installed":true,"detected":false,"configured":false,"endpoint_matches":false,"endpoint":null}],"dashboard":"http://localhost:4001"}
 ```
 
 Field notes:
@@ -261,7 +261,6 @@ $ tokenage server start
   Applying schema migrations...
   ✓ Migrations applied
   ✓ Supervisord started
-  ✓ tokenage-proxy: running
   ✓ tokenage-api: running
   ✓ tokenage-otlp: running
 
@@ -305,12 +304,12 @@ $ tokenage server stop
 With program names, stops only those:
 
 ```
-$ tokenage server stop tokenage-proxy
-  Stopping tokenage-proxy...
-  ✓ tokenage-proxy: stopped
+$ tokenage server stop tokenage-otlp
+  Stopping tokenage-otlp...
+  ✓ tokenage-otlp: stopped
 ```
 
-Valid names: `tokenage-proxy`, `tokenage-api`, `tokenage-otlp`.
+Valid names: `tokenage-api`, `tokenage-otlp`.
 Prints `Not running.` and exits 0 when `supervisord.conf` is absent.
 
 ## `tokenage server restart`
@@ -332,8 +331,6 @@ $ tokenage server restart
   ✓ Migrations applied
 
   ▶ Reloading services
-  Sending SIGHUP to tokenage-proxy...
-  ✓ tokenage-proxy: reloaded
   Sending SIGHUP to tokenage-api...
   ✓ tokenage-api: reloaded
   Sending SIGHUP to tokenage-otlp...
@@ -363,12 +360,10 @@ the port check. For operators who want only the service view.
 
 ```
 $ tokenage server status
-tokenage-proxy    RUNNING   pid 21455, uptime 3:11:02
 tokenage-api      RUNNING   pid 21456, uptime 3:11:02
 tokenage-otlp     RUNNING   pid 21457, uptime 3:11:02
 
   ▶ Port Information
-    Proxy: 127.0.0.1:4000
     API:   127.0.0.1:4001
     OTLP:  127.0.0.1:4002
 
@@ -406,7 +401,6 @@ $ tokenage server bootstrap
   ✓ CLI wrapper: scripts/tokenage
   ✓ CLI symlink: /home/you/.local/bin/tokenage
   ✓ API running: http://localhost:4001
-  ✓ Proxy listening: http://localhost:4001
   ✓ OTLP listening: http://localhost:4001
   ✓ Dashboard: http://localhost:4001
 
@@ -427,9 +421,6 @@ import time in `src/api.py`, so a process that started before the first build ha
 no dashboard at all. `start` and `restart` never do this; only the command that
 builds needs to.
 
-The port lines above are literal. `bootstrap.sh` reads three ports into three
-variables and then interpolates the API port into the proxy, OTLP and dashboard
-messages, so all four lines show the same URL.
 
 An agent that is installed but not wired fails the check:
 
@@ -692,8 +683,7 @@ piping the child's stdout stays clean.
 Tracking uses the services that are already running. The wrapper reads the usage
 high-watermark from the API, runs the child, then fetches the summary for
 everything recorded after that watermark. It starts nothing and stops nothing,
-and it uses the long-running proxy when `--proxy-env` is given rather than a
-private one for the run. The API is the signed-in server when there is one, and
+The API is the signed-in server when there is one, and
 the local server otherwise.
 
 ```
@@ -730,7 +720,7 @@ way. Only the summary is missing. With `--no-summary` the same situation prints
 just the first line.
 
 Flags: `--json`, `--usage-only`, `--summary-dest stdout|stderr|file`,
-`--summary-file`, `--wait-ms`, `--poll-ms`, `--proxy-env`, `--no-summary`,
+`--summary-file`, `--wait-ms`, `--poll-ms`, `--no-summary`,
 `--no-banner`. Use `--` before the child command when tokenage flags come
 first. `--summary-dest file` without `--summary-file`, and `--usage-only`
 together with `--no-summary`, are argument errors and exit 2.
@@ -740,10 +730,6 @@ Concurrent runs under the same account are included. Event timestamps bound the
 query, so delayed events outside the watermark window can be omitted. Use the
 dashboard's session views for individual sessions.
 
-`--proxy-env` points at the long-running proxy from `~/.tokenage/config.yaml`
-and requires its port to be reachable before launching the child. It replaces
-both provider base URL variables for that child, including stale inherited
-values. Installing the hosted client alone does not provide a local proxy.
 JSON summaries carry an `attribution` object identifying this account activity
 window and its concurrency and delayed-event limitations.
 

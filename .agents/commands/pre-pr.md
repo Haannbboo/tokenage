@@ -22,7 +22,7 @@ Run this before pushing/opening a PR.
 
 - [ ] Cost/token accounting tested if touched: `uv run python -m pytest tests/test_costs.py tests/test_pricing.py -q`.
 - [ ] Provider/model normalization tested if touched: `uv run python -m pytest tests/test_provider_parser.py tests/test_config.py -q`.
-- [ ] Streaming/tool-call partial chunk behavior tested if touched: `uv run python -m pytest tests/test_proxy.py tests/test_recorder.py -q`.
+- [ ] Streaming/tool-call partial chunk behavior tested if touched: `uv run python -m pytest tests/client/test_client_proxy.py tests/test_usage_ingest.py tests/test_recorder.py -q`.
 - [ ] Schema migration/backward compatibility tested if touched: `uv run python -m pytest tests/test_database.py tests/test_api.py -q`.
 - [ ] Worker/background job DB timeout behavior considered if touched.
 - [ ] Frontend-used API routes added to `frontend/vite-api-proxy.js` by editing `shouldProxyApiRequest()` explicit pathname/prefix checks, with `frontend/vite-api-proxy.test.js` updated.

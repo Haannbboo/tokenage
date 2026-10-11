@@ -44,7 +44,6 @@ test('resolveApiUrl falls back to tracker config api_port', () => {
     [
       'server:',
       '  host: 127.0.0.1',
-      '  port: 4007',
       '  api_port: 4011',
       '',
     ].join('\n'),

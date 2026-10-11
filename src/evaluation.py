@@ -14,7 +14,6 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
@@ -40,9 +39,6 @@ EVALUATOR_AGENT_CATALOG = {
     "claude": {"label": "Claude Code", "command": "claude"},
 }
 VALID_EVALUATOR_AGENTS = set(EVALUATOR_AGENT_CATALOG)
-
-# Routes that would record the evaluation's own LLM call as user usage.
-_UNTRACKED_ENV_KEYS = ("OPENAI_BASE_URL", "ANTHROPIC_BASE_URL")
 
 logger = logging.getLogger(__name__)
 
@@ -653,70 +649,6 @@ def _build_claude_evaluator_invocation(prompt: str) -> AgentInvocation:
     )
 
 
-_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
-
-
-def _canonical_host(host: str | None) -> str | None:
-    """Fold loopback aliases together so localhost and 127.0.0.1 compare equal."""
-    if host in _LOOPBACK_HOSTS:
-        return "localhost"
-    return host
-
-
-def _tracker_proxy_origins() -> set[tuple[str, str, int]]:
-    """Origins of this server's own proxy, matched against base-URL env vars."""
-    try:
-        from src.config.app import load_config
-        from src.config.server_config import resolve_server_urls
-
-        proxy = urlparse(resolve_server_urls(load_config())["proxy_url"])
-        host = _canonical_host(proxy.hostname)
-        if not host or proxy.port is None:
-            return set()
-        return {(proxy.scheme, host, proxy.port)}
-    except Exception:
-        return set()
-
-
-def _points_at_tracker_proxy(value: str, origins: set[tuple[str, str, int]]) -> bool:
-    try:
-        # .port raises ValueError for an invalid port, not urlparse().
-        parsed = urlparse(value)
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        host = _canonical_host(parsed.hostname)
-        scheme = parsed.scheme
-    except ValueError:
-        return False
-    if not host or scheme not in ("http", "https"):
-        return False
-    return any(
-        scheme == origin_scheme and host == origin_host and port == origin_port
-        for origin_scheme, origin_host, origin_port in origins
-    )
-
-
-def _evaluator_env(overrides: dict[str, str] | None) -> dict[str, str]:
-    """Environment for the evaluator subprocess.
-
-    The evaluator's own LLM call must never be recorded as the user's usage. The
-    OTLP exporters are switched off by the invocation builders; a proxy base URL
-    inherited from the parent shell is the other recording path, so only values
-    that point at this server's proxy are dropped here. Other gateway endpoints
-    (LiteLLM, Azure, regional bases) stay, because losing them would send the
-    evaluator to the vendor default and fail authentication.
-    """
-    origins = _tracker_proxy_origins()
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in _UNTRACKED_ENV_KEYS
-        or (origins and not _points_at_tracker_proxy(value, origins))
-    }
-    if overrides:
-        env.update(overrides)
-    return env
-
-
 def build_evaluator_invocation(
     transcript: str,
     evaluator: str = "codex",
@@ -1054,7 +986,7 @@ def summarize_session_with_llm(
         text=True,
         capture_output=True,
         timeout=EVALUATION_TIMEOUT_SECONDS,
-        env=_evaluator_env(invocation.env),
+        env={**os.environ, **(invocation.env or {})},
     )
     if completed.returncode != 0:
         logger.warning(

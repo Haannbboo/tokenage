@@ -18,7 +18,7 @@ def box(tmp_path, monkeypatch):
     (root / "src").mkdir(parents=True)
     (root / "src" / "pyproject.toml").write_text("[project]\nname='x'\n")
     (root / "config.example.yaml").write_text(
-        "server:\n  host: 127.0.0.1\n  port: 4000\n  api_port: 4001\n  otlp_port: 4002\n"
+        "server:\n  host: 127.0.0.1\n  api_port: 4001\n  otlp_port: 4002\n"
     )
     (root / ".venv").mkdir()
     home = tmp_path / "home"
@@ -90,13 +90,13 @@ def test_start_creates_config_checks_ports_then_migrates_then_starts(box):
 
 def test_first_run_moves_busy_ports_but_an_existing_config_fails(box, capsys):
     box.stamp()
-    box.busy = {4000}
+    box.busy = {4001}
 
     assert ops.start() == 0
     server = yaml.safe_load((box.home / "config.yaml").read_text())["server"]
-    assert 4000 not in (server["port"], server["api_port"], server["otlp_port"])
+    assert 4001 not in (server["api_port"], server["otlp_port"])
 
-    server["port"] = 4000
+    server["api_port"] = 4001
     (box.home / "config.yaml").write_text(yaml.safe_dump({"server": server}))
     assert ops.start() == 1
     assert "Port check failed" in capsys.readouterr().out
@@ -112,7 +112,7 @@ def test_restart_reloads_named_programs_and_persists_the_otlp_port(box):
 
     assert ops.restart(["tokenage-api"]) == 0
     assert ctl(box, "signal", "HUP", "tokenage-api")
-    assert not ctl(box, "signal", "HUP", "tokenage-proxy")
+    assert not ctl(box, "signal", "HUP", "tokenage-otlp")
     assert "migrate" in box.calls
 
     box.states["tokenage-otlp"] = "RUNNING"
@@ -134,8 +134,8 @@ def test_stop_named_or_everything(box):
     box.home.mkdir()
     (box.home / "supervisord.conf").write_text("")
 
-    ops.stop(["tokenage-proxy"])
-    assert ctl(box, "stop", "tokenage-proxy") and not ctl(box, "shutdown")
+    ops.stop(["tokenage-otlp"])
+    assert ctl(box, "stop", "tokenage-otlp") and not ctl(box, "shutdown")
     ops.stop()
     assert ctl(box, "stop", "all") and ctl(box, "shutdown")
 
@@ -143,7 +143,7 @@ def test_stop_named_or_everything(box):
 def test_bootstrap_records_the_stamp_and_reports_display_urls(box, monkeypatch, capsys):
     (box.home).mkdir()
     (box.home / "config.yaml").write_text(
-        "server:\n  base_url: https://tok.example.com\n  port: 4000\n"
+        "server:\n  base_url: https://tok.example.com\n"
     )
     (box.root / "frontend" / "dist").mkdir(parents=True)
     monkeypatch.setattr(

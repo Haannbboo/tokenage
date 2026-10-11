@@ -1,6 +1,6 @@
 # Docker Deployment
 
-Run all three servers (proxy, API, OTLP) in a single container. Useful for NAS or remote server deployment so you don't need to keep your development machine on.
+Run both servers (API, OTLP) in a single container. Useful for NAS or remote server deployment so you don't need to keep your development machine on.
 
 ## Prerequisites
 
@@ -13,21 +13,14 @@ Copy your existing config or create one with a remote database. Place it at `./c
 
 ```yaml
 server:
-  # base_url: agents on other machines use this to reach the proxy/OTLP
+  # base_url: agents on other machines use this to reach the API/OTLP
   # e.g. http://my-nas or http://my-nas.tailnet.ts.net
   # base_url: http://my-nas
   host: 127.0.0.1  # auto-patched to 0.0.0.0 inside the container
-  port: 4000
   api_port: 4001
 
 db:
   url: postgresql+psycopg://user:password@db-host:5432/tokenage
-
-providers:
-  my-provider:
-    base_url: https://api.example.com/v1
-    models:
-      gpt-5.4: {}
 ```
 
 If no `config.yaml` is found, the entrypoint creates one from `config.example.yaml` (SQLite, not recommended for Docker).
@@ -56,9 +49,6 @@ server:
 Then re-run `start.sh` on your local machine to update agent OTLP endpoints, or set them manually:
 
 ```bash
-# Proxy (for OpenAI/Anthropic-compatible clients)
-export OPENAI_BASE_URL=http://your-nas.tailnet.ts.net:4000/v1
-
 # OTLP (for Claude Code, Codex)
 export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://your-nas.tailnet.ts.net:4002/v1/logs
 ```
@@ -67,9 +57,9 @@ Dashboard: open `http://your-nas.tailnet.ts.net:4001` in your browser.
 
 ## How it works
 
-- The entrypoint runs schema migrations on startup, then starts all three servers under supervisord.
+- The entrypoint runs schema migrations on startup, then starts both servers under supervisord.
 - `server.host` is automatically patched from `127.0.0.1` to `0.0.0.0` inside the container for proper Docker networking.
-- The container exposes ports 4000 (proxy), 4001 (API + dashboard), and 4002 (OTLP).
+- The container exposes ports 4001 (API + dashboard), and 4002 (OTLP).
 - Logs go to stdout/stderr — use `docker logs tokenage` to view them.
 
 ## Unraid
@@ -81,6 +71,6 @@ Install the Docker Compose Manager plugin from Community Applications, then use 
 | File | Purpose |
 | --- | --- |
 | `Dockerfile` | Python 3.13-slim image, installs deps, copies code |
-| `docker-compose.yml` | Single service, 3 ports, config volume mount |
+| `docker-compose.yml` | Single service, 2 ports, config volume mount |
 | `docker/entrypoint.sh` | Patches host, runs migrations, starts supervisord |
-| `docker/supervisord.conf` | Runs all 3 gunicorn processes |
+| `docker/supervisord.conf` | Runs both gunicorn processes |

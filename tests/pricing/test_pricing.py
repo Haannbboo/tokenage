@@ -685,7 +685,6 @@ def test_resolve_all_costs_yaml_global(config_module, pricing_maps_module):
                 "cost": {"input": 3.0, "output": 15.0, "cacheRead": 0.3}
             },
         },
-        "providers": {},
     }
 
     resolved = pricing_maps_module.resolve_all_costs(config)
@@ -697,7 +696,6 @@ def test_resolve_all_costs_yaml_global(config_module, pricing_maps_module):
 def test_resolve_all_costs_litellm_gap_fill(config_module, pricing_maps_module):
     config = {
         "models": {"claude-sonnet-4-6": {}},
-        "providers": {},
     }
     remote = {
         "claude-sonnet-4-6": ModelCost(input=3.0, output=15.0, cache_read=0.3),
@@ -714,7 +712,6 @@ def test_resolve_all_costs_yaml_wins_over_litellm(config_module, pricing_maps_mo
         "models": {
             "test-model": {"cost": {"input": 1.0, "output": 2.0, "cacheRead": 0.1}},
         },
-        "providers": {},
     }
     remote = {
         "test-model": ModelCost(input=99.0, output=99.0, cache_read=99.0),
@@ -733,7 +730,6 @@ def test_resolve_all_costs_partial_yaml_merges_with_litellm(
         "models": {
             "test-model": {"cost": {"input": 9.0}},
         },
-        "providers": {},
     }
     remote = {
         "test-model": ModelCost(
@@ -783,7 +779,7 @@ def test_pricing_lists_yaml_and_source_models(api_module, monkeypatch):
 
 def test_single_model_pricing_contains_litellm_match(api_module, monkeypatch):
     _reset_config(api_module)
-    api_module.CONFIG.update({"models": {}, "providers": {}})
+    api_module.CONFIG.update({"models": {}})
     monkeypatch.setattr(
         "src.pricing.sources.litellm.fetch_remote_pricing",
         lambda *args, **kwargs: {
@@ -808,7 +804,7 @@ def test_single_model_pricing_contains_litellm_match(api_module, monkeypatch):
 
 def test_single_model_pricing_includes_tiers(api_module, monkeypatch):
     _reset_config(api_module)
-    api_module.CONFIG.update({"models": {}, "providers": {}})
+    api_module.CONFIG.update({"models": {}})
     monkeypatch.setattr(
         "src.pricing.sources.litellm.fetch_remote_pricing",
         lambda *args, **kwargs: {
@@ -863,7 +859,7 @@ def test_single_model_pricing_includes_tiers(api_module, monkeypatch):
 
 def test_single_model_pricing_unresolved_includes_empty_tiers(api_module, monkeypatch):
     _reset_config(api_module)
-    api_module.CONFIG.update({"models": {}, "providers": {}})
+    api_module.CONFIG.update({"models": {}})
     monkeypatch.setattr(
         "src.pricing.sources.litellm.fetch_remote_pricing", lambda *args, **kwargs: {}
     )
@@ -883,7 +879,6 @@ def test_single_model_pricing_yaml_override_beats_litellm(api_module, monkeypatc
             "models": {
                 "test-model": {"cost": {"input": 2.0, "output": 4.0, "cacheRead": 0.2}},
             },
-            "providers": {},
         }
     )
     monkeypatch.setattr(
@@ -906,7 +901,7 @@ def test_single_model_pricing_yaml_override_beats_litellm(api_module, monkeypatc
 
 def test_single_model_pricing_cheapest_contains_match(api_module, monkeypatch):
     _reset_config(api_module)
-    api_module.CONFIG.update({"models": {}, "providers": {}})
+    api_module.CONFIG.update({"models": {}})
     monkeypatch.setattr(
         "src.pricing.sources.litellm.fetch_remote_pricing",
         lambda *args, **kwargs: {
@@ -937,7 +932,6 @@ def test_single_model_pricing_slashed_model_exact_yaml(api_module, monkeypatch):
                     "cost": {"input": 0.98, "output": 3.08, "cacheRead": 0.182}
                 },
             },
-            "providers": {},
         }
     )
     monkeypatch.setattr(
@@ -964,7 +958,7 @@ def test_single_model_pricing_slashed_model_exact_yaml(api_module, monkeypatch):
 )
 def test_single_model_pricing_unresolved(api_module, monkeypatch, model, expected):
     _reset_config(api_module)
-    api_module.CONFIG.update({"models": {}, "providers": {}})
+    api_module.CONFIG.update({"models": {}})
     monkeypatch.setattr(
         "src.pricing.sources.litellm.fetch_remote_pricing", lambda *args, **kwargs: {}
     )
@@ -981,7 +975,7 @@ def test_single_model_pricing_unresolved(api_module, monkeypatch, model, expecte
 
 def test_single_model_pricing_case_insensitive(api_module, monkeypatch):
     _reset_config(api_module)
-    api_module.CONFIG.update({"models": {}, "providers": {}})
+    api_module.CONFIG.update({"models": {}})
     monkeypatch.setattr(
         "src.pricing.sources.litellm.fetch_remote_pricing",
         lambda *args, **kwargs: {
@@ -1002,7 +996,7 @@ def test_single_model_pricing_case_insensitive(api_module, monkeypatch):
 
 def test_single_model_pricing_rejects_empty_model(api_module, monkeypatch):
     _reset_config(api_module)
-    api_module.CONFIG.update({"models": {}, "providers": {}})
+    api_module.CONFIG.update({"models": {}})
     monkeypatch.setattr(
         "src.pricing.sources.litellm.fetch_remote_pricing", lambda *args, **kwargs: {}
     )
@@ -1020,7 +1014,6 @@ def test_patch_config_applies_patches_and_refreshes_runtime(
         """# tracker config
 server:
   host: 127.0.0.1
-  port: 4000
 db:
   path: ~/.tokenage/usage.db
 models:
@@ -1029,7 +1022,6 @@ models:
       input: 1.0
       output: 2.0
       cacheRead: 0.1
-providers: {}
 """,
         encoding="utf-8",
     )
@@ -1342,17 +1334,3 @@ def test_fetch_litellm_json_does_not_mutate_global_getaddrinfo(monkeypatch):
 
     assert result is None
     assert base_module.socket.getaddrinfo is original_getaddrinfo
-
-
-def test_refresh_pricing_maps_warns_on_ignored_legacy_keys(pricing_maps_module, caplog):
-    config = {
-        "models": {"m": {"cost": {"input": 1.0, "output": 2.0}}},
-        "providers": {
-            "p": {"price_multiplier": 2, "models": {"m": {"cost": {"input": 9.0}}}}
-        },
-    }
-    with caplog.at_level("WARNING"):
-        pricing_maps_module.refresh_pricing_maps(config)
-    assert "providers.p.price_multiplier" in caplog.text
-    assert "providers.p.models.m" in caplog.text
-    assert pricing_maps_module.MODEL_COSTS["m"].input == 1.0

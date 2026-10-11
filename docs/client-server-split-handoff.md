@@ -8,7 +8,7 @@ Status: design agreed; the split and independent releases shipped. Hosted login 
 | --- | --- |
 | Install/update, login, device credentials, agent configuration, OpenCode/Kilo plugins | Sign-in, token issuance, deployment |
 | Background evaluation worker and local transcript access | Evaluation jobs, result validation and storage |
-| Loopback proxy, provider keys, usage retry queue | Proxy-usage ingestion, pricing and usage storage |
+| Loopback proxy, provider keys, usage reports | Usage-report ingestion, pricing and usage storage |
 | Command integration and local status checks | OTLP ingestion, usage APIs, dashboard |
 
 The dashboard belongs to the server release. Agents send OTLP directly to the hosted collector. Hosted proxy tracking uses **only the machine-local proxy**: provider traffic and keys remain on the machine; the server receives usage metadata. Hosted evaluations execute on the machine with the transcript and report structured results. These decisions supersede earlier hosted-gateway and hosted-evaluation-deferral plans.
@@ -25,7 +25,7 @@ After hosted sign-in, the user installs the client on each machine and runs `tok
 
 ## Data contracts
 
-- **Proxy:** Add `POST /v1/proxy-usage` to the existing ingestion service. Authenticate with the device ingestion token. Events carry a schema version, unique event ID, provider/model, token counts, status and timings. They exclude prompts, responses, tool arguments/results, provider keys, user identity and client-calculated cost. The server derives the user, calculates cost and acknowledges after storage. The client retries from a bounded local metadata queue; event IDs prevent duplicate retry writes. Proxy/OTLP overlap still needs best-effort correlation until both sources share a request ID.
+- **Proxy:** Add `POST /ingest/v1/usage` to the existing ingestion service. Authenticate with the device ingestion token. Events carry provider/model, token counts, status and timings. They exclude prompts, responses, tool arguments/results, provider keys, user identity and client-calculated cost. The server derives the user, calculates cost and acknowledges after storage. The client makes a single attempt per report and drops it on failure; there is no retry queue. Proxy/OTLP overlap still needs best-effort correlation until both sources share a request ID.
 - **Evaluation:** Automatic evaluation is enabled by default per device. Login explains that it uses local Codex or Claude credits and offers an off switch. The server assigns idle-session and dashboard-requested jobs to the device that produced the session. Its background worker claims the job, reads the local transcript, runs the evaluator, and uploads bounded outcome, confidence, title, summary, evidence and failure reason. The server validates device/job ownership and stores results idempotently. Full transcripts and evaluator credentials stay local; derived text needs length limits and secret scrubbing. Jobs wait while the device is unavailable.
 
 ## Migration

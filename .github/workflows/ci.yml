@@ -48,7 +48,11 @@ jobs:
           cp config.example.yaml ~/.tokenage/config.yaml
 
       - name: Ruff format and lint
-        run: python -m ruff format --check . && python -m ruff check src/ client/ protocol/ tests/
+        # Same version as .pre-commit-config.yaml; an unpinned ruff changes
+        # lint results under unrelated PRs.
+        run: |
+          python -m pip install ruff==0.15.20
+          python -m ruff format --check . && python -m ruff check src/ client/ protocol/ tests/
 
       - name: Import contracts
         run: lint-imports

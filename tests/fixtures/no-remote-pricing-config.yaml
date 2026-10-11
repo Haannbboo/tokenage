@@ -2,9 +2,7 @@ pricing:
   auto_fetch: false
 server:
   host: 127.0.0.1
-  port: 4000
   api_port: 4001
 db:
   path: /tmp/tokenage-test-collection.db
 models: {}
-providers: {}

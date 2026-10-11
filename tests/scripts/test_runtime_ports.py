@@ -129,7 +129,6 @@ def test_get_configured_service_ports_prefers_otlp_endpoint_env(
         {
             "server": {
                 "host": "127.0.0.1",
-                "port": 4000,
                 "api_port": 4001,
                 "otlp_port": 4005,
             }
@@ -153,7 +152,6 @@ def test_get_configured_service_ports_uses_configured_otlp_port_without_env(
         {
             "server": {
                 "host": "127.0.0.1",
-                "port": 4000,
                 "api_port": 4001,
                 "otlp_port": 4005,
             }
@@ -204,10 +202,10 @@ def test_parse_supervisor_status_empty_string(runtime_ports_module):
 
 def test_parse_supervisor_status_single_program_with_pid(runtime_ports_module):
     result = runtime_ports_module.parse_supervisor_status(
-        "tokenage-proxy RUNNING pid 1234"
+        "tokenage-api RUNNING pid 1234"
     )
     assert result == {
-        "tokenage-proxy": runtime_ports_module.SupervisorProgramState(
+        "tokenage-api": runtime_ports_module.SupervisorProgramState(
             status="RUNNING",
             pid=1234,
         )
@@ -215,9 +213,9 @@ def test_parse_supervisor_status_single_program_with_pid(runtime_ports_module):
 
 
 def test_parse_supervisor_status_program_without_pid(runtime_ports_module):
-    result = runtime_ports_module.parse_supervisor_status("tokenage-proxy STOPPED")
+    result = runtime_ports_module.parse_supervisor_status("tokenage-api STOPPED")
     assert result == {
-        "tokenage-proxy": runtime_ports_module.SupervisorProgramState(
+        "tokenage-api": runtime_ports_module.SupervisorProgramState(
             status="STOPPED",
             pid=None,
         )
@@ -226,16 +224,16 @@ def test_parse_supervisor_status_program_without_pid(runtime_ports_module):
 
 def test_parse_supervisor_status_multiple_programs(runtime_ports_module):
     text = (
-        "tokenage-proxy RUNNING pid 100\n"
-        "tokenage-api RUNNING pid 200\n"
+        "tokenage-api RUNNING pid 100\n"
+        "tokenage-web RUNNING pid 200\n"
         "tokenage-otlp STOPPED\n"
     )
     result = runtime_ports_module.parse_supervisor_status(text)
     assert result == {
-        "tokenage-proxy": runtime_ports_module.SupervisorProgramState(
+        "tokenage-api": runtime_ports_module.SupervisorProgramState(
             status="RUNNING", pid=100
         ),
-        "tokenage-api": runtime_ports_module.SupervisorProgramState(
+        "tokenage-web": runtime_ports_module.SupervisorProgramState(
             status="RUNNING", pid=200
         ),
         "tokenage-otlp": runtime_ports_module.SupervisorProgramState(

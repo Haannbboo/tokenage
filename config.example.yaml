@@ -4,7 +4,7 @@ pricing:
   # Set to false to disable and rely on YAML-only pricing.
   auto_fetch: true
   # Ranked price sources: earlier entries win collisions, later ones fill gaps.
-  # YAML `models:`/`providers:` overrides always take precedence. Absent list
+  # YAML `models:` overrides always take precedence. Absent list
   # defaults to litellm only.
   sources:
     - name: openrouter
@@ -63,45 +63,15 @@ models:
       output: 2.1
       cacheRead: 0.084
 
-providers:
-  # `enabled: false` takes a provider out of routing without deleting it:
-  # its models leave the proxy's model list and nothing is forwarded
-  # upstream, while base_url/api_key and historical costs stay untouched.
-  my-provider:
-    base_url: https://api.example.com/v1
-    # enabled: false           # optional; omit or true to route normally
-    # api_key: sk-...          # optional; client Authorization is always stripped; if set, proxy injects Bearer <key>
-    models:
-      gemini-3.1-pro-preview: {}
-      claude-sonnet-4-6: {}
-      gpt-5.4: {}
-  openrouter:
-    base_url: https://openrouter.ai/api/v1
-    # api_key: sk-or-...       # optional; client Authorization is always stripped; if set, proxy injects Bearer <key>
-    models:
-      claude-sonnet-4-6: {}
-      claude-haiku-4-5: {}
-      gpt-5.4: {}
-      gpt-5.4-mini: {}
-      gemini-2.5-pro: {}
-      gemini-2.5-flash: {}
-  anthropic:
-    base_url: https://api.anthropic.com/v1
-    # api_key: sk-ant-...       # optional; if set, proxy sends it as x-api-key (Anthropic's native scheme) instead of Bearer
-    # auth_scheme: x-api-key    # required alongside api_key above for Anthropic's native auth; omit/"bearer" for gateways that expect Authorization: Bearer
-    models:
-      claude-sonnet-4-6: {}
-      claude-haiku-4-5: {}
-
 server:
-  # Base URL for agent OTLP/proxy endpoint configuration.
+  # Base URL for agent OTLP endpoint configuration.
   # When set, overrides 'host' for URL generation (e.g. http://my-nas).
-  # Ports still come from port/api_port/otlp_port below.
+  # Ports still come from api_port/otlp_port below.
   # Leave commented for local-only usage (defaults to http://localhost).
   # base_url: http://my-nas
   host: 127.0.0.1       # bind address: 127.0.0.1 = local only, 0.0.0.0 = all interfaces
-  port: 4000
   api_port: 4001
+  otlp_port: 4002
 
 db:
   path: ~/.tokenage/usage.db

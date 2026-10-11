@@ -7,6 +7,7 @@ include_external_packages = True
 
 [importlinter:contract:client-is-standalone]
 name = client imports neither the server nor its framework stack
+# uvicorn/starlette are allowed: the client proxy runs its own ASGI app.
 type = forbidden
 source_modules = client
 forbidden_modules =
@@ -14,7 +15,6 @@ forbidden_modules =
     fastapi
     gunicorn
     sqlalchemy
-    uvicorn
 
 [importlinter:contract:server-not-client]
 name = server never imports the client

@@ -99,3 +99,8 @@ def client_root() -> Path | None:
     except OSError:
         return None
     return resolved if (resolved / "client").is_dir() else None
+
+
+def client_config_path() -> Path:
+    """The client's own config (``proxy:`` section); never the server's."""
+    return tracker_home() / "client.yaml"

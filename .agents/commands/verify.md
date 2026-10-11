@@ -55,7 +55,7 @@ If `src/database/models.py` or `src/schema_migrations.py` changed, explicitly in
 ### Proxy/collector/streaming touched
 
 ```bash
-uv run python -m pytest tests/test_proxy.py tests/test_recorder.py tests/test_cli.py -q
+uv run python -m pytest tests/client/test_client_proxy.py tests/test_usage_ingest.py tests/test_recorder.py tests/test_cli.py -q
 ```
 
 ### Frontend touched

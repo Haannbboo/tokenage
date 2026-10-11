@@ -20,7 +20,7 @@ assignees: []
 ## Actual Behavior
 
 ## Environment
-- Service: <!-- API / Proxy / OTLP / CLI / Frontend -->
+- Service: <!-- API / OTLP / CLI / Frontend -->
 - Port:
 - Branch/Commit:
 - Config file changed? <!-- yes/no -->

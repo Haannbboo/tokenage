@@ -1,6 +1,6 @@
 # tokenage Project Rules
 
-This project tracks LLM usage via a transparent proxy and OTLP collector. Its core risk is obvious: it sits near prompts, responses, auth headers, token counts, cost data, and provider-specific weirdness. Don't be sloppy.
+This project tracks LLM usage via an OTLP collector and a loopback proxy in the client. Its core risk is obvious: it sits near prompts, responses, auth headers, token counts, cost data, and provider-specific weirdness. Don't be sloppy.
 
 ## Non-negotiables
 

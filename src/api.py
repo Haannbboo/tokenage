@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse, urlsplit
 
-import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -19,6 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from protocol import MAX_SUPPORTED_GENERATION, MIN_SUPPORTED_GENERATION
 from protocol.device_status import DeviceStatusReport
+from protocol.usage_report import UsageReport
 from src.config.app import (
     CONFIG,
     CONFIG_PATH,
@@ -28,7 +28,6 @@ from src.config.app import (
     set_evaluation_evaluator,
 )
 from src.config.server_config import (
-    load_server_config,
     resolve_otlp_host_port,
     resolve_server_urls,
 )
@@ -40,7 +39,7 @@ from .auth import (
     get_current_user,
 )
 from .auth import router as auth_router
-from .auth.tokens import list_user_devices, set_device_status
+from .auth.tokens import list_user_devices, resolve_token, set_device_status
 from .database import (
     VALID_OUTCOMES,
     VALID_SOURCES,
@@ -86,6 +85,7 @@ from .evaluation import (
 from .evaluation_worker import load_evaluation_worker_config, run_evaluation_worker
 from .pricing.costs import resolve_cost_match
 from .pricing.snapshots import enrich_rows
+from .recorder import record_tool_call, record_usage
 from .utils import normalize_model_name
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,7 @@ _SPA_API_PREFIXES = (
     "/local/",
     "/version",
     "/install.sh",
+    "/ingest/",
 )
 
 # Public: sign-in endpoints, /auth/me (the frontend probes it before login),
@@ -246,6 +247,10 @@ def _is_public_path(path: str) -> bool:
     """Public: sign-in endpoints, /auth/me, /version, SPA."""
     if not any(path.startswith(prefix) for prefix in _SPA_API_PREFIXES):
         return path not in AUTH_GATE_EXTRA_GATED_PATHS
+    if path.startswith("/ingest/"):
+        # Ingest routes authenticate themselves: ingest tokens only, which the
+        # user gate (cli/web tokens, loopback owner) deliberately rejects.
+        return True
     if path.startswith(("/auth/google/", "/auth/cli/", "/auth/local/")):
         # CLI login endpoints are the credential-issuing surface: the
         # one-time code + PKCE verifier (or the Google flow itself) are the
@@ -709,6 +714,37 @@ def post_device_status(
     return Response(status_code=204)
 
 
+@app.post("/ingest/v1/usage", status_code=204)
+def ingest_usage(request: Request, report: UsageReport):
+    """Record one client-proxy usage report. Ingest tokens only: no cookie,
+    bearer or loopback-owner fallback. The server prices; the client sends
+    metadata only."""
+    token = request.headers.get("x-tokenage-token")
+    resolved = resolve_token(token) if token else None
+    if resolved is None or resolved[1].kind != "ingest":
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = resolved[0].id
+    fields = report.model_dump(exclude={"tool_calls", "base_url"})
+    usage = record_usage(
+        **fields,
+        user_id=user_id,
+        base_url=report.base_url,
+        base_url_provider=report.provider,
+        base_url_source="proxy_config",
+    )
+    if usage is not None:
+        for tc in report.tool_calls:
+            record_tool_call(
+                tool_use_id=tc.tool_use_id,
+                usage_id=usage.id,
+                tool_name=tc.tool_name,
+                user_id=user_id,
+                client_source=report.client_source,
+                ts=usage.ts // 1000,  # ToolCall.ts is milliseconds
+            )
+    return Response(status_code=204)
+
+
 @app.get("/devices/status")
 def get_devices_status(user: User = Depends(get_current_user)):
     """Latest report per device, for the caller's devices only."""
@@ -918,22 +954,6 @@ async def get_session_tool_calls_summary(request: Request, session_id: str):
     return summary
 
 
-async def _notify_proxy_refresh() -> None:
-    """Ask the proxy process to reload its runtime config.
-
-    Fire-and-forget: failures are logged but never surfaced to the caller.
-    """
-    try:
-        server = load_server_config()
-        proxy_url = f"http://{server.host}:{server.port}/config/refresh"
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(proxy_url)
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "Failed to notify proxy to refresh config", exc_info=True
-        )
-
-
 @app.patch("/config", dependencies=[Depends(_require_local_owner)])
 async def patch_config(update: ConfigPatchUpdate):
     from ruamel.yaml import YAML
@@ -964,7 +984,6 @@ async def patch_config(update: ConfigPatchUpdate):
             yaml_parser.dump(config, f)
 
         await asyncio.to_thread(refresh_runtime_config, path)
-        asyncio.create_task(_notify_proxy_refresh())
         return {"status": "success"}
     except RuamelYAMLError as e:
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(e)}")
@@ -1337,5 +1356,5 @@ _assert_api_routes_classified()
 if __name__ == "__main__":
     import uvicorn
 
-    port = CONFIG["server"].get("api_port", CONFIG["server"]["port"] + 1)
+    port = CONFIG["server"]["api_port"]
     uvicorn.run(app, host=CONFIG["server"]["host"], port=port)

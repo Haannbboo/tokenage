@@ -1,6 +1,6 @@
 # tokenage Agent Guide
 
-LLM usage tracker: transparent proxy + OTLP collector. See [README.md](README.md) for architecture, setup, and commands.
+LLM usage tracker: OTLP collector + server, with a local proxy in the client. See [README.md](README.md) for architecture, setup, and commands.
 
 This file is public repo guidance. Keep personal memory, local paths, private planning, account details, and machine-specific secrets out of it.
 
@@ -74,7 +74,7 @@ Version format: `MAJOR.MINOR.PATCH` (e.g. `0.1.180`).
 
 `tokenage --version` prints the client version and commit, and appends `· server <VERSION>` when the server component is installed.
 
-The version is exposed via `GET /version` (both API and proxy apps) and displayed in Settings → Services in the frontend.
+The version is exposed via `GET /version` (the API app) and displayed in Settings → Services in the frontend.
 
 Any new API route consumed by the frontend must be added to `frontend/vite-api-proxy.js` and its proxy route tests.
 
@@ -125,8 +125,8 @@ Use targeted tests during iteration, but before commit/PR run the relevant full 
 
 There is one installed command: `client/bin/tokenage`. Whichever component installs first places it, and the `# tokenage launcher` marker line is how an install recognises a launcher it previously wrote. The server install symlinks it from the clone into `~/.local/bin` unless one exists; the client install replaces it with a copy from its snapshot. It resolves the two components out of `$TOKENAGE_HOME` — `current` for the client snapshot, `src` for the server clone — and routes to whichever one the arguments name. The client runs only from `current` (or `TOKENAGE_ROOT`), never from the server clone, even on one machine.
 
-- `client/` — the client: tracking wrapper, agent configuration, sign-in, component report. It must never import `src`.
-- `src/` — the server component: API, OTLP collector, proxy, dashboard, evaluation worker; its operations are `src/ops.py` (start/stop/restart/status/update, the post-venv half of bootstrap), dispatched by `src/cli.py`; the only shell it needs is `src/scripts/bootstrap.sh`, which runs before the venv exists. There is no top-level `scripts/`.
+- `client/` — the client: tracking wrapper, agent configuration, sign-in, component report, and the local proxy (`client/proxy/`, run by the client service, configured in `$TOKENAGE_HOME/client.yaml`). It must never import `src`.
+- `src/` — the server component: API, OTLP collector, usage ingest, dashboard, evaluation worker; its operations are `src/ops.py` (start/stop/restart/status/update, the post-venv half of bootstrap), dispatched by `src/cli.py`; the only shell it needs is `src/scripts/bootstrap.sh`, which runs before the venv exists. There is no top-level `scripts/`.
 
 Command surface:
 

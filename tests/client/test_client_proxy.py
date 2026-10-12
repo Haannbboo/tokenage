@@ -329,20 +329,48 @@ def test_streaming_passthrough_split_chunks_anthropic_merge(cfg):
     assert [(t.tool_use_id, t.tool_name) for t in rep.tool_calls] == [("tu1", "bash")]
 
 
-def test_streaming_responses_usage_and_prompt_length(cfg):
-    data = sse({"response": {"usage": {"input_tokens": 10, "output_tokens": 5}}})
-    up = Upstream(lambda r: httpx.Response(200, content=split_stream(data, 3)))
+@pytest.mark.parametrize("path", ["/v1/responses", "/responses"])
+@pytest.mark.parametrize("chunk_size", [None, 3])
+def test_streaming_responses_usage_and_prompt_length(cfg, path, chunk_size):
+    data = sse(
+        {
+            "type": "response.output_item.added",
+            "output_index": 1,
+            "item": {"type": "function_call", "call_id": "tc1", "name": "bash"},
+        },
+        {"type": "response.function_call_arguments.delta", "delta": '{"cmd":"ls"}'},
+        {"type": "response.output_text.delta", "delta": "hello"},
+        {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 10, "output_tokens": 5}},
+        },
+    )
+    # Coalesced events must reach final usage even after string-valued deltas.
+    up = Upstream(
+        lambda r: httpx.Response(
+            200, content=data if chunk_size is None else split_stream(data, chunk_size)
+        )
+    )
     reports = []
-    make_client(cfg, up, reports).post(
-        "/v1/responses",
+    response = make_client(cfg, up, reports).post(
+        path,
         json={
             "model": "test-model",
             "stream": True,
             "input": [{"role": "user", "content": "abcd"}],
         },
     )
-    assert (reports[0].prompt_tokens, reports[0].completion_tokens) == (10, 5)
-    assert reports[0].prompt_length == 4
+    assert response.status_code == 200 and response.content == data
+    (report,) = reports
+    assert (report.prompt_tokens, report.completion_tokens, report.total_tokens) == (
+        10,
+        5,
+        15,
+    )
+    assert report.prompt_length == 4
+    assert [(t.tool_use_id, t.tool_name) for t in report.tool_calls] == [
+        ("tc1", "bash")
+    ]
 
 
 def test_chat_completions_stream_requests_usage_but_keeps_caller_options(cfg):

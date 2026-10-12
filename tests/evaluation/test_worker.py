@@ -10,6 +10,7 @@ import pytest
 def _insert_session_record(database_module, db_path, session_id: str, **overrides):
     values = {
         "session_id": session_id,
+        "user_id": "test-user",
         "client_source": "codex",
         "started": 1778749200000000,
         "ended": 1778751000000000,
@@ -93,6 +94,7 @@ def test_select_auto_evaluation_candidates_filters_quiet_manual_active_and_local
         client_source="codex",
         trigger="auto",
         db_path=db_path,
+        user_id="test-user",
     )
     monkeypatch.setattr(
         evaluation_worker_module,
@@ -251,6 +253,7 @@ def test_select_auto_evaluation_candidates_retries_failed_auto_only_after_change
             client_source="codex",
             trigger="auto",
             db_path=db_path,
+            user_id="test-user",
         )
         database_module.mark_evaluation_job_running(job["job_id"], db_path=db_path)
         database_module.mark_evaluation_job_failed(
@@ -337,9 +340,24 @@ def test_enqueue_auto_evaluation_jobs_fills_bounded_buffer(
         evaluation_worker_module,
         "select_auto_evaluation_candidates",
         lambda **kwargs: [
-            {"session_id": "s1", "client_source": "codex", "updated_at": None},
-            {"session_id": "s2", "client_source": "codex", "updated_at": None},
-            {"session_id": "s3", "client_source": "codex", "updated_at": None},
+            {
+                "session_id": "s1",
+                "client_source": "codex",
+                "user_id": "test-user",
+                "updated_at": None,
+            },
+            {
+                "session_id": "s2",
+                "client_source": "codex",
+                "user_id": "test-user",
+                "updated_at": None,
+            },
+            {
+                "session_id": "s3",
+                "client_source": "codex",
+                "user_id": "test-user",
+                "updated_at": None,
+            },
         ],
     )
     monkeypatch.setattr(
@@ -440,11 +458,18 @@ def test_classify_local_evaluator_sessions_marks_no_op_without_job(
         db_path=db_path,
     )
 
-    saved = database_module.get_session_evaluation("eval-session", db_path=db_path)
+    saved = database_module.get_session_evaluation(
+        "eval-session", db_path=db_path, user_id="test-user"
+    )
     assert classified == 1
     assert saved is not None
     assert saved["outcome"] == "no_op"
-    assert database_module.list_active_evaluation_jobs(db_path=db_path) == []
+    assert (
+        database_module.list_active_evaluation_jobs(
+            db_path=db_path, user_id="test-user"
+        )
+        == []
+    )
 
 
 def test_classify_local_evaluator_sessions_marks_transcriptless_codex_job_telemetry_no_op(
@@ -503,6 +528,7 @@ def test_classify_local_evaluator_sessions_marks_transcriptless_codex_job_teleme
                 created_at="2026-05-14T09:59:59+00:00",
                 started_at="2026-05-14T10:00:00+00:00",
                 finished_at="2026-05-14T10:00:20+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -513,13 +539,13 @@ def test_classify_local_evaluator_sessions_marks_transcriptless_codex_job_teleme
     )
 
     saved = database_module.get_session_evaluation(
-        "evaluator-telemetry", db_path=db_path
+        "evaluator-telemetry", db_path=db_path, user_id="test-user"
     )
     outside = database_module.get_session_evaluation(
-        "outside-job-window", db_path=db_path
+        "outside-job-window", db_path=db_path, user_id="test-user"
     )
     manual = database_module.get_session_evaluation(
-        "manual-evaluator-telemetry", db_path=db_path
+        "manual-evaluator-telemetry", db_path=db_path, user_id="test-user"
     )
     assert classified == 1
     assert saved is not None
@@ -575,7 +601,9 @@ def test_classify_transcriptless_telemetry_ignores_other_user_job(
 
     assert classified == 0
     assert (
-        database_module.get_session_evaluation("user-b-telemetry", db_path=db_path)
+        database_module.get_session_evaluation(
+            "user-b-telemetry", db_path=db_path, user_id="test-user"
+        )
         is None
     )
 
@@ -591,10 +619,18 @@ def test_run_evaluation_worker_once_respects_max_concurrent_jobs(
     _insert_session_record(database_module, db_path, "s1", client_source="codex")
     _insert_session_record(database_module, db_path, "s2", client_source="codex")
     database_module.create_session_evaluation_job(
-        session_id="s1", client_source="codex", trigger="manual", db_path=db_path
+        session_id="s1",
+        client_source="codex",
+        trigger="manual",
+        db_path=db_path,
+        user_id="test-user",
     )
     database_module.create_session_evaluation_job(
-        session_id="s2", client_source="codex", trigger="manual", db_path=db_path
+        session_id="s2",
+        client_source="codex",
+        trigger="manual",
+        db_path=db_path,
+        user_id="test-user",
     )
     created = []
     to_thread_calls = []
@@ -802,6 +838,7 @@ def test_run_evaluation_worker_once_passes_job_evaluator_to_execute(
         trigger="manual",
         evaluator_type="claude",
         db_path=db_path,
+        user_id="test-user",
     )
 
     captured_kwargs = {}

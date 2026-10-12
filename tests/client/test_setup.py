@@ -93,6 +93,21 @@ def test_setup_needs_a_collector(machine: Path, capsys) -> None:
     assert "login --server URL" in capsys.readouterr().err
 
 
+def test_setup_refuses_without_an_ingest_token(machine: Path, capsys) -> None:
+    path = machine / ".tokenage" / "credentials.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {"server_url": "https://app.example.com", "otlp_logs_endpoint": ENDPOINT}
+        ),
+        encoding="utf-8",
+    )
+
+    assert setup.run_setup(disable=False) == setup.EXIT_NOT_SIGNED_IN
+    assert "tokenage login" in capsys.readouterr().err
+    assert not (machine / ".claude" / "settings.json").exists()
+
+
 def test_setup_disable_removes_only_our_keys(machine: Path, capsys) -> None:
     _sign_in(machine)
     settings = machine / ".claude" / "settings.json"

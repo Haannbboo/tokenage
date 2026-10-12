@@ -1,4 +1,4 @@
-"""Postgres tests for the PR 4 tenancy schema (docs/quick/postgres-testing.md).
+"""Postgres tests for the tenancy schema (docs/quick/postgres-testing.md).
 
 Local-only: every test in this module skips unless TOKENAGE_TEST_PG_URL
 points at a dedicated scratch database. CI stays SQLite-only.
@@ -13,122 +13,9 @@ from sqlalchemy import inspect, text
 
 TS_2026_04_17_10 = 1776420000000000
 
-OLD_USAGE_DDL = """
-CREATE TABLE usage (
-    id TEXT PRIMARY KEY,
-    ts BIGINT NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    client_source TEXT,
-    session_id TEXT,
-    endpoint TEXT NOT NULL,
-    prompt_tokens INTEGER,
-    prompt_length INTEGER NOT NULL DEFAULT 0,
-    completion_tokens INTEGER,
-    reasoning_tokens INTEGER,
-    cached_tokens INTEGER,
-    total_tokens INTEGER,
-    latency_ms INTEGER,
-    ttft_ms INTEGER,
-    tool_tokens INTEGER,
-    cache_creation_tokens INTEGER,
-    input_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    output_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    status INTEGER,
-    client_ip TEXT
-)
-"""
-
-OLD_USAGE_DAILY_DDL = """
-CREATE TABLE usage_daily (
-    id SERIAL PRIMARY KEY,
-    date TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    client_source TEXT NOT NULL DEFAULT '',
-    request_count INTEGER NOT NULL DEFAULT 0,
-    prompt_tokens INTEGER NOT NULL DEFAULT 0,
-    completion_tokens INTEGER NOT NULL DEFAULT 0,
-    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-    cached_tokens INTEGER NOT NULL DEFAULT 0,
-    total_tokens INTEGER NOT NULL DEFAULT 0,
-    tool_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-    prompt_length INTEGER NOT NULL DEFAULT 0,
-    input_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    output_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    successful_requests INTEGER NOT NULL DEFAULT 0,
-    failed_requests INTEGER NOT NULL DEFAULT 0,
-    status_429 INTEGER NOT NULL DEFAULT 0,
-    status_4xx INTEGER NOT NULL DEFAULT 0,
-    status_5xx INTEGER NOT NULL DEFAULT 0,
-    status_unknown INTEGER NOT NULL DEFAULT 0,
-    latency_sum_ms INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(date, provider, model, client_source)
-)
-"""
-
-OLD_SESSIONS_DDL = """
-CREATE TABLE sessions (
-    session_id TEXT PRIMARY KEY,
-    client_source TEXT,
-    started BIGINT NOT NULL,
-    ended BIGINT NOT NULL,
-    request_count INTEGER NOT NULL DEFAULT 0,
-    successful_requests INTEGER NOT NULL DEFAULT 0,
-    failed_requests INTEGER NOT NULL DEFAULT 0,
-    total_tokens INTEGER NOT NULL DEFAULT 0,
-    prompt_tokens INTEGER NOT NULL DEFAULT 0,
-    completion_tokens INTEGER NOT NULL DEFAULT 0,
-    cached_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-    total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    latency_sum_ms INTEGER NOT NULL DEFAULT 0,
-    avg_latency_ms NUMERIC(18, 4),
-    avg_ttft_ms NUMERIC(18, 4),
-    primary_provider TEXT,
-    primary_model TEXT,
-    providers_json TEXT,
-    models_json TEXT,
-    tool_calls_json TEXT DEFAULT '{}',
-    last_usage_id TEXT,
-    updated_at TEXT NOT NULL
-)
-"""
-
-OLD_EVALUATION_JOBS_DDL = """
-CREATE TABLE evaluation_jobs (
-    job_id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    client_source TEXT,
-    trigger TEXT NOT NULL DEFAULT 'manual',
-    evaluator_type TEXT NOT NULL DEFAULT 'codex',
-    status TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    started_at TEXT,
-    finished_at TEXT,
-    error TEXT
-)
-"""
-
 
 def _table_column_names(engine, table_name: str) -> set[str]:
     return {c["name"] for c in inspect(engine).get_columns(table_name)}
-
-
-def _usage_daily_unique_constraints(engine) -> list[str]:
-    with engine.connect() as connection:
-        return list(
-            connection.execute(
-                text(
-                    "SELECT constraint_name FROM information_schema.table_constraints "
-                    "WHERE table_name = 'usage_daily' AND constraint_type = 'UNIQUE'"
-                )
-            ).scalars()
-        )
 
 
 def _daily_row(engine):
@@ -141,7 +28,7 @@ def _daily_row(engine):
         ).all()
 
 
-def _make_usage(*, user_id: str | None = None, **overrides):
+def _make_usage(*, user_id: str = "u0", **overrides):
     from src.database.models import Usage
 
     fields = dict(
@@ -169,192 +56,92 @@ def _make_usage(*, user_id: str | None = None, **overrides):
     return Usage(**fields)
 
 
+def _seed_users(engine, *user_ids: str) -> None:
+    with engine.begin() as connection:
+        for user_id in user_ids:
+            connection.execute(
+                text(
+                    "INSERT INTO users (id, email, created_at) VALUES (:id, :email, 0)"
+                ),
+                {"id": user_id, "email": f"{user_id}@example.com"},
+            )
+
+
 def test_fresh_migrate_creates_tenancy_shapes(pg_db, pg_engine):
     from src.schema_migrations import migrate_database
 
     migrate_database(pg_db)
 
     for table in ("usage", "usage_daily", "sessions", "tool_calls", "evaluation_jobs"):
-        assert "user_id" in _table_column_names(pg_engine, table)
+        columns = {c["name"]: c for c in inspect(pg_engine).get_columns(table)}
+        assert columns["user_id"]["nullable"] is False
 
     daily_indexes = {
         index["name"]: index for index in inspect(pg_engine).get_indexes("usage_daily")
     }
-    assert daily_indexes["uq_usage_daily_local"]["unique"]
-    assert daily_indexes["uq_usage_daily_user"]["unique"]
+    assert daily_indexes["uq_usage_daily"]["unique"]
+    assert "uq_usage_daily_local" not in daily_indexes
+    assert "uq_usage_daily_user" not in daily_indexes
 
     for table, index_name in [
         ("usage", "ix_usage_user_id"),
         ("sessions", "ix_sessions_user_id"),
         ("tool_calls", "ix_tool_calls_user_id"),
+        ("sessions", "ix_sessions_started_desc"),
     ]:
         assert index_name in {
             index["name"] for index in inspect(pg_engine).get_indexes(table)
         }
 
-    assert "ix_evaluation_jobs_one_active_per_session" in {
-        index["name"] for index in inspect(pg_engine).get_indexes("evaluation_jobs")
-    }
+    assert migrate_database(pg_db) == []
 
 
-def test_old_shape_migration_swaps_unique_and_preserves_data(pg_clean):
+def test_migrate_tightens_a_nullable_tenancy_schema(pg_db, pg_engine):
+    """A pre-NOT-NULL database: nullable user_id, partial usage_daily indexes,
+    no sessions FK. migrate_database converges it and is then a no-op."""
     from src.schema_migrations import migrate_database
 
-    with pg_clean.begin() as connection:
-        for ddl in (
-            OLD_USAGE_DDL,
-            OLD_USAGE_DAILY_DDL,
-            OLD_SESSIONS_DDL,
-            OLD_EVALUATION_JOBS_DDL,
+    migrate_database(pg_db)
+    with pg_engine.begin() as connection:
+        for table in (
+            "usage",
+            "usage_daily",
+            "sessions",
+            "tool_calls",
+            "evaluation_jobs",
         ):
-            connection.execute(text(ddl))
-        connection.execute(
-            text(
-                "INSERT INTO usage (id, ts, provider, model, client_source, session_id, "
-                "endpoint, prompt_tokens, completion_tokens, total_tokens, latency_ms, "
-                "status, input_cost_usd, output_cost_usd, total_cost_usd) VALUES "
-                "('uuid-1', 1776420000000000, 'anthropic', 'm1', 'claude-code', "
-                "'sess-1', '/v1/messages', 10, 5, 15, 100, 200, 0.001, 0.002, 0.003)"
+            connection.execute(
+                text(f"ALTER TABLE {table} ALTER COLUMN user_id DROP NOT NULL")
             )
-        )
+        for fk in inspect(connection).get_foreign_keys("sessions"):
+            if fk["constrained_columns"] == ["user_id"]:
+                connection.execute(
+                    text(f'ALTER TABLE sessions DROP CONSTRAINT "{fk["name"]}"')
+                )
+        connection.execute(text("DROP INDEX uq_usage_daily"))
         connection.execute(
             text(
-                "INSERT INTO usage_daily (date, provider, model, client_source, "
-                "request_count, prompt_tokens) VALUES "
-                "('2026-04-17', 'anthropic', 'm1', 'claude-code', 42, 4242)"
-            )
-        )
-        connection.execute(
-            text(
-                "INSERT INTO sessions (session_id, started, ended, request_count, "
-                "updated_at) VALUES "
-                "('sess-1', 1776420000000000, 1776420000000000, 42, "
-                "'2026-04-17T00:00:00+00:00')"
-            )
-        )
-        connection.execute(
-            text(
-                "INSERT INTO evaluation_jobs (job_id, kind, session_id, status, "
-                "created_at) VALUES "
-                "('job-1', 'session_evaluation', 'sess-1', 'queued', "
-                "'2026-04-17T00:00:00+00:00')"
+                "CREATE UNIQUE INDEX uq_usage_daily_local ON usage_daily "
+                "(date, provider, model, client_source) WHERE user_id IS NULL"
             )
         )
 
-    url = pg_clean.url.render_as_string(hide_password=False)
-    changes = migrate_database(url)
+    changes = set(migrate_database(pg_db))
 
-    assert "usage.user_id" in changes
-    assert "usage_daily.user_id" in changes
-    assert "sessions.user_id" in changes
-    assert "evaluation_jobs.user_id" in changes
-    assert "usage_daily.unique_swap" in changes
-
-    # Data preserved
-    with pg_clean.connect() as connection:
-        usage_rows = connection.execute(
-            text("SELECT id, user_id, prompt_tokens FROM usage")
-        ).all()
-        assert usage_rows == [("uuid-1", None, 10)]
-        sessions_rows = connection.execute(
-            text("SELECT session_id, request_count, user_id FROM sessions")
-        ).all()
-        assert sessions_rows == [("sess-1", 42, None)]
-        jobs_rows = connection.execute(
-            text("SELECT job_id, user_id FROM evaluation_jobs")
-        ).all()
-        assert jobs_rows == [("job-1", None)]
-    assert _daily_row(pg_clean) == [(None, 42, 4242)]
-
-    # Old UNIQUE dropped, partial indexes in place, sessions PK unchanged
-    assert _usage_daily_unique_constraints(pg_clean) == []
-    daily_indexes = {
-        index["name"]: index for index in inspect(pg_clean).get_indexes("usage_daily")
-    }
-    assert daily_indexes["uq_usage_daily_local"]["unique"]
-    assert daily_indexes["uq_usage_daily_user"]["unique"]
-    assert inspect(pg_clean).get_pk_constraint("sessions") == {
-        "constrained_columns": ["session_id"],
-        "name": "sessions_pkey",
-    }
-
-    # Second run is a no-op for the tenancy steps
-    tenancy_changes = {
-        change
-        for change in migrate_database(url)
-        if "user_id" in change or change == "usage_daily.unique_swap"
-    }
-    assert tenancy_changes == set()
+    assert "sessions.user_id_fk" in changes
+    assert "usage.user_id_not_null" in changes
+    assert "usage_daily.drop_uq_usage_daily_local" in changes
+    assert "usage_daily.uq_usage_daily" in changes
+    for table in ("usage", "usage_daily", "sessions", "tool_calls", "evaluation_jobs"):
+        columns = {c["name"]: c for c in inspect(pg_engine).get_columns(table)}
+        assert columns["user_id"]["nullable"] is False
+    assert migrate_database(pg_db) == []
 
 
-def test_old_shape_migration_merges_duplicate_rows(pg_clean):
-    """Create-all-era Postgres tables never had the old UNIQUE; duplicate
-    rows must be merged (summed) before the partial indexes are created."""
-    from src.schema_migrations import migrate_database
-
-    daily_ddl = OLD_USAGE_DAILY_DDL.replace(
-        ",\n    UNIQUE(date, provider, model, client_source)", ""
-    )
-
-    with pg_clean.begin() as connection:
-        connection.execute(text(daily_ddl))
-        connection.execute(
-            text(
-                "INSERT INTO usage_daily (date, provider, model, client_source, "
-                "request_count, prompt_tokens, total_cost_usd, latency_sum_ms) "
-                "VALUES ('2026-04-17', 'anthropic', 'm1', 'claude-code', 1, 10, "
-                "0.003, 100)"
-            )
-        )
-        connection.execute(
-            text(
-                "INSERT INTO usage_daily (date, provider, model, client_source, "
-                "request_count, prompt_tokens, total_cost_usd, latency_sum_ms) "
-                "VALUES ('2026-04-17', 'anthropic', 'm1', 'claude-code', 2, 20, "
-                "0.006, 200)"
-            )
-        )
-        connection.execute(
-            text(
-                "INSERT INTO usage_daily (date, provider, model, client_source, "
-                "request_count, prompt_tokens) "
-                "VALUES ('2026-04-18', 'anthropic', 'm1', 'claude-code', 7, 70)"
-            )
-        )
-
-    url = pg_clean.url.render_as_string(hide_password=False)
-    changes = migrate_database(url)
-    assert "usage_daily.unique_swap" in changes
-
-    with pg_clean.connect() as connection:
-        rows = connection.execute(
-            text(
-                "SELECT date, request_count, prompt_tokens, latency_sum_ms, user_id "
-                "FROM usage_daily ORDER BY date"
-            )
-        ).all()
-    assert rows == [
-        ("2026-04-17", 3, 30, 300, None),
-        ("2026-04-18", 7, 70, 0, None),
-    ]
-
-    assert _usage_daily_unique_constraints(pg_clean) == []
-    daily_indexes = {
-        index["name"]: index for index in inspect(pg_clean).get_indexes("usage_daily")
-    }
-    assert daily_indexes["uq_usage_daily_local"]["unique"]
-    assert daily_indexes["uq_usage_daily_user"]["unique"]
-
-    tenancy_changes = {
-        change
-        for change in migrate_database(url)
-        if "user_id" in change or change == "usage_daily.unique_swap"
-    }
-    assert tenancy_changes == set()
-
-
-def test_upsert_daily_aggregate_on_conflict_sums(pg_db):
+def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
     from src.database.usage import upsert_daily_aggregate
+
+    _seed_users(pg_engine, "u0", "u1")
 
     upsert_daily_aggregate(_make_usage(), db_path=pg_db)
     upsert_daily_aggregate(
@@ -364,7 +151,7 @@ def test_upsert_daily_aggregate_on_conflict_sums(pg_db):
 
     rows = _daily_row(pg_db)
     assert len(rows) == 1
-    assert rows[0].user_id is None
+    assert rows[0].user_id == "u0"
     assert rows[0].request_count == 2
     assert rows[0].prompt_tokens == 120
 
@@ -376,14 +163,16 @@ def test_upsert_daily_aggregate_on_conflict_sums(pg_db):
     rows = _daily_row(pg_db)
     assert len(rows) == 2
     by_user = {row.user_id: row for row in rows}
-    assert by_user[None].request_count == 2
-    assert by_user[None].prompt_tokens == 120
+    assert by_user["u0"].request_count == 2
+    assert by_user["u0"].prompt_tokens == 120
     assert by_user["u1"].request_count == 2
     assert by_user["u1"].prompt_tokens == 8
 
 
-def test_upsert_daily_aggregate_concurrent_writes_sum(pg_db):
+def test_upsert_daily_aggregate_concurrent_writes_sum(pg_db, pg_engine):
     from src.database.usage import upsert_daily_aggregate
+
+    _seed_users(pg_engine, "u0")
 
     thread_count = 8
 
@@ -405,13 +194,16 @@ def test_upsert_daily_aggregate_concurrent_writes_sum(pg_db):
     assert rows[0].prompt_tokens == thread_count
 
 
-def test_session_upsert_isolates_tenants_and_fails_cleanly_on_collision(pg_db):
+def test_session_upsert_isolates_tenants_and_fails_cleanly_on_collision(
+    pg_db, pg_engine
+):
     from sqlalchemy.exc import IntegrityError
     from sqlalchemy.orm import Session as OrmSession
 
     from src.database.engine import get_engine
     from src.database.sessions import get_session_record, upsert_session_from_usage
 
+    _seed_users(pg_engine, "u1", "u2", "u3")
     upsert_session_from_usage(_make_usage(user_id="u1"), db_path=pg_db)
     upsert_session_from_usage(
         _make_usage(session_id="sess-2", user_id="u2"), db_path=pg_db
@@ -429,7 +221,6 @@ def test_session_upsert_isolates_tenants_and_fails_cleanly_on_collision(pg_db):
         assert record_u1 is not None
         assert record_u1.user_id == "u1"
         assert get_session_record(session, "sess-2", user_id="u2").user_id == "u2"
-        assert get_session_record(session, "sess-1", user_id=None) is None
         assert get_session_record(session, "sess-1", user_id="u3") is None
 
     # Tenant-poison guard: a second user writing the same session_id fails

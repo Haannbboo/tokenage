@@ -32,15 +32,11 @@ _SINGLE_REQUEST_SOURCES = frozenset({"opencode", "kilo"})
 def get_session_record(
     db_session: Session,
     session_id: str,
-    user_id: str | None = None,
+    user_id: str,
     *,
     with_for_update: bool = False,
 ) -> SessionRecord | None:
-    """Return the session row matching (session_id, user_id).
-
-    A None user_id matches rows with a NULL user_id (SQLAlchemy renders
-    ``IS NULL``), so local and tenant lookups never cross.
-    """
+    """Return the session row matching (session_id, user_id)."""
     query = select(SessionRecord).where(
         and_(
             SessionRecord.session_id == session_id,
@@ -248,7 +244,7 @@ def upsert_session_from_tool_call(
 
 
 def summarize_session_tool_calls(
-    session_id: str, user_id: str | None = None, db_path: str | None = None
+    session_id: str, user_id: str, db_path: str | None = None
 ) -> list[dict[str, Any]] | None:
     """Return [{tool_name, count}] for a session, or None if it doesn't exist."""
     engine = get_engine(db_path)
@@ -328,7 +324,8 @@ def upsert_session_evaluation(
     failure_reason: str | None = None,
     project: str | None = None,
     skip_if_manual: bool = False,
-    user_id: str | None = None,
+    *,
+    user_id: str,
     db_path: str | None = None,
 ) -> None:
     """Set evaluation on an existing session. Raises ValueError if session not found."""
@@ -360,7 +357,7 @@ def upsert_session_evaluation(
 
 def get_session_evaluation(
     session_id: str,
-    user_id: str | None = None,
+    user_id: str,
     db_path: str | None = None,
 ) -> dict[str, Any] | None:
     """Return evaluation dict for a session, or None if not found or not evaluated."""
@@ -385,7 +382,7 @@ def get_session_evaluation(
 
 
 def delete_session_evaluation(
-    session_id: str, user_id: str | None = None, db_path: str | None = None
+    session_id: str, user_id: str, db_path: str | None = None
 ) -> bool:
     """Clear evaluation columns on a session. Returns True if session found."""
     engine = get_engine(db_path)
@@ -461,15 +458,13 @@ def _normalize_timestamp_filter(value: str) -> int:
 
 def _session_filters(
     *,
-    user_id: str | None = None,
+    user_id: str,
     client_source: str | None = None,
     since: str | None = None,
     until: str | None = None,
     hide_noop: bool = False,
 ) -> list[Any]:
-    filters: list[Any] = []
-    if user_id is not None:
-        filters.append(SessionRecord.user_id == user_id)
+    filters: list[Any] = [SessionRecord.user_id == user_id]
     if client_source:
         filters.append(SessionRecord.client_source == client_source)
     if since:
@@ -551,7 +546,7 @@ def _selector_row_to_dict(row: Any) -> dict[str, Any]:
 
 def aggregate_model_effectiveness(
     *,
-    user_id: str | None = None,
+    user_id: str,
     group_by: str = "model",
     since: str | None = None,
     until: str | None = None,
@@ -751,7 +746,7 @@ def _build_daily_report_text(
 
 def daily_session_effectiveness_report(
     *,
-    user_id: str | None = None,
+    user_id: str,
     date: str,
     db_path: str | None = None,
 ) -> dict[str, Any]:
@@ -882,7 +877,7 @@ def daily_session_effectiveness_report(
 
 def fetch_sessions(
     *,
-    user_id: str | None = None,
+    user_id: str,
     client_source: str | None = None,
     since: str | None = None,
     until: str | None = None,
@@ -926,7 +921,7 @@ def fetch_sessions(
 
 def fetch_session_selector_rows(
     *,
-    user_id: str | None = None,
+    user_id: str,
     client_source: str | None = None,
     since: str | None = None,
     until: str | None = None,
@@ -966,7 +961,7 @@ def fetch_session_selector_rows(
 
 def count_sessions(
     *,
-    user_id: str | None = None,
+    user_id: str,
     client_source: str | None = None,
     since: str | None = None,
     until: str | None = None,
@@ -992,7 +987,7 @@ def count_sessions(
 
 def summarize_sessions(
     *,
-    user_id: str | None = None,
+    user_id: str,
     client_source: str | None = None,
     since: str | None = None,
     until: str | None = None,

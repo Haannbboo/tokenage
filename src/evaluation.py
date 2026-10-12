@@ -859,7 +859,7 @@ def _upsert_llm_evaluation(
     session_id: str,
     evaluation: dict[str, Any],
     db_path: str | None,
-    user_id: str | None = None,
+    user_id: str,
     skip_if_manual: bool = False,
 ) -> None:
     from .database import upsert_session_evaluation
@@ -885,7 +885,7 @@ def _session_has_manual_evaluation(
     session_id: str,
     *,
     db_path: str | None = None,
-    user_id: str | None = None,
+    user_id: str,
 ) -> bool:
     with Session(get_engine(db_path)) as session:
         record = get_session_record(session, session_id, user_id=user_id)
@@ -896,7 +896,7 @@ def mark_evaluator_session_no_op(
     session_id: str,
     *,
     db_path: str | None = None,
-    user_id: str | None = None,
+    user_id: str,
 ) -> bool:
     if _session_has_manual_evaluation(session_id, db_path=db_path, user_id=user_id):
         return False
@@ -915,7 +915,7 @@ def summarize_session_with_llm(
     db_path: str | None = None,
     update: bool = True,
     evaluator: str = "codex",
-    user_id: str | None = None,
+    user_id: str,
 ) -> dict[str, Any]:
     """Evaluate and summarize a session synchronously using the central evaluator."""
     with Session(get_engine(db_path)) as session:
@@ -1033,7 +1033,7 @@ def execute_session_evaluation_job(
         evaluator_type = evaluator or job.get("evaluator_type") or "codex"
 
         if _session_has_manual_evaluation(
-            job["session_id"], db_path=db_path, user_id=job.get("user_id")
+            job["session_id"], db_path=db_path, user_id=job["user_id"]
         ):
             mark_evaluation_job_succeeded(job_id, db_path=db_path)
             return
@@ -1043,7 +1043,7 @@ def execute_session_evaluation_job(
             db_path=db_path,
             update=True,
             evaluator=evaluator_type,
-            user_id=job.get("user_id"),
+            user_id=job["user_id"],
         )
         mark_evaluation_job_succeeded(job_id, db_path=db_path)
     except Exception as exc:
@@ -1055,7 +1055,7 @@ def start_session_evaluation_job(
     *,
     trigger: str = "manual",
     evaluator_type: str = "codex",
-    user_id: str | None = None,
+    user_id: str,
     db_path: str | None = None,
 ) -> dict[str, Any]:
     evaluator_type = normalize_evaluator_type(evaluator_type)
@@ -1082,6 +1082,7 @@ def start_session_evaluation_job(
             promoted = promote_evaluation_job_to_manual(
                 active["job_id"],
                 evaluator_type=evaluator_type,
+                user_id=user_id,
                 db_path=db_path,
             )
             if promoted is not None:
@@ -1090,6 +1091,7 @@ def start_session_evaluation_job(
             updated = update_queued_evaluation_job_evaluator(
                 active["job_id"],
                 evaluator_type=evaluator_type,
+                user_id=user_id,
                 db_path=db_path,
             )
             if updated is not None:

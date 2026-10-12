@@ -138,7 +138,7 @@ def merge_duplicate_usage(
     ts: int,
     session_id: str | None,
     client_ip: str | None,
-    user_id: str | None = None,
+    user_id: str,
     db_path: str | None = None,
 ) -> Usage | None:
     """Find a same-shaped usage row already recorded by the other collection path
@@ -270,14 +270,14 @@ def _usage_daily_match(usage: Usage, date: str) -> Any:
     """Filter selecting the usage_daily row that aggregates *usage*'s group.
 
     Shared by every incremental usage_daily update so the match fields
-    (including the NULL-user_id convention) can't drift between callers.
+    can't drift between callers.
     """
     return and_(
         UsageDaily.date == date,
         UsageDaily.provider == usage.provider,
         UsageDaily.model == usage.model,
         UsageDaily.client_source == (usage.client_source or ""),
-        func.coalesce(UsageDaily.user_id, "") == (usage.user_id or ""),
+        UsageDaily.user_id == usage.user_id,
     )
 
 
@@ -336,17 +336,9 @@ def upsert_daily_aggregate(usage: Usage, db_path: str | None = None) -> None:
 
     insert_fn = pg_insert if engine.dialect.name == "postgresql" else sqlite_insert
 
-    if usage.user_id is None:
-        index_elements = ["date", "provider", "model", "client_source"]
-        index_where = UsageDaily.user_id.is_(None)
-    else:
-        index_elements = ["date", "provider", "model", "client_source", "user_id"]
-        index_where = UsageDaily.user_id.isnot(None)
-
     statement = insert_fn(UsageDaily).values(**values)
     statement = statement.on_conflict_do_update(
-        index_elements=index_elements,
-        index_where=index_where,
+        index_elements=["date", "provider", "model", "client_source", "user_id"],
         set_={
             "request_count": UsageDaily.request_count
             + statement.excluded.request_count,
@@ -402,7 +394,7 @@ class CostRecalcResult:
 def recalculate_usage_cost(
     usage_id: str,
     *,
-    user_id: str | None = None,
+    user_id: str,
     model_costs: dict[str, Any] | None = None,
     model_cost_sources: dict[str, str] | None = None,
     db_path: str | None = None,
@@ -425,9 +417,7 @@ def recalculate_usage_cost(
 
     engine = get_engine(db_path)
     with Session(engine) as session:
-        query = select(Usage).where(Usage.id == usage_id)
-        if user_id is not None:
-            query = query.where(Usage.user_id == user_id)
+        query = select(Usage).where(Usage.id == usage_id, Usage.user_id == user_id)
         usage = session.scalar(query.with_for_update())
         if usage is None:
             return None
@@ -564,20 +554,22 @@ def recalculate_usage_cost(
         )
 
 
-def fetch_estimated_usage_ids(
+def fetch_estimated_usage_rows(
     *,
     provider: str | None = None,
     model: str | None = None,
     since: str | None = None,
     until: str | None = None,
     db_path: str | None = None,
-) -> list[str]:
-    """Ids of usage rows not bound to a price snapshot (i.e. estimated)."""
+) -> list[tuple[str, str]]:
+    """(id, user_id) of usage rows not bound to a price snapshot (estimated)."""
     filters = _usage_filters(provider=provider, model=model, since=since, until=until)
     filters.append(Usage.price_snapshot_id.is_(None))
-    query = select(Usage.id).where(and_(*filters)).order_by(Usage.ts.asc())
+    query = (
+        select(Usage.id, Usage.user_id).where(and_(*filters)).order_by(Usage.ts.asc())
+    )
     with get_engine(db_path).connect() as connection:
-        return [row[0] for row in connection.execute(query)]
+        return [(row[0], row[1]) for row in connection.execute(query)]
 
 
 def reprice_estimated_rows(
@@ -604,7 +596,7 @@ def reprice_estimated_rows(
     scanned: unresolvable or unbound rows are skipped and the scan continues,
     so an early stuck row can't stop later ones from being repriced.
     """
-    ids = fetch_estimated_usage_ids(
+    rows = fetch_estimated_usage_rows(
         provider=provider,
         model=model,
         since=since,
@@ -612,7 +604,7 @@ def reprice_estimated_rows(
         db_path=db_path,
     )
     repriced = skipped = examined = 0
-    for usage_id in ids:
+    for usage_id, owner_id in rows:
         if limit is not None and repriced >= limit:
             break
         examined += 1
@@ -620,6 +612,7 @@ def reprice_estimated_rows(
             usage_id,
             model_costs=model_costs,
             model_cost_sources=model_cost_sources,
+            user_id=owner_id,
             db_path=db_path,
         )
         # A snapshot failure leaves the row unbound, so don't report it as
@@ -741,6 +734,8 @@ def _usage_filters(
     status_5xx: bool = False,
 ) -> list[Any]:
     filters: list[Any] = []
+    # ponytail: None only for the all-users reprice (fetch_estimated_usage_rows);
+    # it goes away with the per-user reprice in pricing overrides.
     if user_id is not None:
         filters.append(Usage.user_id == user_id)
     if provider:
@@ -756,8 +751,7 @@ def _usage_filters(
             ToolCall.usage_id == Usage.id,
             ToolCall.tool_name == normalize_tool_name(tool_name),
         )
-        if user_id is not None:
-            tool_query = tool_query.where(ToolCall.user_id == user_id)
+        tool_query = tool_query.where(ToolCall.user_id == Usage.user_id)
         filters.append(tool_query.exists())
     if since:
         filters.append(Usage.ts >= _iso_to_micros(since))
@@ -778,7 +772,7 @@ def _usage_filters(
 
 def _tool_duration_sum_by(
     *group_cols: Any,
-    user_id: str | None = None,
+    user_id: str,
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
@@ -804,8 +798,7 @@ def _tool_duration_sum_by(
         until=until,
     )
     filters.append(Usage.client_source.in_(TOOL_DURATION_IN_LATENCY_SOURCES))
-    if user_id is not None:
-        filters.append(ToolCall.user_id == user_id)
+    filters.append(ToolCall.user_id == user_id)
     query = (
         select(
             *group_cols,
@@ -855,16 +848,14 @@ def _attach_tool_throughput(
 
 def _daily_usage_filters(
     *,
-    user_id: str | None = None,
+    user_id: str,
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
 ) -> list[Any]:
-    filters: list[Any] = []
-    if user_id is not None:
-        filters.append(UsageDaily.user_id == user_id)
+    filters: list[Any] = [UsageDaily.user_id == user_id]
     if since:
         filters.append(UsageDaily.date >= since[:10])
     _until = until or datetime.now(UTC).isoformat()
@@ -972,7 +963,7 @@ def _daily_usage_status_columns() -> tuple[Any, ...]:
 
 def fetch_recent_usage(
     *,
-    user_id: str | None = None,
+    user_id: str,
     limit: int,
     offset: int = 0,
     provider: str | None = None,
@@ -1014,8 +1005,7 @@ def fetch_recent_usage(
         tool_names_expr,
         func.sum(ToolCall.duration_ms).label("tool_duration_ms"),
     ).group_by(ToolCall.usage_id)
-    if user_id is not None:
-        tool_query = tool_query.where(ToolCall.user_id == user_id)
+    tool_query = tool_query.where(ToolCall.user_id == user_id)
     tool_agg = tool_query.subquery()
 
     query = (
@@ -1063,7 +1053,7 @@ def fetch_recent_usage(
 
 def distinct_client_sources(
     *,
-    user_id: str | None = None,
+    user_id: str,
     since: str | None = None,
     until: str | None = None,
     db_path: str | None = None,
@@ -1083,7 +1073,7 @@ def distinct_client_sources(
 
 def distinct_tool_names(
     *,
-    user_id: str | None = None,
+    user_id: str,
     since: str | None = None,
     until: str | None = None,
     db_path: str | None = None,
@@ -1093,9 +1083,7 @@ def distinct_tool_names(
     ``ToolCall.ts`` is stored in milliseconds (unlike ``Usage.ts`` which uses
     microseconds), so this function uses ``_iso_to_millis``.
     """
-    filters: list[Any] = []
-    if user_id is not None:
-        filters.append(ToolCall.user_id == user_id)
+    filters: list[Any] = [ToolCall.user_id == user_id]
     if since:
         filters.append(ToolCall.ts >= _iso_to_millis(since))
     if until:
@@ -1114,7 +1102,7 @@ def fetch_tool_calls(
     *,
     usage_id: str | None = None,
     session_id: str | None = None,
-    user_id: str | None = None,
+    user_id: str,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return tool calls for a single usage row or session, ordered by ts.
@@ -1125,8 +1113,7 @@ def fetch_tool_calls(
     column = ToolCall.usage_id if usage_id is not None else ToolCall.session_id
     value = usage_id if usage_id is not None else session_id
     filters = [column == value]
-    if user_id is not None:
-        filters.append(ToolCall.user_id == user_id)
+    filters.append(ToolCall.user_id == user_id)
     query = (
         select(
             ToolCall.tool_use_id,
@@ -1148,8 +1135,7 @@ def fetch_tool_calls(
         usage_query = select(Usage.ts, Usage.latency_ms, Usage.client_source).where(
             Usage.id == usage_id
         )
-        if user_id is not None:
-            usage_query = usage_query.where(Usage.user_id == user_id)
+        usage_query = usage_query.where(Usage.user_id == user_id)
         usage_row = connection.execute(usage_query).first()
         if usage_row is None:
             return rows
@@ -1174,7 +1160,7 @@ def fetch_tool_calls(
 
 def count_usage(
     *,
-    user_id: str | None = None,
+    user_id: str,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
@@ -1228,12 +1214,8 @@ def count_usage(
         return int(result or 0)
 
 
-def get_usage_high_watermark_ts(
-    *, user_id: str | None = None, db_path: str | None = None
-) -> int:
-    query = select(func.max(Usage.ts))
-    if user_id is not None:
-        query = query.where(Usage.user_id == user_id)
+def get_usage_high_watermark_ts(*, user_id: str, db_path: str | None = None) -> int:
+    query = select(func.max(Usage.ts)).where(Usage.user_id == user_id)
     with get_engine(db_path).connect() as connection:
         value = connection.execute(query).scalar_one()
     return int(value or 0)
@@ -1241,7 +1223,7 @@ def get_usage_high_watermark_ts(
 
 def summarize_usage_window(
     *,
-    user_id: str | None = None,
+    user_id: str,
     after_ts: int = 0,
     until_ts: int | None = None,
     since: str | None = None,
@@ -1419,7 +1401,7 @@ def _build_usage_window_summary(
 
 def _summarize_usage_raw(
     *,
-    user_id: str | None = None,
+    user_id: str,
     select_cols: tuple[Any, ...],
     group_cols: tuple[Any, ...],
     since: str | None = None,
@@ -1514,7 +1496,7 @@ def _summarize_usage_raw(
 
 def summarize_tool_calls(
     *,
-    user_id: str | None = None,
+    user_id: str,
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
@@ -1543,8 +1525,7 @@ def summarize_tool_calls(
         status_4xx=status_4xx,
         status_5xx=status_5xx,
     )
-    if user_id is not None:
-        filters.append(ToolCall.user_id == user_id)
+    filters.append(ToolCall.user_id == user_id)
     query = (
         select(
             ToolCall.tool_name,
@@ -1566,7 +1547,7 @@ def summarize_tool_calls(
 
 def summarize_usage_by_source(
     *,
-    user_id: str | None = None,
+    user_id: str,
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
@@ -1630,7 +1611,7 @@ def summarize_usage_by_source(
 
 def summarize_usage_by_provider(
     *,
-    user_id: str | None = None,
+    user_id: str,
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
@@ -1693,7 +1674,7 @@ def summarize_usage_by_provider(
 
 def summarize_usage_daily(
     *,
-    user_id: str | None = None,
+    user_id: str,
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
@@ -1825,7 +1806,7 @@ def _period_expression(granularity: str, tz_offset: str) -> Any:
 
 def aggregate_usage_by_period(
     *,
-    user_id: str | None = None,
+    user_id: str,
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
@@ -1921,7 +1902,7 @@ def aggregate_usage_by_period(
 
 def aggregate_daily_by_period(
     *,
-    user_id: str | None = None,
+    user_id: str,
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
@@ -1972,7 +1953,7 @@ def aggregate_daily_by_period(
 
 def aggregate_daily_by_dimension(
     *,
-    user_id: str | None = None,
+    user_id: str,
     dimension: str,
     since: str | None = None,
     until: str | None = None,

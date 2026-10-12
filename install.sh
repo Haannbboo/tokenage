@@ -250,10 +250,14 @@ ln -s "versions/$COMMIT" "$CURRENT_TMP"
 
 if [ "${TOKENAGE_SKIP_LOGIN:-0}" = 1 ]; then
   say "Refreshing agent configuration with the updated client..."
-  if ! TOKENAGE_CLIENT_COMMIT=$COMMIT PYTHONPATH=$VERSION_DIR \
-    "$VERSION_DIR/.venv/bin/python" -P -m client setup; then
-    fail 'client update installed, but agent configuration refresh failed'
-  fi
+  TOKENAGE_CLIENT_COMMIT=$COMMIT PYTHONPATH=$VERSION_DIR \
+    "$VERSION_DIR/.venv/bin/python" -P -m client setup && SETUP_RC=0 || SETUP_RC=$?
+  # 3 = EXIT_NOT_SIGNED_IN in client/setup.py
+  case $SETUP_RC in
+    0) ;;
+    3) say "Not signed in; agents left unwired. Run: $BIN_DIR/tokenage login" ;;
+    *) fail 'client update installed, but agent configuration refresh failed' ;;
+  esac
   say "Installed tokenage $COMMIT. Existing credentials were preserved; sign-in skipped."
 else
   say "Installed tokenage $COMMIT. Starting sign-in..."

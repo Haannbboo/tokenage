@@ -101,13 +101,7 @@ def select_auto_evaluation_candidates(
 
     now_dt = _parse_iso(now) if now is not None else datetime.now(UTC)
     quiet_cutoff = (now_dt - timedelta(seconds=quiet_delay_seconds)).isoformat()
-    same_user = or_(
-        EvaluationJob.user_id == SessionRecord.user_id,
-        and_(
-            EvaluationJob.user_id.is_(None),
-            SessionRecord.user_id.is_(None),
-        ),
-    )
+    same_user = EvaluationJob.user_id == SessionRecord.user_id
     latest_failed_auto = (
         select(func.max(EvaluationJob.finished_at))
         .where(
@@ -207,7 +201,7 @@ def enqueue_auto_evaluation_jobs(
             create_session_evaluation_job(
                 session_id=str(candidate["session_id"]),
                 client_source=candidate["client_source"],
-                user_id=candidate.get("user_id"),
+                user_id=str(candidate["user_id"]),
                 trigger="auto",
                 evaluator_type=config.evaluator,
                 db_path=db_path,
@@ -335,11 +329,7 @@ def classify_transcriptless_evaluator_telemetry(
         job_limit = max(limit * 5, 50)
         jobs: list[EvaluationJob] = []
         for user_id in {record.user_id for record in records}:
-            user_filter = (
-                EvaluationJob.user_id.is_(None)
-                if user_id is None
-                else EvaluationJob.user_id == user_id
-            )
+            user_filter = EvaluationJob.user_id == user_id
             jobs.extend(
                 session.execute(
                     select(EvaluationJob)

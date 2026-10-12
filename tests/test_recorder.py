@@ -30,9 +30,10 @@ def test_record_usage_inserts_row(test_db):
         ttft_ms=None,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     row = rows[0]
     assert row["provider"] == "openai"
@@ -73,6 +74,7 @@ def test_record_usage_normalizes_models_and_rollups(test_db, monkeypatch):
             total_tokens=150,
             status=200,
             db_path=test_db,
+            user_id="test-user",
         )
         assert usage is not None
         assert usage.model == canonical
@@ -94,13 +96,27 @@ def test_record_usage_normalizes_models_and_rollups(test_db, monkeypatch):
         assert session.scalars(select(PriceSnapshot)).one().model == canonical
 
     for model in (" Space-Bunny-Free ", canonical):
-        assert len(fetch_recent_usage(limit=10, model=model, db_path=test_db)) == 2
-        assert count_usage(model=model, db_path=test_db) == 2
         assert (
-            count_usage(model=model, session_id="normalized-session", db_path=test_db)
+            len(
+                fetch_recent_usage(
+                    limit=10, model=model, db_path=test_db, user_id="test-user"
+                )
+            )
             == 2
         )
-        summary = summarize_usage_window(model=model, db_path=test_db)
+        assert count_usage(model=model, db_path=test_db, user_id="test-user") == 2
+        assert (
+            count_usage(
+                model=model,
+                session_id="normalized-session",
+                db_path=test_db,
+                user_id="test-user",
+            )
+            == 2
+        )
+        summary = summarize_usage_window(
+            model=model, db_path=test_db, user_id="test-user"
+        )
         assert summary["window"]["row_count"] == 2
         assert summary["models"][0]["model"] == canonical
 
@@ -142,6 +158,7 @@ def test_record_usage_normalizes_provider_without_losing_pricing(test_db, monkey
             base_url="https://api.example.com/v1",
             base_url_provider=name,
             db_path=test_db,
+            user_id="test-user",
         )
         assert usage is not None
         assert usage.provider == provider
@@ -159,22 +176,33 @@ def test_record_usage_normalizes_provider_without_losing_pricing(test_db, monkey
         assert session.scalars(select(BaseUrl)).one().provider_name == provider
 
     assert (
-        len(fetch_recent_usage(limit=10, provider="CUSTOM-PROVIDER", db_path=test_db))
+        len(
+            fetch_recent_usage(
+                limit=10,
+                provider="CUSTOM-PROVIDER",
+                db_path=test_db,
+                user_id="test-user",
+            )
+        )
         == 2
     )
-    assert count_usage(provider="CUSTOM-PROVIDER", db_path=test_db) == 2
+    assert (
+        count_usage(provider="CUSTOM-PROVIDER", db_path=test_db, user_id="test-user")
+        == 2
+    )
     assert (
         count_usage(
             provider="CUSTOM-PROVIDER",
             session_id="provider-normalization",
             db_path=test_db,
+            user_id="test-user",
         )
         == 2
     )
     assert (
-        summarize_usage_window(provider="CUSTOM-PROVIDER", db_path=test_db)["window"][
-            "row_count"
-        ]
+        summarize_usage_window(
+            provider="CUSTOM-PROVIDER", db_path=test_db, user_id="test-user"
+        )["window"]["row_count"]
         == 2
     )
 
@@ -205,9 +233,10 @@ def test_record_usage_computes_costs(test_db):
             latency_ms=200,
             status=200,
             db_path=test_db,
+            user_id="test-user",
         )
 
-        rows = fetch_recent_usage(limit=10, db_path=test_db)
+        rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
         assert len(rows) == 1
         row = rows[0]
         assert float(row["total_cost_usd"]) == pytest.approx(
@@ -248,6 +277,7 @@ def test_record_usage_writes_price_snapshot(test_db):
             total_tokens=1500,
             status=200,
             db_path=test_db,
+            user_id="test-user",
         )
 
         snapshot = get_price_snapshot(
@@ -304,9 +334,10 @@ def test_record_usage_persists_client_ip(test_db):
         status=200,
         client_ip="100.88.94.9",
         db_path=test_db,
+        user_id="test-user",
     )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     assert rows[0]["client_ip"] == "100.88.94.9"
 
@@ -324,9 +355,10 @@ def test_record_usage_client_ip_defaults_to_none(test_db):
         total_tokens=150,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     assert rows[0]["client_ip"] is None
 
@@ -343,9 +375,10 @@ def test_record_usage_skips_zero_tokens_on_success(test_db):
         completion_tokens=0,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 0
 
 
@@ -359,9 +392,10 @@ def test_record_usage_skips_none_tokens_on_success(test_db):
         endpoint="/v1/chat/completions",
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 0
 
 
@@ -377,9 +411,10 @@ def test_record_usage_records_prompt_only_tokens(test_db):
         completion_tokens=0,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     assert rows[0]["prompt_tokens"] == 100
 
@@ -396,9 +431,10 @@ def test_record_usage_records_zero_tokens_on_error(test_db):
         completion_tokens=0,
         status=400,
         db_path=test_db,
+        user_id="test-user",
     )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     assert rows[0]["status"] == 400
 
@@ -415,9 +451,10 @@ def test_record_usage_records_zero_tokens_on_unknown_status(test_db):
         completion_tokens=0,
         status=None,
         db_path=test_db,
+        user_id="test-user",
     )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     assert rows[0]["status"] is None
 
@@ -434,6 +471,7 @@ def test_record_tool_call_links_to_usage(test_db):
         completion_tokens=5,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
     assert usage is not None
 
@@ -444,10 +482,11 @@ def test_record_tool_call_links_to_usage(test_db):
         client_source="test",
         ts=usage.ts,
         db_path=test_db,
+        user_id="test-user",
     )
 
     # Verify via fetch_recent_usage which already joins tool_names
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     assert rows[0]["tool_names"] == "get_weather"
 
@@ -464,6 +503,7 @@ def test_record_tool_call_persists_and_returns_duration(test_db):
         completion_tokens=5,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
     assert usage is not None
 
@@ -474,6 +514,7 @@ def test_record_tool_call_persists_and_returns_duration(test_db):
         duration_ms=1234,
         ts=usage.ts,
         db_path=test_db,
+        user_id="test-user",
     )
     record_tool_call(
         tool_use_id="toolu_nodur",
@@ -481,9 +522,10 @@ def test_record_tool_call_persists_and_returns_duration(test_db):
         tool_name="Read",
         ts=usage.ts,
         db_path=test_db,
+        user_id="test-user",
     )
 
-    calls = fetch_tool_calls(usage_id=usage.id, db_path=test_db)
+    calls = fetch_tool_calls(usage_id=usage.id, db_path=test_db, user_id="test-user")
     by_id = {call["tool_use_id"]: call for call in calls}
     assert by_id["toolu_dur"]["duration_ms"] == 1234
     assert by_id["toolu_nodur"]["duration_ms"] is None
@@ -501,6 +543,7 @@ def test_record_tool_call_multiple_per_usage(test_db):
         completion_tokens=10,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
     assert usage is not None
 
@@ -514,9 +557,10 @@ def test_record_tool_call_multiple_per_usage(test_db):
             tool_name=tool_name,
             ts=usage.ts,
             db_path=test_db,
+            user_id="test-user",
         )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     # tool_names are comma-separated (order depends on DB query)
     tool_names = set(rows[0]["tool_names"].split(","))
@@ -535,6 +579,7 @@ def test_record_tool_call_duplicate_id_is_noop(test_db):
         completion_tokens=1,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
     assert usage is not None
 
@@ -545,9 +590,10 @@ def test_record_tool_call_duplicate_id_is_noop(test_db):
             tool_name="bash",
             ts=usage.ts,
             db_path=test_db,
+            user_id="test-user",
         )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     assert rows[0]["tool_names"] == "bash"
 
@@ -568,6 +614,7 @@ def test_record_tool_call_scoped_collision_keeps_new_call(test_db):
         tool_name="bash",
         ts=1,
         db_path=test_db,
+        user_id="test-user",
     )
     record_tool_call(
         tool_use_id="user-1:call_abc",
@@ -599,6 +646,7 @@ def test_record_tool_call_integrity_error_is_noop(test_db, monkeypatch):
         completion_tokens=1,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
     assert usage is not None
 
@@ -608,6 +656,7 @@ def test_record_tool_call_integrity_error_is_noop(test_db, monkeypatch):
         tool_name="bash",
         ts=usage.ts,
         db_path=test_db,
+        user_id="test-user",
     )
 
     # Simulate a second request racing past the "already recorded" pre-check.
@@ -619,9 +668,10 @@ def test_record_tool_call_integrity_error_is_noop(test_db, monkeypatch):
         tool_name="bash",
         ts=usage.ts,
         db_path=test_db,
+        user_id="test-user",
     )
 
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     assert rows[0]["tool_names"] == "bash"
 
@@ -642,6 +692,7 @@ def _record_otlp_usage(test_db, **overrides):
         total_tokens=150,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
     fields.update(overrides)
     return record_usage(**fields)
@@ -662,6 +713,7 @@ def _record_proxy_usage(test_db, **overrides):
         total_tokens=150,
         status=200,
         db_path=test_db,
+        user_id="test-user",
     )
     fields.update(overrides)
     return record_usage(**fields)
@@ -685,7 +737,7 @@ def test_record_usage_deduplicates_model_aliases(test_db, otlp_first):
     assert initial is not None and duplicate is not None
     assert initial.id == duplicate.id
     assert duplicate.model == "stealth/space-bunny-alpha"
-    assert len(fetch_recent_usage(limit=10, db_path=test_db)) == 1
+    assert len(fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")) == 1
 
 
 def test_record_usage_keeps_unmapped_model_variants_separate(test_db):
@@ -709,7 +761,7 @@ def test_record_usage_merges_proxy_duplicate_into_existing_otlp_row(test_db):
 
     assert proxy_usage is not None
     assert proxy_usage.id == otlp_usage.id
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     row = rows[0]
     assert row["endpoint"] == "otlp"
@@ -737,7 +789,7 @@ def test_record_usage_merges_otlp_duplicate_into_existing_proxy_row(test_db):
 
     assert otlp_usage is not None
     assert otlp_usage.id == proxy_usage.id
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
     row = rows[0]
     assert row["endpoint"] == "/v1/messages"  # surviving row is the proxy's
@@ -760,7 +812,7 @@ def test_record_usage_keeps_proxy_row_when_tokens_differ(test_db):
     proxy_usage = _record_proxy_usage(test_db, prompt_tokens=999)
 
     assert proxy_usage is not None
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 2
 
 
@@ -770,7 +822,7 @@ def test_record_usage_keeps_proxy_row_when_outside_dedup_window(test_db):
     proxy_usage = _record_proxy_usage(test_db, ts=1779148800000000 + 60_000_000)
 
     assert proxy_usage is not None
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 2
 
 
@@ -781,7 +833,7 @@ def test_record_usage_keeps_proxy_row_for_unrecognized_client_source(test_db):
     proxy_usage = _record_proxy_usage(test_db, client_source="some-other-cli")
 
     assert proxy_usage is not None
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 2
 
 
@@ -793,7 +845,7 @@ def test_record_usage_otlp_rows_are_never_deduped_against_each_other(test_db):
     assert first is not None
     assert second is not None
     assert first.id != second.id
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 2
 
 
@@ -807,7 +859,7 @@ def test_record_usage_merges_kilo_and_opencode_across_the_family(test_db):
 
     assert proxy_usage is not None
     assert proxy_usage.id == otlp_usage.id
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
 
 
@@ -833,7 +885,7 @@ def test_record_usage_dedup_handles_none_token_fields(test_db):
 
     assert proxy_usage is not None
     assert proxy_usage.id == otlp_usage.id
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
 
 
@@ -847,7 +899,7 @@ def test_record_usage_merges_when_proxy_zero_vs_otlp_none_cache_creation(test_db
 
     assert proxy_usage is not None
     assert proxy_usage.id == otlp_usage.id
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
 
 
@@ -860,7 +912,7 @@ def test_record_usage_merges_when_proxy_zero_then_otlp_none_cache_creation(test_
 
     assert otlp_usage is not None
     assert otlp_usage.id == proxy_usage.id
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 1
 
 
@@ -875,69 +927,29 @@ def test_record_usage_does_not_merge_different_cache_creation(test_db):
 
     assert proxy_usage is not None
     assert proxy_usage.id != otlp_usage.id
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
     assert len(rows) == 2
 
 
-def test_record_usage_writes_null_user_id_on_all_tables(test_db):
-    """AC 9: a normal local record flow writes NULL user_id everywhere."""
-    from sqlalchemy.orm import Session as OrmSession
-
-    from src.database import create_session_evaluation_job, get_engine, select
-    from src.database.models import (
-        EvaluationJob,
-        SessionRecord,
-        ToolCall,
-        Usage,
-        UsageDaily,
-    )
-    from src.recorder import record_tool_call, record_usage
-
-    usage = record_usage(
-        ts=1779148800000000,
-        provider="openai",
-        model="gpt-4",
-        client_source="test",
-        session_id="sess-null-user",
-        endpoint="/v1/chat/completions",
-        prompt_tokens=100,
-        completion_tokens=50,
-        total_tokens=150,
-        status=200,
-        db_path=test_db,
-    )
-    assert usage is not None
-
-    record_tool_call(
-        tool_use_id="null_user_tool",
-        usage_id=usage.id,
-        session_id="sess-null-user",
-        tool_name="bash",
-        ts=usage.ts,
-        db_path=test_db,
-    )
-    create_session_evaluation_job(
-        session_id="sess-null-user", client_source="test", db_path=test_db
-    )
-
-    with OrmSession(get_engine(test_db)) as session:
-        assert session.scalar(select(Usage).where(Usage.id == usage.id)).user_id is None
-        assert session.scalar(select(UsageDaily)).user_id is None
-        assert session.scalar(select(SessionRecord)).user_id is None
-        assert session.scalar(select(ToolCall)).user_id is None
-        assert session.scalar(select(EvaluationJob)).user_id is None
-
-
 def test_record_usage_does_not_merge_across_user_ids(test_db):
-    """AC 7: dedup never crosses tenants — NULL vs real, and real vs real."""
+    """AC 7: dedup never crosses tenants."""
     otlp_usage = _record_otlp_usage(test_db)
     assert otlp_usage is not None
+
+    def total() -> int:
+        from sqlalchemy import func, select
+        from sqlalchemy.orm import Session as OrmSession
+
+        from src.database import get_engine
+        from src.database.models import Usage
+
+        with OrmSession(get_engine(test_db)) as session:
+            return session.scalar(select(func.count()).select_from(Usage))
 
     proxy_usage = _record_proxy_usage(test_db, user_id="u1")
     assert proxy_usage is not None
     assert proxy_usage.id != otlp_usage.id
-    rows = fetch_recent_usage(limit=10, db_path=test_db)
-    assert len(rows) == 2
+    assert total() == 2
 
     other_otlp = _record_otlp_usage(
         test_db, ts=1779148800000000 + 100_000_000, user_id="u2"
@@ -948,7 +960,7 @@ def test_record_usage_does_not_merge_across_user_ids(test_db):
     assert other_otlp is not None
     assert other_proxy is not None
     assert other_proxy.id != other_otlp.id
-    assert len(fetch_recent_usage(limit=10, db_path=test_db)) == 4
+    assert total() == 4
 
     same_user_otlp = _record_otlp_usage(
         test_db, ts=1779148800000000 + 200_000_000, user_id="u4"
@@ -959,4 +971,4 @@ def test_record_usage_does_not_merge_across_user_ids(test_db):
     assert same_user_otlp is not None
     assert same_user_proxy is not None
     assert same_user_proxy.id == same_user_otlp.id
-    assert len(fetch_recent_usage(limit=10, db_path=test_db)) == 5
+    assert total() == 5

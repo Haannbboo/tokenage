@@ -15,15 +15,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from client.agents import DONE, SKIPPED, claude, codex, kilo, opencode
+from client.agents import DONE, SKIPPED, claude, codex, kilo, opencode, plugin
 from client.paths import PACKAGE_ROOT, display_endpoint
 
 AGENT_MODULES = {"codex": codex, "claude": claude, "opencode": opencode, "kilo": kilo}
 
-PLUGIN_SUFFIX = {
-    "opencode": "plugins/opencode/dist/index.js",
-    "kilo": "plugins/kilo/dist/index.js",
-}
+PLUGIN_SUFFIX = {name: plugin.tracker_suffixes(name) for name in ("opencode", "kilo")}
 
 
 def agent_targets() -> dict[str, str]:
@@ -101,7 +98,9 @@ def _read_toml(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _plugin_endpoint(config: dict[str, Any], suffix: str, default: str) -> str | None:
+def _plugin_endpoint(
+    config: dict[str, Any], suffix: str | tuple[str, ...], default: str
+) -> str | None:
     """First tracker plugin entry wins, matching the server's setup-health check."""
     entries = config.get("plugin")
     if not isinstance(entries, list):
@@ -113,7 +112,7 @@ def _plugin_endpoint(config: dict[str, Any], suffix: str, default: str) -> str |
             entry_path = entry[0]
         else:
             continue
-        if not entry_path.replace("\\", "/").endswith(suffix):
+        if not entry_path.replace("\\", "/").rstrip("/").endswith(suffix):
             continue
         if isinstance(entry, list) and len(entry) >= 2 and isinstance(entry[1], dict):
             return str(entry[1].get("endpoint") or default)

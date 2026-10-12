@@ -14,8 +14,15 @@ def config_path() -> Path:
 
 
 def configure(project_root: str | Path, logs_endpoint: str, token: str | None = None):
+    # One `plugin` entry that both OpenCode 1 and 2 load: the built directory.
     return plugin.configure(
-        NAME, LABEL, config_path(), project_root, logs_endpoint, token
+        NAME,
+        LABEL,
+        config_path(),
+        project_root,
+        logs_endpoint,
+        token,
+        register_directory=True,
     )
 
 

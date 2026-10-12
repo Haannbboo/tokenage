@@ -27,6 +27,17 @@ def _require_no_null_user_ids(engine, insp) -> None:
                 )
 
 
+def _nullable_user_id_tables(insp) -> list[str]:
+    return sorted(
+        table
+        for (_, table), columns in insp.get_multi_columns(
+            filter_names=list(TENANT_TABLES)
+        ).items()
+        for column in columns
+        if column["name"] == "user_id" and column["nullable"]
+    )
+
+
 def migrate_database(db_path: str | None = None) -> list[str]:
     """Bring a database up to the models: create missing indexes, swap the
     legacy usage_daily partial indexes, and make user_id NOT NULL (Postgres).
@@ -39,6 +50,12 @@ def migrate_database(db_path: str | None = None) -> list[str]:
     insp = inspect(engine)
     if engine.dialect.name == "postgresql":
         _require_no_null_user_ids(engine, insp)
+    elif stale := _nullable_user_id_tables(insp):
+        # Checked before any DDL: success here would hide NULL-owner rows.
+        raise RuntimeError(
+            f"SQLite tables {stale} have a nullable user_id; this schema has "
+            "no upgrade path. Rebuild the database before migrating."
+        )
     existing = {
         table: {index["name"] for index in indexes}
         for (_, table), indexes in insp.get_multi_indexes().items()
@@ -66,14 +83,7 @@ def migrate_database(db_path: str | None = None) -> list[str]:
     # ponytail: SQLite cannot ALTER a column to NOT NULL; its databases get the
     # constraint from create_all (a rebuilt/new file). Postgres is altered here.
     if engine.dialect.name == "postgresql":
-        nullable = [
-            table
-            for (_, table), columns in insp.get_multi_columns(
-                filter_names=list(TENANT_TABLES)
-            ).items()
-            for column in columns
-            if column["name"] == "user_id" and column["nullable"]
-        ]
+        nullable = _nullable_user_id_tables(insp)
         sessions_fk = any(
             fk["constrained_columns"] == ["user_id"]
             for fk in insp.get_foreign_keys("sessions")

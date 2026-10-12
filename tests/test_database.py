@@ -6018,6 +6018,39 @@ def test_migrate_database_swaps_legacy_usage_daily_indexes(fresh_db):
     assert schema_migrations.migrate_database(fresh_db.db_path) == []
 
 
+def test_migrate_database_rejects_sqlite_with_nullable_user_id(fresh_db):
+    import pytest
+
+    schema_migrations = fresh_db.schema_migrations_module
+    database_module = fresh_db.database_module
+    engine = database_module.get_engine(fresh_db.db_path)
+    with engine.begin() as conn:
+        conn.execute(database_module.text("DROP TABLE tool_calls"))
+        conn.execute(
+            database_module.text(
+                "CREATE TABLE tool_calls (tool_use_id TEXT PRIMARY KEY, user_id TEXT)"
+            )
+        )
+        conn.execute(database_module.text("DROP INDEX uq_usage_daily"))
+
+    try:
+        with pytest.raises(RuntimeError, match="tool_calls"):
+            schema_migrations.migrate_database(fresh_db.db_path)
+
+        # Rejected before any DDL: the dropped index was not recreated.
+        from sqlalchemy import inspect
+
+        names = {i["name"] for i in inspect(engine).get_indexes("usage_daily")}
+        assert "uq_usage_daily" not in names
+    finally:  # the test schema is shared across the session
+        from src.database.models import ToolCall
+
+        with engine.begin() as conn:
+            conn.execute(database_module.text("DROP TABLE tool_calls"))
+        ToolCall.__table__.create(engine)
+        schema_migrations.migrate_database(fresh_db.db_path)
+
+
 def test_migrate_database_creates_missing_model_indexes(fresh_db):
     schema_migrations = fresh_db.schema_migrations_module
     database_module = fresh_db.database_module

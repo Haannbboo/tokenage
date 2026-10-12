@@ -602,7 +602,7 @@ def test_classify_transcriptless_telemetry_ignores_other_user_job(
     assert classified == 0
     assert (
         database_module.get_session_evaluation(
-            "user-b-telemetry", db_path=db_path, user_id="test-user"
+            "user-b-telemetry", db_path=db_path, user_id="user-b"
         )
         is None
     )

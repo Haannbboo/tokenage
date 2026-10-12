@@ -276,3 +276,44 @@ def test_dimension_device_returns_names(fresh_db):
     assert [(r["dimension"], r["dimension_name"]) for r in rows] == [
         (device_id, "unraid-vm")
     ]
+
+
+def _record(fresh_db, device_id, endpoint, user_id="u1"):
+    from src.recorder import record_usage
+
+    return record_usage(
+        ts=TS,
+        provider="anthropic",
+        model="dedup-model",
+        user_id=user_id,
+        device_id=device_id,
+        client_source="claude-code",
+        endpoint=endpoint,
+        prompt_tokens=11,
+        completion_tokens=7,
+        total_tokens=18,
+        status=200,
+        db_path=fresh_db.db_path,
+    )
+
+
+def _usage_rows(fresh_db):
+    from src.database import get_engine
+    from src.database.models import Usage
+
+    with Session(get_engine(fresh_db.db_path)) as s:
+        return s.execute(select(Usage.device_id)).scalars().all()
+
+
+def test_duplicate_merge_requires_same_device(fresh_db):
+    # Same shape, same window, different devices: both rows are kept.
+    _record(fresh_db, "d1", "/v1/messages")
+    _record(fresh_db, "d2", "otlp")
+    assert sorted(_usage_rows(fresh_db)) == ["d1", "d2"]
+
+
+def test_duplicate_merge_still_happens_on_same_device(fresh_db):
+    first = _record(fresh_db, "d1", "/v1/messages")
+    second = _record(fresh_db, "d1", "otlp")
+    assert second.id == first.id
+    assert _usage_rows(fresh_db) == ["d1"]

@@ -34,3 +34,13 @@ test('dashboard and logs share one device filter that reaches every dashboard fe
   assert.match(read('charts', 'ToolCallsChart.tsx'), /set\('device_id', filterParams\.device_id\)/)
   assert.match(read('charts', 'TopUsageChart.tsx'), /set\('device_id', filterParams\.device_id\)/)
 })
+
+test('logs Reset clears the shared device filter', () => {
+  assert.match(read('pages', 'LogsPage.tsx'), /setActiveSource\(null\)\s+setActiveDevice\(null\)/)
+})
+
+test('device chart rows are cleared per request and not applied once aborted', () => {
+  const chart = read('charts', 'TopUsageChart.tsx')
+  assert.match(chart, /setDeviceRows\(\[\]\)/)
+  assert.match(chart, /if \(!controller\.signal\.aborted\) setDeviceRows\(rows\)/)
+})

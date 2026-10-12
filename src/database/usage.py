@@ -139,6 +139,7 @@ def merge_duplicate_usage(
     session_id: str | None,
     client_ip: str | None,
     user_id: str,
+    device_id: str,
     db_path: str | None = None,
 ) -> Usage | None:
     """Find a same-shaped usage row already recorded by the other collection path
@@ -146,7 +147,8 @@ def merge_duplicate_usage(
 
     `is_otlp` is whether the call currently being recorded is OTLP-sourced;
     the lookup searches the opposite path (OTLP looks for a proxy row and
-    vice versa) so a request captured by both never double-counts.
+    vice versa) so a request captured by both never double-counts. The match
+    includes the device: identical events from two machines never merge.
 
     Only `session_id` and `client_ip` are merged onto the existing row. OTLP
     is treated as authoritative for session_id (it carries the agent's real
@@ -176,6 +178,7 @@ def merge_duplicate_usage(
                 and_(
                     endpoint_filter,
                     Usage.user_id == user_id,
+                    Usage.device_id == device_id,
                     Usage.client_source.in_(other_path_sources),
                     Usage.model == normalize_model_name(model),
                     Usage.prompt_tokens == prompt_tokens,

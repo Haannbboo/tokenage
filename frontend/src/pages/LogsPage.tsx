@@ -742,6 +742,7 @@ export function LogsPage() {
             onClick={() => {
               setActiveFilter(null)
               setActiveSource(null)
+              setActiveDevice(null)
               setSessionFilter(null)
               setToolFilter(null)
               setDateRange('24h')

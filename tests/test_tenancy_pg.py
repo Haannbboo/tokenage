@@ -57,6 +57,8 @@ def _make_usage(*, user_id: str = "u0", **overrides):
 
 
 def _seed_users(engine, *user_ids: str) -> None:
+    # _make_usage rows reference device "test-device"; seed it under the first
+    # user so the usage/usage_daily FK resolves.
     with engine.begin() as connection:
         for user_id in user_ids:
             connection.execute(
@@ -65,6 +67,14 @@ def _seed_users(engine, *user_ids: str) -> None:
                 ),
                 {"id": user_id, "email": f"{user_id}@example.com"},
             )
+        connection.execute(
+            text(
+                "INSERT INTO devices (id, user_id, installation_hash, device_name, "
+                "created_at) VALUES ('test-device', :user_id, 'test-device', "
+                "'test-device', 0) ON CONFLICT (id) DO NOTHING"
+            ),
+            {"user_id": user_ids[0]},
+        )
 
 
 def test_fresh_migrate_creates_tenancy_shapes(pg_db, pg_engine):

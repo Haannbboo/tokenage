@@ -83,6 +83,7 @@ def record_usage(
         session_id=session_id,
         client_ip=client_ip,
         user_id=user_id,
+        device_id=device_id,
         db_path=db_path,
     )
     if duplicate is not None:

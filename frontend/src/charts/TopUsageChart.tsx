@@ -99,6 +99,7 @@ export function TopUsageChart({
   useEffect(() => {
     if (dimension !== 'device') return
     const controller = new AbortController()
+    setDeviceRows([])
     async function fetchDeviceRows() {
       try {
         const url = new URL('/usage/daily-by-dimension', window.location.origin)
@@ -112,7 +113,8 @@ export function TopUsageChart({
 
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (res.ok) {
-          setDeviceRows(await res.json())
+          const rows = await res.json()
+          if (!controller.signal.aborted) setDeviceRows(rows)
         }
       } catch {
         // Ignore abort errors

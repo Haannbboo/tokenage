@@ -127,6 +127,10 @@ def detect_port_issues(
             expected_pid = program_state.pid
 
         if expected_pid is not None:
+            # Without lsof, the bind probe reports an occupied port with pid -1:
+            # it cannot identify the owner. With a supervisor-managed PID, only
+            # known owners can establish a mismatch; -1 is not a foreign PID.
+            known = [listener for listener in listeners if listener.pid != -1]
             if not listeners:
                 issues.append(
                     PortIssue(
@@ -140,8 +144,8 @@ def detect_port_issues(
                         expected_pid=expected_pid,
                     )
                 )
-            elif all(listener.pid != expected_pid for listener in listeners):
-                listener = listeners[0]
+            elif known and all(listener.pid != expected_pid for listener in known):
+                listener = known[0]
                 issues.append(
                     PortIssue(
                         service=service_port.service,
@@ -155,6 +159,8 @@ def detect_port_issues(
                     )
                 )
         elif listeners:
+            # Without a managed PID, any occupied port is a conflict, even when
+            # its owner is unknown.
             listener = listeners[0]
             issues.append(
                 PortIssue(

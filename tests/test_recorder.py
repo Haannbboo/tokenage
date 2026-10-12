@@ -15,6 +15,7 @@ def test_record_usage_inserts_row(test_db):
     from src.recorder import record_usage
 
     record_usage(
+        device_id="test-device",
         ts=1779148800000000,
         provider="openai",
         model="gpt-4",
@@ -63,6 +64,7 @@ def test_record_usage_normalizes_models_and_rollups(test_db, monkeypatch):
     usages = []
     for model in (" Space-Bunny-Free ", "STEALTH/SPACE-BUNNY-ALPHA"):
         usage = record_usage(
+            device_id="test-device",
             ts=1779148800000000,
             provider="normalization-test",
             model=model,
@@ -145,6 +147,7 @@ def test_record_usage_normalizes_provider_without_losing_pricing(test_db, monkey
 
     for name in ("CUSTOM-PROVIDER", "Custom-Provider"):
         usage = record_usage(
+            device_id="test-device",
             ts=1779148800000000,
             provider=name,
             model="test-model",
@@ -220,6 +223,7 @@ def test_record_usage_computes_costs(test_db):
 
     try:
         record_usage(
+            device_id="test-device",
             provider="test-provider-without-override",
             model="test-model",
             client_source="test",
@@ -264,6 +268,7 @@ def test_record_usage_writes_price_snapshot(test_db):
 
     try:
         record_usage(
+            device_id="test-device",
             ts=1779148800000000,
             provider="snap-provider",
             model="snap-model",
@@ -322,6 +327,7 @@ def test_record_usage_persists_client_ip(test_db):
     from src.recorder import record_usage
 
     record_usage(
+        device_id="test-device",
         ts=1779148800000000,
         provider="openai",
         model="gpt-4",
@@ -346,6 +352,7 @@ def test_record_usage_client_ip_defaults_to_none(test_db):
     from src.recorder import record_usage
 
     record_usage(
+        device_id="test-device",
         ts=1779148800000000,
         provider="openai",
         model="gpt-4",
@@ -368,6 +375,7 @@ def test_record_usage_skips_zero_tokens_on_success(test_db):
     from src.recorder import record_usage
 
     record_usage(
+        device_id="test-device",
         provider="openrouter",
         model="test-model",
         endpoint="/v1/chat/completions",
@@ -387,6 +395,7 @@ def test_record_usage_skips_none_tokens_on_success(test_db):
     from src.recorder import record_usage
 
     record_usage(
+        device_id="test-device",
         provider="openrouter",
         model="test-model",
         endpoint="/v1/chat/completions",
@@ -404,6 +413,7 @@ def test_record_usage_records_prompt_only_tokens(test_db):
     from src.recorder import record_usage
 
     record_usage(
+        device_id="test-device",
         provider="openai",
         model="gpt-4",
         endpoint="/v1/chat/completions",
@@ -424,6 +434,7 @@ def test_record_usage_records_zero_tokens_on_error(test_db):
     from src.recorder import record_usage
 
     record_usage(
+        device_id="test-device",
         provider="openai",
         model="gpt-4",
         endpoint="/v1/chat/completions",
@@ -444,6 +455,7 @@ def test_record_usage_records_zero_tokens_on_unknown_status(test_db):
     from src.recorder import record_usage
 
     record_usage(
+        device_id="test-device",
         provider="openai",
         model="gpt-4",
         endpoint="/v1/chat/completions",
@@ -464,6 +476,7 @@ def test_record_tool_call_links_to_usage(test_db):
     from src.recorder import record_tool_call, record_usage
 
     usage = record_usage(
+        device_id="test-device",
         provider="openai",
         model="gpt-4",
         endpoint="/v1/chat/completions",
@@ -496,6 +509,7 @@ def test_record_tool_call_persists_and_returns_duration(test_db):
     from src.recorder import record_tool_call, record_usage
 
     usage = record_usage(
+        device_id="test-device",
         provider="anthropic",
         model="claude-sonnet-4-5",
         endpoint="/v1/messages",
@@ -536,6 +550,7 @@ def test_record_tool_call_multiple_per_usage(test_db):
     from src.recorder import record_tool_call, record_usage
 
     usage = record_usage(
+        device_id="test-device",
         provider="anthropic",
         model="claude-sonnet-4-5",
         endpoint="/v1/messages",
@@ -572,6 +587,7 @@ def test_record_tool_call_duplicate_id_is_noop(test_db):
     from src.recorder import record_tool_call, record_usage
 
     usage = record_usage(
+        device_id="test-device",
         provider="openai",
         model="gpt-4",
         endpoint="/v1/chat/completions",
@@ -639,6 +655,7 @@ def test_record_tool_call_integrity_error_is_noop(test_db, monkeypatch):
     from src.recorder import record_tool_call, record_usage
 
     usage = record_usage(
+        device_id="test-device",
         provider="openai",
         model="gpt-4",
         endpoint="/v1/chat/completions",
@@ -695,7 +712,7 @@ def _record_otlp_usage(test_db, **overrides):
         user_id="test-user",
     )
     fields.update(overrides)
-    return record_usage(**fields)
+    return record_usage(device_id="test-device", **fields)
 
 
 def _record_proxy_usage(test_db, **overrides):
@@ -716,7 +733,7 @@ def _record_proxy_usage(test_db, **overrides):
         user_id="test-user",
     )
     fields.update(overrides)
-    return record_usage(**fields)
+    return record_usage(device_id="test-device", **fields)
 
 
 @pytest.mark.parametrize("otlp_first", [True, False])

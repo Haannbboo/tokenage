@@ -237,19 +237,16 @@ def list_user_tokens(user_id: str, db_path: str | None = None) -> list[AuthToken
         return list(rows)
 
 
-def list_user_devices(user_id: str, db_path: str | None = None) -> list[Device]:
+def list_user_devices(
+    user_id: str, db_path: str | None = None, *, include_revoked: bool = False
+) -> list[Device]:
     engine = get_engine(db_path)
     with Session(engine, expire_on_commit=False) as session:
         _set_auth_statement_timeout(session)
-        rows = (
-            session.execute(
-                select(Device)
-                .where(Device.user_id == user_id, Device.revoked_at.is_(None))
-                .order_by(Device.created_at.desc())
-            )
-            .scalars()
-            .all()
-        )
+        query = select(Device).where(Device.user_id == user_id)
+        if not include_revoked:
+            query = query.where(Device.revoked_at.is_(None))
+        rows = session.execute(query.order_by(Device.created_at.desc())).scalars().all()
         session.expunge_all()
         return list(rows)
 

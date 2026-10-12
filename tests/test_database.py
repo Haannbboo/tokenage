@@ -46,6 +46,7 @@ def test_init_db_log_usage_and_fetch_rows(database_module, isolated_home):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="test-provider",
             model="test-model",
@@ -103,6 +104,8 @@ def test_init_db_log_usage_and_fetch_rows(database_module, isolated_home):
         "total_cost_usd": 5e-05,
         "status": 200,
         "client_ip": None,
+        "device_id": "test-device",
+        "device_name": None,
         "base_url_id": base_url_id,
         "price_snapshot_id": None,
         "base_url": "https://api.example.com/v1",
@@ -119,6 +122,7 @@ def test_log_usage_normalizes_model_before_rollups(fresh_db):
     from src.database.models import SessionRecord, Usage, UsageDaily
 
     usage = Usage(
+        device_id="test-device",
         ts=TS_2026_05_19_00,
         provider="CuStOm",
         model=" Space-Bunny-Free ",
@@ -151,6 +155,7 @@ def test_fetch_recent_usage_returns_expected_row_shape(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="test-provider",
             model="test-model",
@@ -204,6 +209,8 @@ def test_fetch_recent_usage_returns_expected_row_shape(fresh_db):
         "total_cost_usd",
         "status",
         "client_ip",
+        "device_id",
+        "device_name",
         "base_url_id",
         "price_snapshot_id",
         "base_url",
@@ -220,6 +227,7 @@ def test_fetch_recent_usage_aggregates_tool_names(fresh_db):
 
     # Insert a usage row (log_usage doesn't return the object, but populates its id)
     usage_obj = database_module.Usage(
+        device_id="test-device",
         ts=TS_2026_04_17_00,
         provider="anthropic",
         model="claude-sonnet-4-20250514",
@@ -276,6 +284,7 @@ def test_fetch_recent_usage_no_tool_calls(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="anthropic",
             model="claude-sonnet-4-20250514",
@@ -316,6 +325,7 @@ def test_usage_filters_includes_client_source(fresh_db):
     for source in ["claude-code", "codex"]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_04_17_00,
                 provider="anthropic",
                 model="claude-sonnet-4-20250514",
@@ -367,6 +377,7 @@ def test_count_usage_filters_by_client_source(fresh_db):
     for source in ["claude-code", "claude-code", "codex"]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_04_17_00,
                 provider="anthropic",
                 model="claude-sonnet-4-20250514",
@@ -411,6 +422,7 @@ def test_aggregate_usage_by_period_filters_by_client_source(fresh_db):
     ]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=ts,
                 provider="anthropic",
                 model="claude-sonnet-4-20250514",
@@ -453,6 +465,7 @@ def test_summarize_usage_daily_includes_avg_effective_price(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="test-provider",
             model="test-model",
@@ -479,6 +492,7 @@ def test_summarize_usage_daily_includes_avg_effective_price(fresh_db):
     )
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_01,
             provider="test-provider",
             model="test-model",
@@ -519,6 +533,7 @@ def test_summarize_usage_by_provider_includes_avg_effective_price(fresh_db):
     ]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_04_17_00,
                 provider="test-provider",
                 model=model,
@@ -644,6 +659,7 @@ def test_get_usage_high_watermark_ts_returns_latest_ts(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="test-provider",
             model="test-model",
@@ -724,6 +740,7 @@ def test_reprice_estimated_rows_rebinds_and_updates_costs(
     database_module.init_db(db_path)
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_03_18,
             provider="test-provider",
             model="test-model",
@@ -776,6 +793,7 @@ def test_reprice_estimated_rows_respects_filters_and_skips_unresolvable(
     for provider, model in (("p1", "m1"), ("p2", "m2")):
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_03_18,
                 provider=provider,
                 model=model,
@@ -835,6 +853,7 @@ def test_reprice_limit_scans_past_unresolvable_rows(database_module, isolated_ho
     ):
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=ts,
                 provider="p1",
                 model=model,
@@ -879,6 +898,7 @@ def test_reprice_counts_snapshot_failure_as_skipped(
     database_module.init_db(db_path)
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_03_18,
             provider="p1",
             model="m1",
@@ -923,6 +943,7 @@ def test_summarize_usage_window_groups_by_session_source_and_model(fresh_db):
 
     rows = [
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="openai",
             model="gpt-test",
@@ -947,6 +968,7 @@ def test_summarize_usage_window_groups_by_session_source_and_model(fresh_db):
             user_id="test-user",
         ),
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00_01,
             provider="openai",
             model="gpt-test",
@@ -971,6 +993,7 @@ def test_summarize_usage_window_groups_by_session_source_and_model(fresh_db):
             user_id="test-user",
         ),
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00_02,
             provider="anthropic",
             model="claude-test",
@@ -1043,6 +1066,7 @@ def test_summarize_usage_window_filters_after_and_until_ts(fresh_db):
     for index in range(3):
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_04_17_00 + index * 60_000_000,
                 provider="test-provider",
                 model="test-model",
@@ -1088,6 +1112,7 @@ def test_summarize_usage_window_filters_metadata_and_includes_rows(fresh_db):
 
     rows = [
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="openai",
             model="gpt-test",
@@ -1112,6 +1137,7 @@ def test_summarize_usage_window_filters_metadata_and_includes_rows(fresh_db):
             user_id="test-user",
         ),
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_18_00,
             provider="openai",
             model="gpt-other",
@@ -1187,6 +1213,7 @@ def test_aggregate_usage_by_period_includes_cost_totals(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00_10,
             provider="test-provider",
             model="test-model",
@@ -1211,6 +1238,7 @@ def test_aggregate_usage_by_period_includes_cost_totals(fresh_db):
     )
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00_20,
             provider="test-provider",
             model="test-model",
@@ -1273,6 +1301,7 @@ def test_throughput_excludes_tool_execution_time(fresh_db):
     database_module.init_db(db_path)
 
     usage = database_module.Usage(
+        device_id="test-device",
         ts=TS_2026_04_17_10,
         provider="anthropic",
         model="claude-sonnet-4-6",
@@ -1346,6 +1375,7 @@ def test_throughput_keeps_tool_time_for_api_request_sources(fresh_db):
     database_module.init_db(db_path)
 
     usage = database_module.Usage(
+        device_id="test-device",
         ts=TS_2026_04_17_10,
         provider="anthropic",
         model="claude-sonnet-4-6",
@@ -1393,6 +1423,7 @@ def test_fetch_tool_calls_derives_row_relative_start(fresh_db):
     database_module.init_db(db_path)
 
     usage = database_module.Usage(
+        device_id="test-device",
         ts=TS_2026_04_17_10,
         provider="anthropic",
         model="claude-sonnet-4-6",
@@ -1435,6 +1466,7 @@ def test_fetch_tool_calls_derives_row_relative_start(fresh_db):
     assert starts == {"tool-short": 600, "tool-long": 100, "tool-late": 4900}
 
     claude_usage = database_module.Usage(
+        device_id="test-device",
         ts=TS_2026_04_17_10,
         provider="anthropic",
         model="claude-sonnet-4-6",
@@ -1556,6 +1588,7 @@ def test_upsert_daily_aggregate_inserts_and_updates(fresh_db):
     database_module.init_db(db_path)
 
     usage1 = database_module.Usage(
+        device_id="test-device",
         ts=TS_2026_04_17_10,
         provider="anthropic",
         model="claude-sonnet-4-6",
@@ -1593,6 +1626,7 @@ def test_upsert_daily_aggregate_inserts_and_updates(fresh_db):
 
     # Same date, provider, model, client_source -> upsert
     usage2 = database_module.Usage(
+        device_id="test-device",
         ts=TS_2026_04_17_11,
         provider="anthropic",
         model="claude-sonnet-4-6",
@@ -1636,6 +1670,7 @@ def test_upsert_daily_aggregate_handles_null_client_source(fresh_db):
     database_module.init_db(db_path)
 
     usage = database_module.Usage(
+        device_id="test-device",
         ts=TS_2026_04_17_10,
         provider="openai",
         model="gpt-4",
@@ -1675,6 +1710,7 @@ def test_upsert_daily_aggregate_separates_by_date(fresh_db):
 
     for ts in [TS_2026_04_17_10, TS_2026_04_18_10]:
         usage = database_module.Usage(
+            device_id="test-device",
             ts=ts,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -1714,6 +1750,7 @@ def test_log_usage_automaticaly_upserts_daily_aggregate(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_10,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -1758,6 +1795,7 @@ def test_summarize_usage_daily_reads_from_aggregate_table(fresh_db):
         (200, 100, 300, 500),
     ]:
         usage = database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_10,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -1807,6 +1845,7 @@ def test_summarize_usage_daily_filters_by_provider(fresh_db):
         ("openai", "gpt-4", TS_2026_04_17_11),
     ]:
         usage = database_module.Usage(
+            device_id="test-device",
             ts=ts,
             provider=provider,
             model=model,
@@ -1846,6 +1885,7 @@ def test_summarize_usage_daily_filters_by_since(fresh_db):
 
     for ts in [TS_2026_04_17_10, TS_2026_04_20_10]:
         usage = database_module.Usage(
+            device_id="test-device",
             ts=ts,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -1897,6 +1937,7 @@ def _log_usage_row(
     """Helper to insert a usage row for regression tests."""
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=ts,
             provider=provider,
             model=model,
@@ -2066,6 +2107,7 @@ def test_aggregate_daily_by_period_reads_from_aggregate_table(fresh_db):
         (TS_2026_04_18_10, 300),
     ]:
         usage = database_module.Usage(
+            device_id="test-device",
             ts=ts,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -2110,6 +2152,7 @@ def test_aggregate_daily_by_period_filters_by_provider(fresh_db):
 
     for provider, model in [("anthropic", "claude-sonnet-4-6"), ("openai", "gpt-4")]:
         usage = database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_10,
             provider=provider,
             model=model,
@@ -2154,6 +2197,7 @@ def test_aggregate_usage_by_period_hourly_with_tz_offset(fresh_db):
     ]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=ts,
                 provider="anthropic",
                 model="claude-sonnet-4-20250514",
@@ -2204,6 +2248,7 @@ def test_aggregate_usage_by_period_hourly_merges_same_hour(fresh_db):
     ]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=ts,
                 provider="anthropic",
                 model="claude-sonnet-4-20250514",
@@ -2253,6 +2298,7 @@ def test_aggregate_usage_by_period_hourly_counts_failures(fresh_db):
     ]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=ts,
                 provider="anthropic",
                 model="claude-sonnet-4-20250514",
@@ -2294,6 +2340,7 @@ def test_aggregate_usage_by_period_hourly_negative_tz_offset(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_05_03_30,
             provider="anthropic",
             model="claude-sonnet-4-20250514",
@@ -2336,6 +2383,7 @@ def test_aggregate_usage_by_period_with_epoch_ts(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=1776384000000000,  # 2026-04-17T00:00:00 UTC (micros)
             provider="anthropic",
             model="claude-sonnet-4-20250514",
@@ -2383,6 +2431,7 @@ def test_aggregate_daily_by_dimension_groups_by_model(fresh_db):
     ]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=ts,
                 provider=provider,
                 model=model,
@@ -2439,6 +2488,7 @@ def test_aggregate_daily_by_dimension_groups_by_provider(fresh_db):
     ]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=ts,
                 provider=provider,
                 model=model,
@@ -2485,6 +2535,7 @@ def test_fetch_sessions_groups_by_session_id(fresh_db):
     for i in range(3):
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 60,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -2507,6 +2558,7 @@ def test_fetch_sessions_groups_by_session_id(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_11,
             provider="openai",
             model="gpt-4o",
@@ -2544,6 +2596,7 @@ def test_fetch_sessions_excludes_null_session_id(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_10,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -2573,6 +2626,7 @@ def test_fetch_sessions_filters_by_client_source(fresh_db):
     for source, sid in [("claude-code", "s1"), ("codex", "s2")]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -2605,6 +2659,7 @@ def test_fetch_sessions_hide_noop_keeps_single_request_opencode(fresh_db):
     for source, sid in [("opencode", "oc-1"), ("codex", "codex-1")]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -2648,6 +2703,7 @@ def test_fetch_sessions_hide_noop_keeps_single_request_kilo(fresh_db):
     for source, sid in [("kilo", "kilo-1"), ("codex", "codex-1")]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -2690,6 +2746,7 @@ def test_fetch_sessions_accepts_browser_iso_boundary_filters(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_10,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -2725,6 +2782,7 @@ def test_fetch_sessions_sorting(fresh_db):
     for i, sid in enumerate(["s-low", "s-high"]):
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 3_600_000_000,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -2757,6 +2815,7 @@ def test_fetch_sessions_sort_by_duration(fresh_db):
     # Short session: single request
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_10,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -2778,6 +2837,7 @@ def test_fetch_sessions_sort_by_duration(fresh_db):
     for i in range(2):
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 300_000_000,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -2810,6 +2870,7 @@ def test_fetch_sessions_pagination(fresh_db):
     for i in range(5):
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 3600,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -2840,6 +2901,7 @@ def test_fetch_session_selector_rows_returns_only_dropdown_fields(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_10,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -2881,6 +2943,7 @@ def test_fetch_session_selector_rows_applies_filters_sort_and_pagination(fresh_d
     for index, source in enumerate(["claude-code", "codex", "codex"]):
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10 + index * 3_600_000_000,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -2920,6 +2983,7 @@ def test_count_sessions(fresh_db):
     for sid in ["s1", "s2", "s1"]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -2948,6 +3012,7 @@ def test_count_usage_with_session_id(fresh_db):
     for sid in ["s1", "s1", "s2"]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -2994,6 +3059,7 @@ def test_count_usage_with_session_id_and_other_filters(fresh_db):
     for provider in ["anthropic", "openai"]:
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10,
                 provider=provider,
                 model="test-model",
@@ -3045,6 +3111,7 @@ def test_summarize_sessions(fresh_db):
     for i in range(3):
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 60_000_000,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -3065,6 +3132,7 @@ def test_summarize_sessions(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_11,
             provider="openai",
             model="gpt-4o",
@@ -3099,6 +3167,7 @@ def test_fetch_recent_usage_only_failed_filter(fresh_db):
     with database_module.Session(database_module.get_engine(db_path)) as session:
         session.add(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2024_01_01_00,
                 provider="p1",
                 model="m1",
@@ -3109,6 +3178,7 @@ def test_fetch_recent_usage_only_failed_filter(fresh_db):
         )
         session.add(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2024_01_01_01,
                 provider="p1",
                 model="m1",
@@ -3141,6 +3211,7 @@ def test_usage_daily_status_breakdown(database_module, isolated_home):
     codes = [200, 429, 403, 500]
     for i, code in enumerate(codes):
         usage = database_module.Usage(
+            device_id="test-device",
             ts=TS_2024_01_01_00 + i * 1_000_000,
             provider="p1",
             model="m1",
@@ -3183,6 +3254,7 @@ def test_session_record_created_from_usage_ingestion(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_10,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -3205,6 +3277,7 @@ def test_session_record_created_from_usage_ingestion(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_10_05,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -3258,6 +3331,7 @@ def test_session_record_primary_model_picks_higher_cost(fresh_db):
     # Model A: cost 0.003
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_10,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -3281,6 +3355,7 @@ def test_session_record_primary_model_picks_higher_cost(fresh_db):
     # Model B: cost 0.015 (higher)
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_10_01,
             provider="openai",
             model="gpt-4o",
@@ -3383,6 +3458,7 @@ def test_rebuild_sessions_from_usage(fresh_db):
     for i in range(3):
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 60_000_000,
                 provider="anthropic",
                 model="claude-sonnet-4-6",
@@ -3405,6 +3481,7 @@ def test_rebuild_sessions_from_usage(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_05_09_11,
             provider="openai",
             model="gpt-4o",
@@ -3457,6 +3534,7 @@ def test_rebuild_sessions_from_usage_recomputes_tool_calls_json(fresh_db):
     database_module.init_db(db_path)
 
     usage = database_module.Usage(
+        device_id="test-device",
         ts=TS_2026_05_09_10,
         provider="anthropic",
         model="claude-sonnet-4-6",
@@ -4860,6 +4938,7 @@ def test_upsert_daily_aggregate_with_epoch_ts(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=1776384000000000,  # 2026-04-17T00:00:00+00:00 (micros)
             provider="test-provider",
             model="test-model",
@@ -4906,6 +4985,7 @@ def test_fetch_recent_usage_filters_by_since_until_with_epoch_ts(fresh_db):
     for ts_val in [1776384000000000, 1776470400000000]:  # Apr 17, Apr 18 (micros)
         database_module.log_usage(
             database_module.Usage(
+                device_id="test-device",
                 ts=ts_val,
                 provider="test-provider",
                 model="test-model",
@@ -4958,6 +5038,7 @@ def _insert_usage_with_tools(
     from src.recorder import record_tool_call
 
     usage_obj = database_module.Usage(
+        device_id="test-device",
         ts=ts,
         provider="anthropic",
         model="claude-sonnet-4-20250514",
@@ -5231,6 +5312,7 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="recalc-provider",
             model="recalc-model",
@@ -5255,6 +5337,7 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
     # clobbered by the single recalculated row.
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_01,
             provider="recalc-provider",
             model="recalc-model",
@@ -5336,6 +5419,7 @@ def test_recalculate_usage_cost_adjusts_session_rollup(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="recalc-provider",
             model="recalc-model-a",
@@ -5359,6 +5443,7 @@ def test_recalculate_usage_cost_adjusts_session_rollup(fresh_db):
     # "recalc-model-a" is recalculated past it.
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_01,
             provider="recalc-provider",
             model="recalc-model-b",
@@ -5419,6 +5504,7 @@ def test_recalculate_usage_cost_skips_when_no_pricing_match(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="test-provider",
             model="deprecated-model",
@@ -5718,6 +5804,7 @@ def test_upsert_daily_aggregate_separates_user_rows(fresh_db):
 
     def make_usage(user_id):
         return database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_10,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -5777,6 +5864,7 @@ def test_upsert_session_from_usage_scopes_tenant(fresh_db):
 
     def make_usage(session_id, user_id, ts=TS_2026_04_17_10):
         return database_module.Usage(
+            device_id="test-device",
             ts=ts,
             provider="anthropic",
             model="claude-sonnet-4-6",
@@ -5853,6 +5941,7 @@ def test_rebuild_sessions_from_usage_stamps_user_id(fresh_db):
     database_module.init_db(db_path)
 
     usage = database_module.Usage(
+        device_id="test-device",
         ts=TS_2026_05_09_10,
         provider="anthropic",
         model="claude-sonnet-4-6",
@@ -5910,6 +5999,7 @@ def test_recalculate_usage_cost_targets_user_slice(fresh_db):
 
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="recalc-provider",
             model="recalc-model",
@@ -5930,6 +6020,7 @@ def test_recalculate_usage_cost_targets_user_slice(fresh_db):
     )
     database_module.log_usage(
         database_module.Usage(
+            device_id="test-device",
             ts=TS_2026_04_17_00,
             provider="recalc-provider",
             model="recalc-model",

@@ -53,7 +53,7 @@ def _make_usage(*, user_id: str = "u0", **overrides):
         status=200,
     )
     fields.update(overrides)
-    return Usage(**fields)
+    return Usage(device_id="test-device", **fields)
 
 
 def _seed_users(engine, *user_ids: str) -> None:

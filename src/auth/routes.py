@@ -365,8 +365,15 @@ def auth_logout(request: Request, user: User = Depends(get_current_user)):
 
 
 @router.get("/auth/devices")
-def auth_devices(request: Request, user: User = Depends(get_current_user)):
+def auth_devices(
+    request: Request,
+    include_revoked: bool = False,
+    user: User = Depends(get_current_user),
+):
     """List installed machines and the caller's unlinked tokens.
+
+    ``include_revoked`` also returns revoked machines (for the usage device
+    filter, which must still name them).
 
     Browser sessions are deliberately absent: signing in again retires the
     previous one, so a stale browser entry is never left to manage here.
@@ -385,8 +392,9 @@ def auth_devices(request: Request, user: User = Depends(get_current_user)):
                 "client_version": device.client_version,
                 "client_commit": device.client_commit,
                 "current": device.id == current_device_id,
+                "revoked_at": device.revoked_at,
             }
-            for device in list_user_devices(user.id)
+            for device in list_user_devices(user.id, include_revoked=include_revoked)
         ]
         + [
             {

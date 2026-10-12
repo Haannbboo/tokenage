@@ -159,6 +159,10 @@ class Usage(Base):
     )
     status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     client_ip: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    # NULL = Unknown (historical rows only; the live write path requires it).
+    device_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("devices.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     base_url_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("base_urls.id"), nullable=True
     )
@@ -178,6 +182,9 @@ class UsageDaily(Base):
     model: Mapped[str] = mapped_column(String, nullable=False)
     client_source: Mapped[str] = mapped_column(
         String, nullable=False, server_default=text("''")
+    )
+    device_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("devices.id", ondelete="SET NULL"), nullable=True, index=True
     )
     request_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
@@ -245,6 +252,7 @@ Index(
     UsageDaily.model,
     UsageDaily.client_source,
     UsageDaily.user_id,
+    UsageDaily.device_id,
     unique=True,
 )
 

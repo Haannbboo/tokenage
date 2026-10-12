@@ -329,6 +329,7 @@ async def get_usage(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     session_id: str | None = None,
     tool_name: str | None = None,
     since: str | None = None,
@@ -348,6 +349,7 @@ async def get_usage(
                 provider=provider,
                 model=model,
                 client_source=client_source,
+                device_id=device_id,
                 session_id=session_id,
                 tool_name=tool_name,
                 since=since,
@@ -367,6 +369,7 @@ async def get_usage_count(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     session_id: str | None = None,
     tool_name: str | None = None,
     since: str | None = None,
@@ -378,6 +381,7 @@ async def get_usage_count(
             provider=provider,
             model=model,
             client_source=client_source,
+            device_id=device_id,
             session_id=session_id,
             tool_name=tool_name,
             since=since,
@@ -421,6 +425,7 @@ async def usage_run_summary(
     since: str | None = None,
     until: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     session_id: str | None = None,
     provider: str | None = None,
     model: str | None = None,
@@ -433,6 +438,7 @@ async def usage_run_summary(
         since=since,
         until=until,
         client_source=client_source,
+        device_id=device_id,
         session_id=session_id,
         provider=provider,
         model=model,
@@ -448,6 +454,7 @@ async def usage_summary(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
 ):
     return summarize_usage_daily(
         user_id=_request_user_id(request),
@@ -456,6 +463,7 @@ async def usage_summary(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
 
 
@@ -467,6 +475,7 @@ async def usage_by_source(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
 ):
     return summarize_usage_by_source(
         user_id=_request_user_id(request),
@@ -475,6 +484,7 @@ async def usage_by_source(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
 
 
@@ -486,6 +496,7 @@ async def usage_by_tool(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     only_failed: bool = False,
     status_429: bool = False,
     status_4xx: bool = False,
@@ -498,6 +509,7 @@ async def usage_by_tool(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         only_failed=only_failed,
         status_429=status_429,
         status_4xx=status_4xx,
@@ -513,6 +525,7 @@ async def usage_by_provider(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
 ):
     return summarize_usage_by_provider(
         user_id=_request_user_id(request),
@@ -521,6 +534,7 @@ async def usage_by_provider(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
 
 
@@ -532,6 +546,7 @@ async def usage_daily(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     granularity: str = "day",
     tz_offset: str = "+00:00",
 ):
@@ -542,6 +557,7 @@ async def usage_daily(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         granularity=granularity,
         tz_offset=tz_offset,
     )
@@ -556,6 +572,7 @@ async def usage_daily_by_dimension(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
 ):
     return aggregate_daily_by_dimension(
         user_id=_request_user_id(request),
@@ -565,6 +582,7 @@ async def usage_daily_by_dimension(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
 
 
@@ -721,13 +739,18 @@ def ingest_usage(request: Request, report: UsageReport):
     metadata only."""
     token = request.headers.get("x-tokenage-token")
     resolved = resolve_token(token) if token else None
-    if resolved is None or resolved[1].kind != "ingest":
+    if (
+        resolved is None
+        or resolved[1].kind != "ingest"
+        or resolved[1].device_id is None  # resolve_token already rejects these
+    ):
         raise HTTPException(status_code=401, detail="invalid token")
     user_id = resolved[0].id
     fields = report.model_dump(exclude={"tool_calls", "base_url"})
     usage = record_usage(
         **fields,
         user_id=user_id,
+        device_id=resolved[1].device_id,
         base_url=report.base_url,
         base_url_provider=report.provider,
         base_url_source="proxy_config",

@@ -183,7 +183,7 @@ class StreamToolCallAccumulator:
 
         # OpenAI responses: output_item.delta
         delta = resp.get("delta") or payload.get("delta") or {}
-        if delta.get("type") == "function_call_delta":
+        if isinstance(delta, dict) and delta.get("type") == "function_call_delta":
             idx = resp.get("output_index") or payload.get("output_index") or 0
             entry = self._calls.setdefault(idx, {"tool_use_id": "", "tool_name": ""})
             if delta.get("call_id"):

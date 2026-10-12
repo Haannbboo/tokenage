@@ -64,6 +64,8 @@ export type UsageRow = {
   total_cost_usd: number | null
   status: number | null
   client_ip: string | null
+  device_id: string | null
+  device_name: string | null
   price_snapshot_id: number | null
   cost_estimated: boolean | null
   pricing: PricingDetail | null
@@ -302,6 +304,7 @@ export type DeviceRow = {
   client_version: string | null
   client_commit: string | null
   current: boolean
+  revoked_at?: number | null
 }
 
 export type DeviceStatus = {

@@ -21,6 +21,7 @@ export const zh: Record<string, string> = {
   // Tool filter
   'Tool': '工具',
   'All Tools': '全部工具',
+  'All Devices': '全部设备',
 
   // Dashboard widgets
   'Token Usage': 'Token 用量',

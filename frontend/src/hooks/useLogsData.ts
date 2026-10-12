@@ -10,6 +10,7 @@ const DEFAULT_COL_WIDTHS: Record<RequestLogColumnId, number> = {
   model: 135,
   provider: 120,
   source: 110,
+  device: 120,
   session: 120,
   input: 220,
   output: 130,
@@ -24,6 +25,7 @@ export function useLogsData(opts: {
   activeSource: string | null
   sessionFilter: string | null
   toolFilter: string | null
+  deviceFilter: string | null
   dateRange: DateRangeOption
   customSince: string
   customUntil: string
@@ -94,6 +96,7 @@ export function useLogsData(opts: {
         if (opts.activeSource) usageUrl.searchParams.set('client_source', opts.activeSource)
         if (opts.sessionFilter) usageUrl.searchParams.set('session_id', opts.sessionFilter)
         if (opts.toolFilter) usageUrl.searchParams.set('tool_name', opts.toolFilter)
+        if (opts.deviceFilter) usageUrl.searchParams.set('device_id', opts.deviceFilter)
         if (since) usageUrl.searchParams.set('since', since)
         if (until) usageUrl.searchParams.set('until', until)
 
@@ -109,6 +112,7 @@ export function useLogsData(opts: {
         if (opts.activeSource) countUrl.searchParams.set('client_source', opts.activeSource)
         if (opts.sessionFilter) countUrl.searchParams.set('session_id', opts.sessionFilter)
         if (opts.toolFilter) countUrl.searchParams.set('tool_name', opts.toolFilter)
+        if (opts.deviceFilter) countUrl.searchParams.set('device_id', opts.deviceFilter)
         if (since) countUrl.searchParams.set('since', since)
         if (until) countUrl.searchParams.set('until', until)
 
@@ -133,7 +137,7 @@ export function useLogsData(opts: {
 
     void fetchLogs()
     return () => controller.abort()
-  }, [opts.activeFilter, opts.activeSource, opts.sessionFilter, opts.toolFilter, opts.dateRange, opts.customSince, opts.customUntil, limit, page, refreshTrigger, setError])
+  }, [opts.activeFilter, opts.activeSource, opts.sessionFilter, opts.toolFilter, opts.deviceFilter, opts.dateRange, opts.customSince, opts.customUntil, limit, page, refreshTrigger, setError])
 
   const totalPages = Math.ceil(totalLogs / limit)
 

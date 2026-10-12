@@ -7,6 +7,7 @@ export type RequestLogColumnId =
   | 'model'
   | 'provider'
   | 'source'
+  | 'device'
   | 'session'
   | 'input'
   | 'output'
@@ -25,6 +26,7 @@ export const REQUEST_LOG_COLUMNS: RequestLogColumn[] = [
   { id: 'model', label: 'Model' },
   { id: 'provider', label: 'Provider' },
   { id: 'source', label: 'Source' },
+  { id: 'device', label: 'Device' },
   { id: 'session', label: 'Session' },
   { id: 'input', label: 'Input (Prompt)' },
   { id: 'output', label: 'Output' },

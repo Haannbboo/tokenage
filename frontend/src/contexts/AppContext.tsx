@@ -44,6 +44,8 @@ type AppContextType = {
   setActiveFilter: (f: ActiveFilter) => void
   activeSource: string | null
   setActiveSource: (s: string | null) => void
+  activeDevice: string | null
+  setActiveDevice: (d: string | null) => void
   dateRange: DateRangeOption
   setDateRange: (d: DateRangeOption) => void
   customSince: string
@@ -89,6 +91,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [activeFilter, setActiveFilter] = useState<ActiveFilter>(null)
   const [activeSource, setActiveSource] = useState<string | null>(null)
+  const [activeDevice, setActiveDevice] = useState<string | null>(null)
   const [dateRange, setDateRange] = useState<DateRangeOption>('24h')
   const [customSince, setCustomSince] = useState('')
   const [customUntil, setCustomUntil] = useState('')
@@ -211,6 +214,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       error, setError,
       refreshTrigger, requestUsageRefresh,
       activeFilter, setActiveFilter, activeSource, setActiveSource,
+      activeDevice, setActiveDevice,
       dateRange, setDateRange, customSince, setCustomSince, customUntil, setCustomUntil,
       timezone, setTimezone,
     }}>

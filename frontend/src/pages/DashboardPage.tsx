@@ -4,6 +4,7 @@ import { useDashboardData } from '../hooks/useDashboardData'
 import { useOnboarding } from '../hooks/useOnboarding'
 import { useDashboardAgents } from '../hooks/useDashboardAgents'
 import { ModelSelector } from '../ModelSelector'
+import { DeviceSelect } from '../components/DeviceSelect'
 import { OverviewTab } from './OverviewTab'
 import { SessionsTab } from './SessionsTab'
 import { t } from '../i18n/index.ts'
@@ -14,7 +15,7 @@ type Props = {
 export function DashboardPage({ onNavigateToLogs }: Props) {
   const {
     theme, error, requestUsageRefresh,
-    activeFilter, setActiveFilter, activeSource, setActiveSource,
+    activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice,
     dateRange, setDateRange,
   } = useApp()
   const { localAgents, setupDiagnostics } = useDashboardAgents()
@@ -84,6 +85,7 @@ export function DashboardPage({ onNavigateToLogs }: Props) {
               <option key={source} value={source}>{source}</option>
             ))}
           </select>
+          <DeviceSelect value={activeDevice} onChange={setActiveDevice} />
           <button
             className={`btn-ghost btn-refresh ${dashboardRefreshing ? 'is-refreshing' : ''}`}
             onClick={requestUsageRefresh}

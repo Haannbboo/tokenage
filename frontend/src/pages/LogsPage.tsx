@@ -2,6 +2,7 @@ import { Fragment, useState, useEffect, useRef, useMemo, type CSSProperties } fr
 import { useApp } from '../contexts/AppContext'
 import { useDashboardData } from '../hooks/useDashboardData'
 import { useLogsData } from '../hooks/useLogsData'
+import { DeviceSelect } from '../components/DeviceSelect'
 import { useRequestLogColumns, type RequestLogColumnId } from '../hooks/useRequestLogColumns'
 import { useSessionSelectorData } from '../hooks/useSessionSelectorData'
 import { ModelSelector } from '../ModelSelector'
@@ -32,7 +33,7 @@ export function LogsPage() {
     sessionStorage.removeItem('tokenage-logs-filters')
   }, [])
 
-  const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, dateRange, setDateRange, customSince, setCustomSince, customUntil, setCustomUntil, timezone } = useApp()
+  const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice, dateRange, setDateRange, customSince, setCustomSince, customUntil, setCustomUntil, timezone } = useApp()
   const tz = resolveTimezone(timezone)
   const {
     columns,
@@ -62,7 +63,7 @@ export function LogsPage() {
     limit, setLimit, page, setPage, jumpPage, setJumpPage, resetPage,
     logsLoading, expandedRow, setExpandedRow,
     colWidths, resizedColumns, handleResizeStart,
-  } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, dateRange, customSince, customUntil })
+  } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, deviceFilter: activeDevice, dateRange, customSince, customUntil })
 
   // Sessions data for the session filter dropdown
   const { sessions } = useSessionSelectorData({ activeSource, dateRange, customSince, customUntil })
@@ -150,7 +151,7 @@ export function LogsPage() {
     if (tableWidth === 0) return visibleColumns
 
     const hidePriority: RequestLogColumnId[] = [
-      'speed', 'session', 'source', 'cost', 'status',
+      'speed', 'session', 'device', 'source', 'cost', 'status',
       'provider', 'output', 'time', 'input', 'model',
     ]
 
@@ -184,6 +185,8 @@ export function LogsPage() {
         return { width: colWidths.provider, position: 'relative' }
       case 'source':
         return { width: colWidths.source, position: 'relative' }
+      case 'device':
+        return { width: colWidths.device, position: 'relative' }
       case 'session':
         return { width: colWidths.session, position: 'relative' }
       case 'input':
@@ -213,6 +216,8 @@ export function LogsPage() {
         return <td><div className="skeleton" style={{ width: 70, height: 20, borderRadius: 4 }} /></td>
       case 'source':
         return <td><div className="skeleton" style={{ width: 60, height: 20, borderRadius: 4 }} /></td>
+      case 'device':
+        return <td><div className="skeleton" style={{ width: 70, height: 14 }} /></td>
       case 'session':
         return <td><div className="skeleton" style={{ width: 80, height: 20, borderRadius: 999 }} /></td>
       case 'input':
@@ -307,6 +312,12 @@ export function LogsPage() {
                 </span>
               )}
             </div>
+          </td>
+        )
+      case 'device':
+        return (
+          <td style={{ color: row.device_name ? 'var(--text-secondary)' : 'var(--text-muted)', maxWidth: colWidths.device, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.device_name ?? undefined}>
+            {row.device_name ?? t('Unknown')}
           </td>
         )
       case 'session':
@@ -657,6 +668,11 @@ export function LogsPage() {
         </div>
 
         <div className="filter-group">
+          <div className="filter-label">{t('Device')}</div>
+          <DeviceSelect value={activeDevice} onChange={(id) => { setActiveDevice(id); resetPage(); }} />
+        </div>
+
+        <div className="filter-group">
           <div className="filter-label">{t('Tool')}</div>
           <select
             className="input-plain"
@@ -862,6 +878,10 @@ export function LogsPage() {
                               <span className="detail-value">{formatLatency(row.ttft_ms)}</span>
                             </div>
                           )}
+                          <div className="detail-group">
+                            <span className="detail-label">{t('Device')}</span>
+                            <span className="detail-value">{row.device_name ?? t('Unknown')}</span>
+                          </div>
                           {row.client_ip && (
                             <div className="detail-group">
                               <span className="detail-label">{t('Client IP')}</span>

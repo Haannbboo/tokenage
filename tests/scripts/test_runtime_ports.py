@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_detect_port_issues_flags_preflight_conflict(runtime_ports_module):
     service_ports = [
         runtime_ports_module.ServicePort(
@@ -98,6 +101,40 @@ def test_detect_port_issues_allows_running_service_on_expected_port(
     )
 
     assert issues == []
+
+
+@pytest.mark.parametrize(
+    "status,pid,known_pid,expected_kind",
+    [
+        ("RUNNING", 76037, None, None),
+        ("STARTING", 76037, None, None),
+        ("RUNNING", None, None, "occupied_by_other_process"),
+        ("STOPPED", None, None, "occupied_by_other_process"),
+        ("RUNNING", 76037, 18431, "occupied_by_unexpected_process"),
+        ("RUNNING", 76037, 76037, None),
+    ],
+)
+def test_detect_port_issues_with_unknown_ownership(
+    runtime_ports_module, status, pid, known_pid, expected_kind
+):
+    m = runtime_ports_module
+    listeners = [m.PortListener(-1, "(unknown)")]
+    if known_pid is not None:
+        listeners.append(m.PortListener(known_pid, "python"))
+
+    issues = m.detect_port_issues(
+        service_ports=[m.ServicePort("API", "tokenage-api", "127.0.0.1", 4001)],
+        supervisor_states={"tokenage-api": m.SupervisorProgramState(status, pid)},
+        listeners_by_port={4001: listeners},
+    )
+
+    if expected_kind is None:
+        assert issues == []
+    else:
+        assert len(issues) == 1
+        assert issues[0].kind == expected_kind
+        assert issues[0].listener_pid == (known_pid if known_pid is not None else -1)
+        assert m.get_blocking_port_issues(issues) == issues
 
 
 def test_get_blocking_port_issues_ignores_not_listening(runtime_ports_module):

@@ -10,12 +10,12 @@ config before anything reads it.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import os
 import shutil
 import socket
 import subprocess
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -492,10 +492,16 @@ def _content_type(url: str) -> str:
     try:
         with urllib.request.urlopen(url, timeout=3) as response:
             return response.headers.get("content-type", "")
-    except urllib.error.HTTPError as exc:
-        return exc.headers.get("content-type", "")
-    except OSError:
+    except (OSError, http.client.HTTPException):
         return ""
+
+
+def _wait_for_html(url: str, retries: int = 10) -> bool:
+    for _ in range(retries):
+        if _content_type(url).startswith("text/html"):
+            return True
+        time.sleep(1)
+    return False
 
 
 def bootstrap(args: list[str] | None = None) -> int:
@@ -558,13 +564,17 @@ def bootstrap(args: list[str] | None = None) -> int:
     if (ROOT / "frontend" / "dist").is_dir():
         note("Restarting the API to serve the new dashboard...")
         _ctl("restart", "tokenage-api")
-        _wait_for_port(host, port_of["API"])
-    html = _content_type(f"http://{host}:{port_of['API']}/").startswith("text/html")
-    check(
-        html,
-        f"Dashboard: {urls['api_url']}",
-        f"Dashboard: {urls['api_url']} (frontend not served)",
-    )
+        html = _wait_for_html(f"http://{host}:{port_of['API']}/")
+        check(
+            html,
+            f"Dashboard: {urls['api_url']}",
+            f"Dashboard: {urls['api_url']} (frontend not served)",
+        )
+    else:
+        note(
+            "Dashboard unavailable: install Node.js and npm, then rerun "
+            "tokenage server bootstrap."
+        )
 
     if failures:
         _say(f"\n  ⚠ tokenage started with {failures} issue(s) → {urls['api_url']}")

@@ -110,6 +110,7 @@ def test_local_data_is_scoped_to_the_owner_not_shared(api_module, fresh_db):
     from src.auth.tokens import mint_token
     from src.recorder import record_usage
 
+    _, third = mint_token("c@example.com", kind="cli", db_path=fresh_db.db_path)
     record_usage(
         provider="p",
         model="m",
@@ -118,13 +119,13 @@ def test_local_data_is_scoped_to_the_owner_not_shared(api_module, fresh_db):
         completion_tokens=1,
         total_tokens=2,
         status=200,
-        user_id=None,
+        user_id=third.id,
         db_path=fresh_db.db_path,
     )
     token, _ = mint_token("a@example.com", kind="cli", db_path=fresh_db.db_path)
     client = TestClient(api_module.app)
-    # The NULL-user row belongs to nobody: neither the owner nor another user
-    # can read it.
+    # The row belongs to a third user: neither the owner nor another user can
+    # read it.
     assert client.get("/usage/count").json() == {"total": 0}
     other = client.get("/usage/count", headers={"Authorization": f"Bearer {token}"})
     assert other.json() == {"total": 0}
@@ -249,15 +250,11 @@ def _capture_usage(otlp_module, monkeypatch):
     return captured
 
 
-def test_otlp_tokenless_loopback_is_attributed_to_the_owner(
-    otlp_module, fresh_db, monkeypatch
-):
+def test_otlp_tokenless_loopback_is_rejected(otlp_module, fresh_db, monkeypatch):
     captured = _capture_usage(otlp_module, monkeypatch)
     response = TestClient(otlp_module.app).post("/v1/logs", json=_otlp_body())
-    assert response.status_code == 200
-    from src.auth.tokens import get_local_owner
-
-    assert captured[0]["user_id"] == get_local_owner(fresh_db.db_path).id
+    assert response.status_code == 401
+    assert captured == []
 
 
 @pytest.mark.parametrize(

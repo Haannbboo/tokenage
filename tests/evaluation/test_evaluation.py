@@ -468,6 +468,7 @@ def test_run_session_evaluation_job_sanitizes_agent_failure_errors(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -492,6 +493,7 @@ def test_run_session_evaluation_job_sanitizes_agent_failure_errors(
         session_id="sess-secret",
         client_source="codex",
         db_path=db_path,
+        user_id="test-user",
     )
 
     def fake_run(**kwargs):
@@ -510,7 +512,9 @@ def test_run_session_evaluation_job_sanitizes_agent_failure_errors(
 
     evaluation_module.run_session_evaluation_job(job["job_id"], db_path=db_path)
 
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert polled is not None
     assert polled["status"] == "failed"
     assert polled["error"] == "Evaluation agent failed"
@@ -545,6 +549,7 @@ def test_start_session_evaluation_job_rejects_manual_evaluation(
                 source="manual",
                 outcome="solved",
                 evaluated_at="2026-05-11T10:35:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -553,6 +558,7 @@ def test_start_session_evaluation_job_rejects_manual_evaluation(
         evaluation_module.start_session_evaluation_job(
             "manual-protected",
             db_path=db_path,
+            user_id="test-user",
         )
 
 
@@ -572,6 +578,7 @@ def test_start_session_evaluation_job_queues_without_running(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -579,6 +586,7 @@ def test_start_session_evaluation_job_queues_without_running(
     job = evaluation_module.start_session_evaluation_job(
         "sess-queued",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert job["status"] == "queued"
@@ -602,6 +610,7 @@ def test_start_session_evaluation_job_records_selected_evaluator(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -610,6 +619,7 @@ def test_start_session_evaluation_job_records_selected_evaluator(
         "sess-selected-evaluator",
         evaluator_type="claude",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert job["evaluator_type"] == "claude"
@@ -631,6 +641,7 @@ def test_start_session_evaluation_job_promotes_queued_auto_job(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -641,18 +652,22 @@ def test_start_session_evaluation_job_promotes_queued_auto_job(
         trigger="auto",
         evaluator_type="codex",
         db_path=db_path,
+        user_id="test-user",
     )
 
     manual_job = evaluation_module.start_session_evaluation_job(
         "sess-promote",
         evaluator_type="claude",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert manual_job["job_id"] == auto_job["job_id"]
     assert manual_job["trigger"] == "manual"
     assert manual_job["evaluator_type"] == "claude"
-    stored = database_module.get_evaluation_job(auto_job["job_id"], db_path=db_path)
+    stored = database_module.get_evaluation_job(
+        auto_job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert stored["trigger"] == "manual"
     assert stored["evaluator_type"] == "claude"
 
@@ -674,6 +689,7 @@ def test_run_session_evaluation_job_saves_llm_evaluation_before_success(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -682,6 +698,7 @@ def test_run_session_evaluation_job_saves_llm_evaluation_before_success(
         session_id="sess-llm",
         client_source="codex",
         db_path=db_path,
+        user_id="test-user",
     )
 
     session_dir = isolated_home / ".codex" / "sessions" / "2026" / "05" / "14"
@@ -749,7 +766,9 @@ def test_run_session_evaluation_job_saves_llm_evaluation_before_success(
 
     evaluation_module.run_session_evaluation_job(job["job_id"], db_path=db_path)
 
-    saved = database_module.get_session_evaluation("sess-llm", db_path=db_path)
+    saved = database_module.get_session_evaluation(
+        "sess-llm", db_path=db_path, user_id="test-user"
+    )
     assert saved is not None
     assert saved["outcome"] == "solved"
     assert saved["source"] == "llm"
@@ -757,7 +776,9 @@ def test_run_session_evaluation_job_saves_llm_evaluation_before_success(
     assert saved["task_title"] == "Fix dashboard"
     assert saved["task_title_zh"] == "修复仪表板"
 
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert polled is not None
     assert polled["status"] == "succeeded"
     assert polled["error"] is None
@@ -782,6 +803,7 @@ def test_run_session_evaluation_job_saves_opencode_evaluation(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -790,6 +812,7 @@ def test_run_session_evaluation_job_saves_opencode_evaluation(
         session_id="sess-opencode",
         client_source="opencode",
         db_path=db_path,
+        user_id="test-user",
     )
 
     def fake_run(**kwargs):
@@ -809,7 +832,9 @@ def test_run_session_evaluation_job_saves_opencode_evaluation(
 
     evaluation_module.run_session_evaluation_job(job["job_id"], db_path=db_path)
 
-    saved = database_module.get_session_evaluation("sess-opencode", db_path=db_path)
+    saved = database_module.get_session_evaluation(
+        "sess-opencode", db_path=db_path, user_id="test-user"
+    )
     assert saved is not None
     assert saved["outcome"] == "solved"
     assert saved["source"] == "llm"
@@ -817,7 +842,9 @@ def test_run_session_evaluation_job_saves_opencode_evaluation(
     assert saved["task_title"] == "Fix OpenCode sessions"
     assert saved["task_title_zh"] == "修复OpenCode会话"
 
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert polled is not None
     assert polled["status"] == "succeeded"
     assert polled["error"] is None
@@ -840,6 +867,7 @@ def test_summarize_session_with_llm_marks_evaluator_session_no_op(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -873,9 +901,12 @@ def test_summarize_session_with_llm_marks_evaluator_session_no_op(
     result = evaluation_module.summarize_session_with_llm(
         "sess-evaluator",
         db_path=db_path,
+        user_id="test-user",
     )
 
-    saved = database_module.get_session_evaluation("sess-evaluator", db_path=db_path)
+    saved = database_module.get_session_evaluation(
+        "sess-evaluator", db_path=db_path, user_id="test-user"
+    )
     assert result["outcome"] == "no_op"
     assert result["task_title"] is None
     assert result["task_title_zh"] is None
@@ -903,6 +934,7 @@ def test_execute_session_evaluation_job_does_not_overwrite_later_manual_evaluati
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -927,6 +959,7 @@ def test_execute_session_evaluation_job_does_not_overwrite_later_manual_evaluati
         client_source="codex",
         trigger="auto",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.claim_next_evaluation_job(db_path=db_path)
     database_module.upsert_session_evaluation(
@@ -935,6 +968,7 @@ def test_execute_session_evaluation_job_does_not_overwrite_later_manual_evaluati
         source="manual",
         evidence=["User marked outcome manually"],
         db_path=db_path,
+        user_id="test-user",
     )
 
     def fake_run(**kwargs):
@@ -952,8 +986,11 @@ def test_execute_session_evaluation_job_does_not_overwrite_later_manual_evaluati
     saved = database_module.get_session_evaluation(
         "sess-manual-race",
         db_path=db_path,
+        user_id="test-user",
     )
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert saved is not None
     assert saved["source"] == "manual"
     assert saved["outcome"] == "failed"
@@ -979,6 +1016,7 @@ def test_run_session_evaluation_job_returns_when_job_cannot_start(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -987,6 +1025,7 @@ def test_run_session_evaluation_job_returns_when_job_cannot_start(
         session_id="sess-stale-job",
         client_source="codex",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.claim_next_evaluation_job(db_path=db_path)
     database_module.mark_evaluation_job_failed(
@@ -1006,10 +1045,13 @@ def test_run_session_evaluation_job_returns_when_job_cannot_start(
 
     evaluation_module.run_session_evaluation_job(job["job_id"], db_path=db_path)
 
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     saved = database_module.get_session_evaluation(
         "sess-stale-job",
         db_path=db_path,
+        user_id="test-user",
     )
     assert polled is not None
     assert polled["status"] == "failed"
@@ -1035,6 +1077,7 @@ def test_run_session_evaluation_job_saves_unknown_when_transcript_missing(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -1043,6 +1086,7 @@ def test_run_session_evaluation_job_saves_unknown_when_transcript_missing(
         session_id="sess-missing",
         client_source="codex",
         db_path=db_path,
+        user_id="test-user",
     )
 
     def fail_if_called(**kwargs):
@@ -1052,7 +1096,9 @@ def test_run_session_evaluation_job_saves_unknown_when_transcript_missing(
 
     evaluation_module.run_session_evaluation_job(job["job_id"], db_path=db_path)
 
-    saved = database_module.get_session_evaluation("sess-missing", db_path=db_path)
+    saved = database_module.get_session_evaluation(
+        "sess-missing", db_path=db_path, user_id="test-user"
+    )
     assert saved is not None
     assert saved["outcome"] == "unknown"
     assert saved["source"] == "llm"
@@ -1060,7 +1106,9 @@ def test_run_session_evaluation_job_saves_unknown_when_transcript_missing(
     assert saved["task_title"] is None
     assert saved["task_title_zh"] is None
 
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert polled is not None
     assert polled["status"] == "succeeded"
     assert polled["error"] is None
@@ -1091,6 +1139,7 @@ def test_run_session_evaluation_job_marks_claude_mem_sessions_no_op(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -1099,6 +1148,7 @@ def test_run_session_evaluation_job_marks_claude_mem_sessions_no_op(
         session_id="sess-mem",
         client_source="claude-code",
         db_path=db_path,
+        user_id="test-user",
     )
 
     def fail_if_called(**kwargs):
@@ -1108,7 +1158,9 @@ def test_run_session_evaluation_job_marks_claude_mem_sessions_no_op(
 
     evaluation_module.run_session_evaluation_job(job["job_id"], db_path=db_path)
 
-    saved = database_module.get_session_evaluation("sess-mem", db_path=db_path)
+    saved = database_module.get_session_evaluation(
+        "sess-mem", db_path=db_path, user_id="test-user"
+    )
     assert saved is not None
     assert saved["outcome"] == "no_op"
     assert saved["source"] == "llm"
@@ -1116,7 +1168,9 @@ def test_run_session_evaluation_job_marks_claude_mem_sessions_no_op(
     assert saved["task_title"] is None
     assert saved["task_title_zh"] is None
 
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert polled is not None
     assert polled["status"] == "succeeded"
     assert polled["error"] is None
@@ -1184,6 +1238,7 @@ def test_run_session_evaluation_job_saves_kilo_evaluation(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -1192,6 +1247,7 @@ def test_run_session_evaluation_job_saves_kilo_evaluation(
         session_id="sess-kilo",
         client_source="kilo",
         db_path=db_path,
+        user_id="test-user",
     )
 
     def fake_run(**kwargs):
@@ -1211,7 +1267,9 @@ def test_run_session_evaluation_job_saves_kilo_evaluation(
 
     evaluation_module.run_session_evaluation_job(job["job_id"], db_path=db_path)
 
-    saved = database_module.get_session_evaluation("sess-kilo", db_path=db_path)
+    saved = database_module.get_session_evaluation(
+        "sess-kilo", db_path=db_path, user_id="test-user"
+    )
     assert saved is not None
     assert saved["outcome"] == "solved"
     assert saved["source"] == "llm"
@@ -1219,7 +1277,9 @@ def test_run_session_evaluation_job_saves_kilo_evaluation(
     assert saved["task_title"] == "Fix Kilo sessions"
     assert saved["task_title_zh"] == "修复Kilo会话"
 
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert polled is not None
     assert polled["status"] == "succeeded"
     assert polled["error"] is None
@@ -1309,6 +1369,7 @@ def test_summarize_session_with_llm_uses_claude_evaluator(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -1367,6 +1428,7 @@ def test_summarize_session_with_llm_uses_claude_evaluator(
         "sess-claude-eval",
         db_path=db_path,
         evaluator="claude",
+        user_id="test-user",
     )
 
     assert result["outcome"] == "solved"
@@ -1390,6 +1452,7 @@ def test_execute_session_evaluation_job_passes_claude_evaluator(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -1415,6 +1478,7 @@ def test_execute_session_evaluation_job_passes_claude_evaluator(
         client_source="codex",
         evaluator_type="claude",
         db_path=db_path,
+        user_id="test-user",
     )
 
     def fake_run(**kwargs):
@@ -1435,8 +1499,12 @@ def test_execute_session_evaluation_job_passes_claude_evaluator(
         db_path=db_path,
     )
 
-    saved = database_module.get_session_evaluation("sess-exec-claude", db_path=db_path)
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    saved = database_module.get_session_evaluation(
+        "sess-exec-claude", db_path=db_path, user_id="test-user"
+    )
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert saved is not None
     assert saved["outcome"] == "solved"
     assert polled is not None
@@ -1460,6 +1528,7 @@ def test_run_session_evaluation_job_with_claude_evaluator(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-11T10:30:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -1499,6 +1568,7 @@ def test_run_session_evaluation_job_with_claude_evaluator(
         client_source="codex",
         evaluator_type="claude",
         db_path=db_path,
+        user_id="test-user",
     )
 
     def fake_run(**kwargs):
@@ -1522,8 +1592,12 @@ def test_run_session_evaluation_job_with_claude_evaluator(
         db_path=db_path,
     )
 
-    saved = database_module.get_session_evaluation("sess-run-claude", db_path=db_path)
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    saved = database_module.get_session_evaluation(
+        "sess-run-claude", db_path=db_path, user_id="test-user"
+    )
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert saved is not None
     assert saved["outcome"] == "solved"
     assert saved["confidence"] == pytest.approx(0.85)
@@ -1691,6 +1765,7 @@ def test_upsert_session_evaluation_stores_project(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-27T10:00:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -1707,9 +1782,12 @@ def test_upsert_session_evaluation_stores_project(
         failure_reason=None,
         project="my-cool-project",
         db_path=db_path,
+        user_id="test-user",
     )
 
-    result = database_module.get_session_evaluation("sess-proj", db_path=db_path)
+    result = database_module.get_session_evaluation(
+        "sess-proj", db_path=db_path, user_id="test-user"
+    )
     assert result is not None
     assert result["project"] == "my-cool-project"
 
@@ -1728,6 +1806,7 @@ def test_get_session_evaluation_includes_project(
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-27T10:00:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -1738,9 +1817,12 @@ def test_get_session_evaluation_includes_project(
         source="manual",
         project="hub-router",
         db_path=db_path,
+        user_id="test-user",
     )
 
-    result = database_module.get_session_evaluation("sess-proj2", db_path=db_path)
+    result = database_module.get_session_evaluation(
+        "sess-proj2", db_path=db_path, user_id="test-user"
+    )
     assert result["project"] == "hub-router"
 
 
@@ -1761,11 +1843,14 @@ def test_delete_session_evaluation_clears_project(
                 outcome="solved",
                 source="llm",
                 project="to-be-deleted",
+                user_id="test-user",
             )
         )
         session.commit()
 
-    database_module.delete_session_evaluation("sess-proj3", db_path=db_path)
+    database_module.delete_session_evaluation(
+        "sess-proj3", db_path=db_path, user_id="test-user"
+    )
 
     with database_module.Session(database_module.get_engine(db_path)) as session:
         rec = session.get(database_module.SessionRecord, "sess-proj3")
@@ -1784,6 +1869,7 @@ def test_upsert_project_source_overwrite_behavior(database_module, isolated_home
                 started=1778493600000000,
                 ended=1778495400000000,
                 updated_at="2026-05-27T10:00:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
@@ -1795,11 +1881,12 @@ def test_upsert_project_source_overwrite_behavior(database_module, isolated_home
         source="llm",
         project="alpha",
         db_path=db_path,
+        user_id="test-user",
     )
     assert (
-        database_module.get_session_evaluation("sess-overwrite", db_path=db_path)[
-            "project"
-        ]
+        database_module.get_session_evaluation(
+            "sess-overwrite", db_path=db_path, user_id="test-user"
+        )["project"]
         == "alpha"
     )
 
@@ -1810,11 +1897,12 @@ def test_upsert_project_source_overwrite_behavior(database_module, isolated_home
         source="manual",
         project=None,
         db_path=db_path,
+        user_id="test-user",
     )
     assert (
-        database_module.get_session_evaluation("sess-overwrite", db_path=db_path)[
-            "project"
-        ]
+        database_module.get_session_evaluation(
+            "sess-overwrite", db_path=db_path, user_id="test-user"
+        )["project"]
         == "alpha"
     )
 
@@ -1825,10 +1913,11 @@ def test_upsert_project_source_overwrite_behavior(database_module, isolated_home
         source="llm",
         project=None,
         db_path=db_path,
+        user_id="test-user",
     )
     assert (
-        database_module.get_session_evaluation("sess-overwrite", db_path=db_path)[
-            "project"
-        ]
+        database_module.get_session_evaluation(
+            "sess-overwrite", db_path=db_path, user_id="test-user"
+        )["project"]
         is None
     )

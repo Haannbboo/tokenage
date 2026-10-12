@@ -109,14 +109,29 @@ def mint_token(
     token = f"tokenage_{kind}_{secrets.token_hex(24)}"
     user = get_or_create_user(email, db_path)
     engine = get_engine(db_path)
+    now = _now_micros()
     with Session(engine, expire_on_commit=False) as session:
+        device_id = None
+        if kind == "ingest":
+            # Ingest tokens are device-bound; an unbound one resolves to nothing.
+            device = Device(
+                user_id=user.id,
+                installation_hash=hash_token(token),
+                device_name=device_name or "token",
+                created_at=now,
+                last_seen_at=now,
+            )
+            session.add(device)
+            session.flush()
+            device_id = device.id
         session.add(
             AuthToken(
                 user_id=user.id,
                 kind=kind,
                 device_name=device_name,
+                device_id=device_id,
                 token_hash=hash_token(token),
-                created_at=_now_micros(),
+                created_at=now,
             )
         )
         session.commit()
@@ -143,6 +158,9 @@ def resolve_token(
             return None
         auth_token, user = row
         if auth_token.revoked_at is not None:
+            return None
+        # An ingest token not bound to a device is a pre-device-binding leftover.
+        if auth_token.kind == "ingest" and auth_token.device_id is None:
             return None
         session.expunge_all()
     try:

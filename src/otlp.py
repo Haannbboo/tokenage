@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 from src.config.app import CONFIG
 
-from .auth import get_local_owner, local_owner_allowed, resolve_token
+from .auth import resolve_token
 from .auth.tokens import hash_token
 from .database import init_db
 from .provider_parser import parse_provider_metadata
@@ -74,19 +74,14 @@ _auth_executor = concurrent.futures.ThreadPoolExecutor(
 )
 
 
-def _resolve_ingest_user(request: Request) -> tuple[str, str | None]:
+def _resolve_ingest_user(request: Request) -> tuple[str, str]:
     """Return (user_id, token_id) for the request.
 
-    A token (x-tokenage-token, kind ingest) is always checked. Tokenless
-    requests are accepted only as the local owner: local provider and a direct
-    loopback request (keeps agents wired before sign-in working); token_id is
-    None for them. Raises HTTPException(401) for anything else, including a
-    present-but-bad token (no fallback to the owner).
+    Requires an ingest token (x-tokenage-token); there is no tokenless path,
+    loopback included. Raises HTTPException(401) otherwise.
     """
     token = request.headers.get("x-tokenage-token")
     if not token:
-        if local_owner_allowed(request):
-            return get_local_owner().id, None
         _reject_invalid_token(request)
 
     token_id = hash_token(token)
@@ -185,12 +180,8 @@ async def _resolve_ingest_user_async(request: Request):
         ) from exc
 
 
-def _scoped_id(identifier: str, user_id: str | None) -> str:
-    return f"{user_id}:{identifier}" if user_id else identifier
-
-
-def _scoped_tool_use_id(tool_use_id: str, user_id: str | None) -> str:
-    return _scoped_id(tool_use_id, user_id)
+def _scoped_id(identifier: str, user_id: str) -> str:
+    return f"{user_id}:{identifier}"
 
 
 def _fallback_tool_use_id() -> str:
@@ -333,7 +324,7 @@ def _flush_claude_tools(
     prompt_key: str,
     usage_id: str,
     session_id: str | None,
-    user_id: str | None,
+    user_id: str,
     usage_start_ms: int,
 ) -> None:
     """Record buffered Claude tools that will never get a tool_result.
@@ -351,7 +342,7 @@ def _flush_claude_tools(
             remaining.append(entry)
             continue
         record_tool_call(
-            tool_use_id=_scoped_tool_use_id(entry["tool_use_id"], user_id),
+            tool_use_id=_scoped_id(entry["tool_use_id"], user_id),
             usage_id=usage_id,
             session_id=session_id,
             tool_name=entry["tool_name"],
@@ -417,7 +408,7 @@ class PromptLengthTracker:
         service_name: str,
         attrs: list,
         session_id: str,
-        user_id: str | None = None,
+        user_id: str,
     ) -> None:
         """Store prompt_length from prompt-only events for later usage rows."""
         prompt_length = _attr(attrs, "prompt_length")
@@ -441,7 +432,7 @@ class PromptLengthTracker:
         service_name: str,
         attrs: list,
         session_id: str,
-        user_id: str | None = None,
+        user_id: str,
     ) -> int:
         """Return the prompt length for a usage row, preferring an inline value when present."""
         prompt_length = _attr(attrs, "prompt_length")
@@ -481,7 +472,7 @@ class PromptLengthTracker:
         service_name: str,
         attrs: list,
         session_id: str,
-        user_id: str | None = None,
+        user_id: str,
     ) -> str | None:
         """Build a stable correlation key from the strongest ID the client exposes."""
         prompt_id = _attr(attrs, "prompt.id") or _attr(attrs, "prompt_id")
@@ -510,7 +501,8 @@ def _extract_claude_fields(
     attrs: list,
     session_id: str,
     client_ip: str | None = None,
-    user_id: str | None = None,
+    *,
+    user_id: str,
 ) -> dict:
     """Extract normalized usage fields from a Claude OTLP record."""
     time_ns = record.get("timeUnixNano", "0")
@@ -568,7 +560,8 @@ def _extract_opencode_fields(
     session_id: str,
     client_source: str = "opencode",
     client_ip: str | None = None,
-    user_id: str | None = None,
+    *,
+    user_id: str,
 ) -> dict:
     """Extract normalized usage fields from an OpenCode or Kilo OTLP record."""
     time_ns = record.get("timeUnixNano", "0")
@@ -654,7 +647,8 @@ def _parse_opencode_record(
     session_id: str,
     client_source: str = "opencode",
     client_ip: str | None = None,
-    user_id: str | None = None,
+    *,
+    user_id: str,
 ) -> None:
     fields = _extract_opencode_fields(
         record,
@@ -669,7 +663,7 @@ def _parse_opencode_record(
     if usage:
         for tool_info in tool_calls:
             record_tool_call(
-                tool_use_id=_scoped_tool_use_id(tool_info["tool_use_id"], user_id),
+                tool_use_id=_scoped_id(tool_info["tool_use_id"], user_id),
                 usage_id=usage.id,
                 session_id=usage.session_id,
                 tool_name=tool_info["tool_name"],
@@ -680,7 +674,7 @@ def _parse_opencode_record(
             )
 
 
-def _codex_state_for(attrs: list, user_id: str | None) -> dict | None:
+def _codex_state_for(attrs: list, user_id: str) -> dict | None:
     """Return the mutable per-conversation Codex state, creating it if needed.
 
     Returns None for events without a conversation id (for example the
@@ -698,7 +692,7 @@ def _codex_state_for(attrs: list, user_id: str | None) -> dict | None:
     return state
 
 
-def _handle_codex_state_event(attrs: list, user_id: str | None = None) -> bool:
+def _handle_codex_state_event(attrs: list, user_id: str) -> bool:
     """Handle Codex state-only events.
 
     Returns True when the event was consumed without producing a usage row.
@@ -740,7 +734,8 @@ def _extract_codex_fields(
     attrs: list,
     service_name: str,
     client_ip: str | None = None,
-    user_id: str | None = None,
+    *,
+    user_id: str,
 ) -> dict | None:
     """Extract normalized usage fields from a Codex OTLP response.completed record."""
     event_kind = _attr(attrs, "event.kind")
@@ -840,7 +835,8 @@ def _parse_log_record(
     service_name: str,
     resource_session_id: str,
     client_ip: str | None = None,
-    user_id: str | None = None,
+    *,
+    user_id: str,
 ) -> None:
     if service_name in RETIRED_SERVICE_NAMES:
         return
@@ -884,7 +880,7 @@ def _parse_log_record(
             last = _claude_last_usage.get(prompt_key) if prompt_key else None
             usage_id, session_id = (last[0], last[1]) if last else (None, None)
             record_tool_call(
-                tool_use_id=_scoped_tool_use_id(entry["tool_use_id"], user_id),
+                tool_use_id=_scoped_id(entry["tool_use_id"], user_id),
                 usage_id=usage_id,
                 session_id=session_id or usage_session_id,
                 tool_name=entry["tool_name"],
@@ -920,7 +916,7 @@ def _parse_log_record(
             # before Codex's separate tool_result event reaches the collector.
             # In that case, enrich the existing row instead of dropping timing.
             update_tool_call_duration(
-                tool_use_id=_scoped_tool_use_id(call_id, user_id),
+                tool_use_id=_scoped_id(call_id, user_id),
                 user_id=user_id,
                 client_source="codex",
                 duration_ms=duration_ms,
@@ -983,9 +979,7 @@ def _parse_log_record(
             if usage:
                 for tool_info in tool_calls:
                     record_tool_call(
-                        tool_use_id=_scoped_tool_use_id(
-                            tool_info["tool_use_id"], user_id
-                        ),
+                        tool_use_id=_scoped_id(tool_info["tool_use_id"], user_id),
                         usage_id=usage.id,
                         session_id=usage.session_id,
                         tool_name=tool_info["tool_name"],
@@ -1061,12 +1055,10 @@ async def _read_capped_json(request: Request) -> dict:
     return json.loads(body_bytes)
 
 
-async def _resolve_ingest_request(request: Request) -> tuple[str, str | None]:
-    """Auth + rate limit; returns (user_id, token_id). Tokenless loopback owner
-    requests have token_id None and are not rate limited (as before auth-off)."""
+async def _resolve_ingest_request(request: Request) -> tuple[str, str]:
+    """Auth + rate limit; returns (user_id, token_id)."""
     user_id, token_id = await _resolve_ingest_user_async(request)
-    if token_id is not None:
-        _check_rate_limit(token_id)
+    _check_rate_limit(token_id)
     return user_id, token_id
 
 

@@ -20,6 +20,13 @@ def _attrs(values: dict[str, int | str]) -> list[dict]:
     return attrs
 
 
+def _authed_client(otlp_module, fresh_db):
+    from src.auth.tokens import mint_token
+
+    token, _ = mint_token("test@example.com", kind="ingest", db_path=fresh_db.db_path)
+    return TestClient(otlp_module.app, headers={"x-tokenage-token": token})
+
+
 def _capture_usage(target: dict):
     return lambda **fields: target.update({"usage": SimpleNamespace(**fields)})
 
@@ -35,7 +42,7 @@ def test_health_routes_return_service_status(otlp_module):
 
 
 def test_retired_gemini_logs_are_ignored_without_debug_dumps(
-    otlp_module, monkeypatch, tmp_path: Path
+    otlp_module, monkeypatch, tmp_path: Path, fresh_db
 ):
     debug_file = tmp_path / "otlp-debug.json"
     captured = []
@@ -46,7 +53,7 @@ def test_retired_gemini_logs_are_ignored_without_debug_dumps(
         lambda **fields: captured.append(fields),
     )
 
-    response = TestClient(otlp_module.app).post(
+    response = _authed_client(otlp_module, fresh_db).post(
         "/v1/logs",
         json={
             "resourceLogs": [
@@ -99,7 +106,9 @@ def test_extract_claude_fields_basic(otlp_module):
     )
     record = {"timeUnixNano": "1800000000000000000"}
 
-    fields = otlp_module._extract_claude_fields(record, attrs, "sess-1")
+    fields = otlp_module._extract_claude_fields(
+        record, attrs, "sess-1", user_id="test-user"
+    )
 
     assert fields["model"] == "claude-sonnet-4-20250514"
     assert fields["prompt_tokens"] == 100
@@ -126,13 +135,15 @@ def test_extract_codex_fields_basic(otlp_module):
         }
     )
     record = {"timeUnixNano": "1800000000000000000"}
-    otlp_module.codex_state["codex-conv-1"] = {
+    otlp_module.codex_state["test-user:codex-conv-1"] = {
         "ts": 0,
         "duration_ms": 800,
         "ttft_ms": 200,
     }
 
-    fields = otlp_module._extract_codex_fields(record, attrs, "codex_cli_rs")
+    fields = otlp_module._extract_codex_fields(
+        record, attrs, "codex_cli_rs", user_id="test-user"
+    )
 
     assert fields["model"] == "o3"
     assert fields["prompt_tokens"] == 200
@@ -157,9 +168,11 @@ def test_extract_codex_fields_prefers_inline_ttft(otlp_module):
         }
     )
     record = {"timeUnixNano": "1800000000000000000"}
-    otlp_module.codex_state["codex-conv-2"] = {"ts": 0, "duration_ms": 1800}
+    otlp_module.codex_state["test-user:codex-conv-2"] = {"ts": 0, "duration_ms": 1800}
 
-    fields = otlp_module._extract_codex_fields(record, attrs, "codex-app-server")
+    fields = otlp_module._extract_codex_fields(
+        record, attrs, "codex-app-server", user_id="test-user"
+    )
 
     assert fields["ttft_ms"] == 794
     assert fields["latency_ms"] == 1800
@@ -185,7 +198,9 @@ def test_extract_opencode_fields_basic(otlp_module):
     )
     record = {"timeUnixNano": "1800000000000000000"}
 
-    fields = otlp_module._extract_opencode_fields(record, attrs, "oc-sess-1")
+    fields = otlp_module._extract_opencode_fields(
+        record, attrs, "oc-sess-1", user_id="test-user"
+    )
 
     assert fields["model"] == "claude-sonnet-4-5"
     assert fields["provider"] == "anthropic"
@@ -221,7 +236,9 @@ def test_extract_opencode_fields_normalizes_total_when_raw_total_excludes_cache(
     )
     record = {"timeUnixNano": "1800000000000000000"}
 
-    fields = otlp_module._extract_opencode_fields(record, attrs, "oc-sess-cache")
+    fields = otlp_module._extract_opencode_fields(
+        record, attrs, "oc-sess-cache", user_id="test-user"
+    )
 
     assert fields["prompt_tokens"] == 10_807_100
     assert fields["cached_tokens"] == 10_000_000
@@ -255,7 +272,7 @@ def test_parse_opencode_record_routes_to_record_usage(otlp_module, monkeypatch):
     )
     record["attributes"] = attrs
 
-    otlp_module._parse_log_record(record, "opencode", "oc-sess-1")
+    otlp_module._parse_log_record(record, "opencode", "oc-sess-1", user_id="test-user")
 
     assert captured["usage"].client_source == "opencode"
     assert captured["usage"].model == "claude-sonnet-4-5"
@@ -293,7 +310,7 @@ def test_parse_opencode_record_uses_otlp_status_code(otlp_module, monkeypatch):
     )
     record["attributes"] = attrs
 
-    otlp_module._parse_log_record(record, "opencode", "oc-sess-1")
+    otlp_module._parse_log_record(record, "opencode", "oc-sess-1", user_id="test-user")
 
     assert captured["usage"].client_source == "opencode"
     assert captured["usage"].status == 429
@@ -321,7 +338,7 @@ def test_parse_opencode_record_uses_http_response_status_code(otlp_module, monke
     )
     record["attributes"] = attrs
 
-    otlp_module._parse_log_record(record, "opencode", "oc-sess-1")
+    otlp_module._parse_log_record(record, "opencode", "oc-sess-1", user_id="test-user")
 
     assert captured["usage"].client_source == "opencode"
     assert captured["usage"].status == 500
@@ -340,7 +357,9 @@ def test_extract_opencode_fields_derives_total_with_reasoning_when_missing(
     )
     record = {"timeUnixNano": "1800000000000000000"}
 
-    fields = otlp_module._extract_opencode_fields(record, attrs, "oc-sess-1")
+    fields = otlp_module._extract_opencode_fields(
+        record, attrs, "oc-sess-1", user_id="test-user"
+    )
 
     assert fields["total_tokens"] == 255  # prompt+completion+cache_creation
     assert fields["prompt_length"] == 0
@@ -372,7 +391,9 @@ def test_extract_opencode_fields_resolves_base_url_for_event_provider(
     )
     record = {"timeUnixNano": "1800000000000000000"}
 
-    fields = otlp_module._extract_opencode_fields(record, attrs, "oc-sess-1")
+    fields = otlp_module._extract_opencode_fields(
+        record, attrs, "oc-sess-1", user_id="test-user"
+    )
 
     assert fields["provider"] == "openai"
     assert fields["base_url"] == "https://api.openai.com/v1"
@@ -393,7 +414,9 @@ def test_prompt_length_tracker_records_and_consumes_matching_prompt_event(otlp_m
             "prompt_length": 3210,
         }
     )
-    tracker.record_prompt_event("codex", prompt_attrs, "tracker-session-1")
+    tracker.record_prompt_event(
+        "codex", prompt_attrs, "tracker-session-1", user_id="test-user"
+    )
 
     response_attrs = _attrs(
         {
@@ -404,11 +427,15 @@ def test_prompt_length_tracker_records_and_consumes_matching_prompt_event(otlp_m
     )
 
     assert (
-        tracker.consume_for_usage_event("codex", response_attrs, "tracker-session-1")
+        tracker.consume_for_usage_event(
+            "codex", response_attrs, "tracker-session-1", user_id="test-user"
+        )
         == 3210
     )
     assert (
-        tracker.consume_for_usage_event("codex", response_attrs, "tracker-session-1")
+        tracker.consume_for_usage_event(
+            "codex", response_attrs, "tracker-session-1", user_id="test-user"
+        )
         == 0
     )
 
@@ -434,7 +461,9 @@ def test_parse_claude_record_uses_prompt_length_from_prior_prompt_event(
             }
         ),
     }
-    otlp_module._parse_log_record(prompt_record, "claude-code", "claude-session-1")
+    otlp_module._parse_log_record(
+        prompt_record, "claude-code", "claude-session-1", user_id="test-user"
+    )
 
     response_ts = datetime(2026, 4, 22, 21, 0, 0, tzinfo=UTC)
     response_record = {
@@ -454,7 +483,9 @@ def test_parse_claude_record_uses_prompt_length_from_prior_prompt_event(
         ),
     }
 
-    otlp_module._parse_log_record(response_record, "claude-code", "claude-session-1")
+    otlp_module._parse_log_record(
+        response_record, "claude-code", "claude-session-1", user_id="test-user"
+    )
 
     assert captured["usage"].prompt_length == 2468
     assert captured["usage"].client_source == "claude-code"
@@ -485,7 +516,9 @@ def test_parse_claude_record_uses_otlp_status_code(otlp_module, monkeypatch):
         ),
     }
 
-    otlp_module._parse_log_record(response_record, "claude-code", "claude-session-1")
+    otlp_module._parse_log_record(
+        response_record, "claude-code", "claude-session-1", user_id="test-user"
+    )
 
     assert captured["usage"].status == 400
 
@@ -511,7 +544,9 @@ def test_parse_codex_record_uses_prompt_length_from_prior_prompt_event(
             }
         ),
     }
-    otlp_module._parse_log_record(prompt_record, "codex_cli_rs", "")
+    otlp_module._parse_log_record(
+        prompt_record, "codex_cli_rs", "", user_id="test-user"
+    )
 
     response_ts = datetime(2026, 4, 22, 21, 5, 0, tzinfo=UTC)
     response_record = {
@@ -532,7 +567,9 @@ def test_parse_codex_record_uses_prompt_length_from_prior_prompt_event(
         ),
     }
 
-    otlp_module._parse_log_record(response_record, "codex_cli_rs", "")
+    otlp_module._parse_log_record(
+        response_record, "codex_cli_rs", "", user_id="test-user"
+    )
 
     assert captured["usage"].prompt_length == 88
     assert captured["usage"].client_source == "codex"
@@ -559,7 +596,7 @@ def test_parse_codex_exec_record_uses_same_usage_parser(otlp_module, monkeypatch
             }
         ),
     }
-    otlp_module._parse_log_record(prompt_record, "codex_exec", "")
+    otlp_module._parse_log_record(prompt_record, "codex_exec", "", user_id="test-user")
 
     response_ts = datetime(2026, 5, 3, 17, 0, 0, tzinfo=UTC)
     response_record = {
@@ -579,7 +616,9 @@ def test_parse_codex_exec_record_uses_same_usage_parser(otlp_module, monkeypatch
         ),
     }
 
-    otlp_module._parse_log_record(response_record, "codex_exec", "")
+    otlp_module._parse_log_record(
+        response_record, "codex_exec", "", user_id="test-user"
+    )
 
     assert captured["usage"].client_source == "codex"
     assert captured["usage"].session_id == "exec-conv-1"
@@ -610,7 +649,9 @@ def test_parse_codex_app_server_record_uses_same_usage_parser(otlp_module, monke
         ),
     }
 
-    otlp_module._parse_log_record(response_record, "codex-app-server", "")
+    otlp_module._parse_log_record(
+        response_record, "codex-app-server", "", user_id="test-user"
+    )
 
     assert captured["usage"].client_source == "codex"
     assert captured["usage"].session_id == "app-server-conv-1"
@@ -637,6 +678,7 @@ def test_codex_websocket_request_sets_request_latency(otlp_module, monkeypatch):
         },
         "codex_exec",
         "",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         {
@@ -656,6 +698,7 @@ def test_codex_websocket_request_sets_request_latency(otlp_module, monkeypatch):
         },
         "codex_exec",
         "",
+        user_id="test-user",
     )
 
     assert captured["usage"].latency_ms == 2002
@@ -684,6 +727,7 @@ def test_codex_api_request_duration_sets_request_latency(otlp_module, monkeypatc
         },
         "codex_cli_rs",
         "",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         {
@@ -701,6 +745,7 @@ def test_codex_api_request_duration_sets_request_latency(otlp_module, monkeypatc
         },
         "codex_cli_rs",
         "",
+        user_id="test-user",
     )
 
     assert captured["usage"].latency_ms == 2533
@@ -727,6 +772,7 @@ def test_codex_latency_stays_empty_without_request_start(otlp_module, monkeypatc
         },
         "codex_cli_rs",
         "",
+        user_id="test-user",
     )
 
     assert captured["usage"].latency_ms is None
@@ -767,7 +813,9 @@ def test_parse_codex_record_persists_integer_conversation_id_as_string(
         ),
     }
 
-    otlp_module._parse_log_record(response_record, "codex_cli_rs", "")
+    otlp_module._parse_log_record(
+        response_record, "codex_cli_rs", "", user_id="test-user"
+    )
 
     assert captured["usage"].session_id == "123"
 
@@ -796,7 +844,9 @@ def test_parse_codex_record_uses_http_response_status_code(otlp_module, monkeypa
         ),
     }
 
-    otlp_module._parse_log_record(response_record, "codex_cli_rs", "")
+    otlp_module._parse_log_record(
+        response_record, "codex_cli_rs", "", user_id="test-user"
+    )
 
     assert captured["usage"].status == 429
 
@@ -824,7 +874,9 @@ def test_inline_prompt_length_is_not_queued_for_next_request(otlp_module, monkey
             }
         ),
     }
-    otlp_module._parse_log_record(response_record_1, "codex_cli_rs", "")
+    otlp_module._parse_log_record(
+        response_record_1, "codex_cli_rs", "", user_id="test-user"
+    )
 
     response_ts_2 = datetime(2026, 4, 22, 21, 16, 0, tzinfo=UTC)
     response_record_2 = {
@@ -840,7 +892,9 @@ def test_inline_prompt_length_is_not_queued_for_next_request(otlp_module, monkey
             }
         ),
     }
-    otlp_module._parse_log_record(response_record_2, "codex_cli_rs", "")
+    otlp_module._parse_log_record(
+        response_record_2, "codex_cli_rs", "", user_id="test-user"
+    )
 
     assert captured[0].prompt_length == 999
     assert captured[1].prompt_length == 0
@@ -856,9 +910,11 @@ def test_claude_tool_decision_missing_tool_use_id_gets_random_fallback(otlp_modu
         "timeUnixNano": "1000000000",
     }
 
-    otlp_module._parse_log_record(record, "claude-code", "session-1")
+    otlp_module._parse_log_record(
+        record, "claude-code", "session-1", user_id="test-user"
+    )
 
-    buffered = otlp_module._claude_tool_buffer["p1"]
+    buffered = otlp_module._claude_tool_buffer["test-user:p1"]
     assert len(buffered) == 1
     assert buffered[0]["tool_use_id"]
     assert buffered[0]["tool_use_id"].startswith("generated:")
@@ -872,10 +928,17 @@ def test_claude_tool_decision_missing_tool_use_id_ids_are_unique(otlp_module):
         "timeUnixNano": "1000000000",
     }
 
-    otlp_module._parse_log_record(record, "claude-code", "session-1")
-    otlp_module._parse_log_record(record, "claude-code", "session-1")
+    otlp_module._parse_log_record(
+        record, "claude-code", "session-1", user_id="test-user"
+    )
+    otlp_module._parse_log_record(
+        record, "claude-code", "session-1", user_id="test-user"
+    )
 
-    ids = [entry["tool_use_id"] for entry in otlp_module._claude_tool_buffer["p1"]]
+    ids = [
+        entry["tool_use_id"]
+        for entry in otlp_module._claude_tool_buffer["test-user:p1"]
+    ]
     assert len(ids) == 2
     assert len(set(ids)) == 2
 
@@ -900,23 +963,23 @@ def test_tool_buffers_are_scoped_by_authenticated_user(otlp_module):
     assert "user-b:shared-prompt" in otlp_module._claude_tool_buffer
 
 
-def test_receive_logs_evicts_stale_tool_buffer_entries(otlp_module):
+def test_receive_logs_evicts_stale_tool_buffer_entries(otlp_module, fresh_db):
     """Tool-call buffer entries older than 10 minutes must be swept so an
     aborted turn doesn't leak the entry for the life of the process."""
-    client = TestClient(otlp_module.app)
+    client = _authed_client(otlp_module, fresh_db)
     now_ms = int(time.time() * 1000)
-    otlp_module._claude_tool_buffer["stale"] = [
+    otlp_module._claude_tool_buffer["test-user:stale"] = [
         {"tool_name": "bash", "tool_use_id": "toolu_1", "ts": now_ms - 700_000}
     ]
-    otlp_module._claude_tool_buffer["fresh"] = [
+    otlp_module._claude_tool_buffer["test-user:fresh"] = [
         {"tool_name": "bash", "tool_use_id": "toolu_2", "ts": now_ms}
     ]
 
     response = client.post("/v1/logs", json={})
 
     assert response.status_code == 200
-    assert "stale" not in otlp_module._claude_tool_buffer
-    assert "fresh" in otlp_module._claude_tool_buffer
+    assert "test-user:stale" not in otlp_module._claude_tool_buffer
+    assert "test-user:fresh" in otlp_module._claude_tool_buffer
 
 
 def _stub_tool_recording(otlp_module, monkeypatch, captured_tools: list) -> None:
@@ -950,6 +1013,7 @@ def test_claude_tool_result_duration_flows_to_record(otlp_module, monkeypatch):
         ),
         "claude-code",
         "session-1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record(
@@ -960,6 +1024,7 @@ def test_claude_tool_result_duration_flows_to_record(otlp_module, monkeypatch):
         ),
         "claude-code",
         "session-1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record(
@@ -970,6 +1035,7 @@ def test_claude_tool_result_duration_flows_to_record(otlp_module, monkeypatch):
         ),
         "claude-code",
         "session-1",
+        user_id="test-user",
     )
 
     assert len(captured_tools) == 1
@@ -1004,6 +1070,7 @@ def test_claude_tools_attach_to_the_request_that_produced_them(
         record("tool_decision", 1000, tool_name="Bash", tool_use_id="t1"),
         "claude-code",
         "s1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record(
@@ -1015,16 +1082,19 @@ def test_claude_tools_attach_to_the_request_that_produced_them(
         ),
         "claude-code",
         "s1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record("tool_result", 1050, tool_name="Bash", tool_use_id="t1", duration_ms=40),
         "claude-code",
         "s1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record("tool_decision", 5000, tool_name="Read", tool_use_id="t2"),
         "claude-code",
         "s1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record(
@@ -1036,18 +1106,20 @@ def test_claude_tools_attach_to_the_request_that_produced_them(
         ),
         "claude-code",
         "s1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record("tool_result", 5040, tool_name="Read", tool_use_id="t2", duration_ms=15),
         "claude-code",
         "s1",
+        user_id="test-user",
     )
 
     by_id = {t["tool_use_id"]: t for t in captured_tools}
-    assert by_id["t1"]["usage_id"] == "u1"
-    assert by_id["t1"]["duration_ms"] == 40
-    assert by_id["t2"]["usage_id"] == "u2"
-    assert by_id["t2"]["duration_ms"] == 15
+    assert by_id["test-user:t1"]["usage_id"] == "u1"
+    assert by_id["test-user:t1"]["duration_ms"] == 40
+    assert by_id["test-user:t2"]["usage_id"] == "u2"
+    assert by_id["test-user:t2"]["duration_ms"] == 15
 
 
 def test_claude_result_less_tool_flushes_to_next_request(otlp_module, monkeypatch):
@@ -1075,6 +1147,7 @@ def test_claude_result_less_tool_flushes_to_next_request(otlp_module, monkeypatc
         record("tool_decision", 1000, tool_name="Bash", tool_use_id="t1"),
         "claude-code",
         "s1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record(
@@ -1086,6 +1159,7 @@ def test_claude_result_less_tool_flushes_to_next_request(otlp_module, monkeypatc
         ),
         "claude-code",
         "s1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record(
@@ -1097,11 +1171,12 @@ def test_claude_result_less_tool_flushes_to_next_request(otlp_module, monkeypatc
         ),
         "claude-code",
         "s1",
+        user_id="test-user",
     )
 
     by_id = {t["tool_use_id"]: t for t in captured_tools}
-    assert by_id["t1"]["usage_id"] == "u2"
-    assert by_id["t1"]["duration_ms"] is None
+    assert by_id["test-user:t1"]["usage_id"] == "u2"
+    assert by_id["test-user:t1"]["duration_ms"] is None
 
 
 def test_codex_tool_result_duration_flows_to_record(otlp_module, monkeypatch):
@@ -1124,6 +1199,7 @@ def test_codex_tool_result_duration_flows_to_record(otlp_module, monkeypatch):
         record("codex.tool_decision", tool_name="exec_command", call_id="call-dur-1"),
         "codex_cli_rs",
         "session-1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record(
@@ -1134,6 +1210,7 @@ def test_codex_tool_result_duration_flows_to_record(otlp_module, monkeypatch):
         ),
         "codex_cli_rs",
         "session-1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         record(
@@ -1147,6 +1224,7 @@ def test_codex_tool_result_duration_flows_to_record(otlp_module, monkeypatch):
         ),
         "codex_cli_rs",
         "session-1",
+        user_id="test-user",
     )
 
     assert len(captured_tools) == 1
@@ -1180,6 +1258,7 @@ def test_codex_tool_result_without_decision_is_not_recorded(otlp_module, monkeyp
         },
         "codex_cli_rs",
         "session-1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         {
@@ -1197,13 +1276,14 @@ def test_codex_tool_result_without_decision_is_not_recorded(otlp_module, monkeyp
         },
         "codex_cli_rs",
         "session-1",
+        user_id="test-user",
     )
 
     assert captured_tools == []
     assert duration_updates == [
         {
-            "tool_use_id": "call-only-result",
-            "user_id": None,
+            "tool_use_id": "test-user:call-only-result",
+            "user_id": "test-user",
             "client_source": "codex",
             "duration_ms": 12,
         }
@@ -1229,6 +1309,7 @@ def test_opencode_tool_decision_duration_flows_to_record(otlp_module, monkeypatc
         },
         "opencode",
         "session-1",
+        user_id="test-user",
     )
     otlp_module._parse_log_record(
         {
@@ -1247,6 +1328,7 @@ def test_opencode_tool_decision_duration_flows_to_record(otlp_module, monkeypatc
         },
         "opencode",
         "session-1",
+        user_id="test-user",
     )
 
     assert len(captured_tools) == 1
@@ -1270,9 +1352,11 @@ def test_codex_tool_event_uses_observed_timestamp_when_time_is_zero(otlp_module)
         "observedTimeUnixNano": "1789976902511803910",
     }
 
-    otlp_module._parse_log_record(record, "codex_cli_rs", "session-1")
+    otlp_module._parse_log_record(
+        record, "codex_cli_rs", "session-1", user_id="test-user"
+    )
 
-    entry = otlp_module._codex_tool_buffer["conv-observed"][0]
+    entry = otlp_module._codex_tool_buffer["test-user:conv-observed"][0]
     assert entry["ts"] == 1789976902511
 
 
@@ -1289,10 +1373,14 @@ def test_claude_tool_decision_redelivery_does_not_duplicate_buffer(otlp_module):
         "timeUnixNano": "1000000000",
     }
 
-    otlp_module._parse_log_record(record, "claude-code", "session-1")
-    otlp_module._parse_log_record(record, "claude-code", "session-1")
+    otlp_module._parse_log_record(
+        record, "claude-code", "session-1", user_id="test-user"
+    )
+    otlp_module._parse_log_record(
+        record, "claude-code", "session-1", user_id="test-user"
+    )
 
-    buffered = otlp_module._claude_tool_buffer["prompt-dup"]
+    buffered = otlp_module._claude_tool_buffer["test-user:prompt-dup"]
     assert len(buffered) == 1
 
 
@@ -1333,7 +1421,7 @@ def _minimal_otlp_body(
     }
 
 
-def test_auth_disabled_no_token_records_usage(otlp_module, monkeypatch):
+def test_auth_disabled_no_token_records_usage(otlp_module, monkeypatch, fresh_db):
     """auth.enabled=false: POST /v1/logs with no token header records usage."""
     captured = []
     monkeypatch.setattr(
@@ -1345,7 +1433,7 @@ def test_auth_disabled_no_token_records_usage(otlp_module, monkeypatch):
     )
     monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "local")
 
-    client = TestClient(otlp_module.app)
+    client = _authed_client(otlp_module, fresh_db)
     response = client.post("/v1/logs", json=_minimal_otlp_body())
 
     assert response.status_code == 200
@@ -1586,7 +1674,7 @@ def test_auth_enabled_revoked_token_returns_401(otlp_module, monkeypatch, fresh_
     assert len(captured) == 0
 
 
-def test_body_too_large_returns_413(otlp_module, monkeypatch):
+def test_body_too_large_returns_413(otlp_module, monkeypatch, fresh_db):
     """Body larger than otlp.max_body_bytes → 413; record_usage is never called."""
     monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "local")
     monkeypatch.setitem(otlp_module.CONFIG.get("otlp", {}), "max_body_bytes", 100)
@@ -1596,7 +1684,7 @@ def test_body_too_large_returns_413(otlp_module, monkeypatch):
         otlp_module, "record_usage", lambda **fields: captured.append(fields)
     )
 
-    client = TestClient(otlp_module.app)
+    client = _authed_client(otlp_module, fresh_db)
     # Create a body larger than 100 bytes
     large_body = _minimal_otlp_body()
     large_body["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"].append(
@@ -1609,7 +1697,9 @@ def test_body_too_large_returns_413(otlp_module, monkeypatch):
     assert len(captured) == 0
 
 
-def test_record_count_cap_limits_db_work_per_request(otlp_module, monkeypatch):
+def test_record_count_cap_limits_db_work_per_request(
+    otlp_module, monkeypatch, fresh_db
+):
     """A 2 MB body of many records must not run unbounded per-record DB work."""
     monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "local")
     monkeypatch.setitem(
@@ -1642,7 +1732,7 @@ def test_record_count_cap_limits_db_work_per_request(otlp_module, monkeypatch):
             }
         )
 
-    client = TestClient(otlp_module.app)
+    client = _authed_client(otlp_module, fresh_db)
     response = client.post("/v1/logs", json=body)
 
     assert response.status_code == 200
@@ -1657,19 +1747,21 @@ def test_record_count_cap_limits_db_work_per_request(otlp_module, monkeypatch):
     }
 
 
-def test_batch_within_cap_returns_no_partial_success(otlp_module, monkeypatch):
+def test_batch_within_cap_returns_no_partial_success(
+    otlp_module, monkeypatch, fresh_db
+):
     """A batch under the cap is a plain success, so clients see no rejection."""
     monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "local")
     monkeypatch.setattr(otlp_module, "record_usage", lambda **fields: None)
 
-    client = TestClient(otlp_module.app)
+    client = _authed_client(otlp_module, fresh_db)
     response = client.post("/v1/logs", json=_minimal_otlp_body())
 
     assert response.status_code == 200
     assert response.json() == {}
 
 
-def test_body_too_large_streaming_cap_returns_413(otlp_module, monkeypatch):
+def test_body_too_large_streaming_cap_returns_413(otlp_module, monkeypatch, fresh_db):
     """Streaming body cap enforces limit when Content-Length is missing or understated."""
     monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "local")
     monkeypatch.setitem(otlp_module.CONFIG.get("otlp", {}), "max_body_bytes", 100)
@@ -1679,7 +1771,7 @@ def test_body_too_large_streaming_cap_returns_413(otlp_module, monkeypatch):
         otlp_module, "record_usage", lambda **fields: captured.append(fields)
     )
 
-    client = TestClient(otlp_module.app)
+    client = _authed_client(otlp_module, fresh_db)
     large_body = _minimal_otlp_body()
     large_body["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"].append(
         {"key": "padding", "value": {"stringValue": "x" * 200}}

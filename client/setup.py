@@ -240,6 +240,10 @@ def disable_agents(*, expected_endpoint: str | None = None) -> DisableResult:
     return outcome
 
 
+# Distinct from 1 so the installer can tolerate a signed-out machine.
+EXIT_NOT_SIGNED_IN = 3
+
+
 def run_setup(*, disable: bool) -> int:
     """``tokenage setup`` — wire, or un-wire, the agents found on this machine."""
     agents = installed_agents()
@@ -266,8 +270,12 @@ def run_setup(*, disable: bool) -> int:
             file=sys.stderr,
         )
         return 1
+    token = ingest_token()
+    if not token:
+        print("Not signed in. Run tokenage login.", file=sys.stderr)
+        return EXIT_NOT_SIGNED_IN
     print(f"  collector   {display_endpoint(endpoint)}")
-    wired = wire_agents(logs_endpoint=endpoint, token=ingest_token())
+    wired = wire_agents(logs_endpoint=endpoint, token=token)
     if not wired:
         print("  no agents could be wired")
         return 1

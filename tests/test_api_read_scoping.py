@@ -36,7 +36,7 @@ def tenant_reads(api_module, fresh_db):
     db = fresh_db.database_module
     tokens = {}
     user_ids = {}
-    for name in ("a", "b", "empty"):
+    for name in ("a", "b", "empty", "local"):
         token, row = mint_token(
             f"{name}@example.com", kind="cli", db_path=fresh_db.db_path
         )
@@ -106,7 +106,7 @@ def test_all_read_routes_isolate_data(
 
     tokens, _ = tenant_reads
     # "loopback": the local provider's owner (no token) owns none of the seeded
-    # rows, including the user-less "local" ones, so it reads nothing.
+    # rows, so it reads nothing.
     monkeypatch.setitem(
         CONFIG, "auth", {"provider": "local" if auth_mode == "loopback" else "google"}
     )
@@ -398,7 +398,7 @@ def test_cost_recalculation_requires_row_ownership(
     assert len(after[3]) == len(before[3]) + 1
 
 
-def test_loopback_owner_cannot_recalculate_other_users_or_user_less_rows(
+def test_loopback_owner_cannot_recalculate_other_users_rows(
     api_module, tenant_reads, monkeypatch
 ):
     from src.config.app import CONFIG

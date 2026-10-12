@@ -100,96 +100,6 @@ def test_mint_rejects_empty_email(fresh_db):
         _mint(fresh_db, email="   ")
 
 
-def test_migrate_old_schema_creates_auth_tables(
-    database_module, schema_migrations_module, isolated_home
-):
-    """A pre-auth DB (bare usage table) gains users/auth_tokens on migrate."""
-    import sqlite3
-
-    from sqlalchemy import inspect
-
-    db_file = isolated_home / "usage.db"
-    connection = sqlite3.connect(db_file)
-    connection.execute(
-        """
-        CREATE TABLE usage (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            model TEXT NOT NULL,
-            endpoint TEXT NOT NULL,
-            prompt_tokens INTEGER,
-            completion_tokens INTEGER,
-            reasoning_tokens INTEGER,
-            cached_tokens INTEGER,
-            total_tokens INTEGER,
-            latency_ms INTEGER,
-            ttft_ms INTEGER,
-            tool_tokens INTEGER,
-            cache_creation_tokens INTEGER,
-            input_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-            output_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-            total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-            status INTEGER
-        )
-        """
-    )
-    connection.commit()
-    connection.close()
-
-    schema_migrations_module.migrate_database(str(db_file))
-
-    tables = inspect(database_module.get_engine(str(db_file))).get_table_names()
-    assert "users" in tables
-    assert "auth_tokens" in tables
-
-
-def test_migrate_existing_auth_tokens_adds_device_link(
-    database_module, schema_migrations_module, isolated_home
-):
-    import sqlite3
-
-    from sqlalchemy import inspect
-
-    db_file = isolated_home / "usage.db"
-    with sqlite3.connect(db_file) as connection:
-        connection.execute(
-            "CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, "
-            "name TEXT, created_at BIGINT NOT NULL)"
-        )
-        connection.execute(
-            "CREATE TABLE auth_tokens (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, "
-            "kind TEXT NOT NULL, device_name TEXT, token_hash TEXT NOT NULL UNIQUE, "
-            "created_at BIGINT NOT NULL, last_used_at BIGINT, revoked_at BIGINT)"
-        )
-        connection.execute(
-            "INSERT INTO users (id, email, created_at) VALUES ('u1', 'a@example.com', 1)"
-        )
-        connection.execute(
-            "INSERT INTO auth_tokens (id, user_id, kind, token_hash, created_at) "
-            "VALUES ('t1', 'u1', 'cli', 'hash', 1)"
-        )
-
-    applied = schema_migrations_module.migrate_database(str(db_file))
-    engine = database_module.get_engine(str(db_file))
-    inspector = inspect(engine)
-    assert "devices" in inspector.get_table_names()
-    assert "device_id" in {
-        column["name"] for column in inspector.get_columns("auth_tokens")
-    }
-    assert "auth_tokens.device_id" in applied
-    with engine.connect() as connection:
-        assert (
-            connection.execute(
-                text("SELECT device_id FROM auth_tokens WHERE id = 't1'")
-            ).scalar_one()
-            is None
-        )
-    assert "auth_tokens.device_id" not in schema_migrations_module.migrate_database(
-        str(db_file)
-    )
-
-
 def test_auth_me_local_loopback_is_the_owner(api_module):
     body = TestClient(api_module.app).get("/auth/me").json()
     assert body["provider"] == "local"
@@ -355,3 +265,21 @@ def test_token_create_cli_rejects_blank_email(cli_module, capsys):
     captured = capsys.readouterr()
     assert exit_code == 2
     assert "email" in captured.err.lower()
+
+
+def test_ingest_token_without_a_device_resolves_to_nothing(fresh_db):
+    from src.auth.tokens import hash_token, resolve_token
+
+    token, user = _mint(fresh_db, kind="ingest")
+    assert resolve_token(token, db_path=fresh_db.db_path) is not None
+
+    # A pre-device-binding leftover: same token kind, no device.
+    with fresh_db.database_module.get_engine(fresh_db.db_path).begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO auth_tokens (id, user_id, kind, token_hash, created_at) "
+                "VALUES ('legacy', :user_id, 'ingest', :hash, 0)"
+            ),
+            {"user_id": user.id, "hash": hash_token("tokenage_ingest_legacy")},
+        )
+    assert resolve_token("tokenage_ingest_legacy", db_path=fresh_db.db_path) is None

@@ -523,9 +523,9 @@ def test_exchange_creates_device_pair_and_leaves_unlinked_tokens_alone(
     # The exchange registered a device: linked cli + ingest pair.
     assert rows[("cli", "myhost", True)]
     assert rows[("ingest", "myhost", True)]
-    # Operator-minted unlinked tokens are untouched by client logins.
+    # Operator-minted cli tokens are untouched by client logins (minted ingest
+    # tokens are device-bound, so they are not "unlinked").
     assert rows[("cli", "myhost", False)]
-    assert rows[("ingest", "myhost", False)]
     assert rows[("cli", "otherhost", False)]
     assert rows[("web", "browser", False)]
 

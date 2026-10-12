@@ -127,14 +127,14 @@ class Usage(Base):
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: str(uuid4())
     )
-    user_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("users.id"), nullable=True, index=True
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True
     )
     ts: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     provider: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
     client_source: Mapped[str | None] = mapped_column(String, nullable=True)
-    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     endpoint: Mapped[str] = mapped_column(String, nullable=False)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     prompt_length: Mapped[int] = mapped_column(
@@ -172,9 +172,7 @@ class UsageDaily(Base):
     __tablename__ = "usage_daily"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("users.id"), nullable=True
-    )
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     date: Mapped[str] = mapped_column(String, nullable=False)
     provider: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
@@ -241,26 +239,13 @@ class UsageDaily(Base):
 
 
 Index(
-    "uq_usage_daily_local",
-    UsageDaily.date,
-    UsageDaily.provider,
-    UsageDaily.model,
-    UsageDaily.client_source,
-    unique=True,
-    sqlite_where=UsageDaily.user_id.is_(None),
-    postgresql_where=UsageDaily.user_id.is_(None),
-)
-
-Index(
-    "uq_usage_daily_user",
+    "uq_usage_daily",
     UsageDaily.date,
     UsageDaily.provider,
     UsageDaily.model,
     UsageDaily.client_source,
     UsageDaily.user_id,
     unique=True,
-    sqlite_where=UsageDaily.user_id.isnot(None),
-    postgresql_where=UsageDaily.user_id.isnot(None),
 )
 
 
@@ -268,7 +253,9 @@ class SessionRecord(Base):
     __tablename__ = "sessions"
 
     session_id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True
+    )
     client_source: Mapped[str | None] = mapped_column(String, nullable=True)
     started: Mapped[int] = mapped_column(BigInteger, nullable=False)
     ended: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -326,6 +313,13 @@ class SessionRecord(Base):
     project: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+Index("ix_sessions_started_desc", SessionRecord.started.desc())
+Index(
+    "ix_sessions_client_source_started_desc",
+    SessionRecord.client_source,
+    SessionRecord.started.desc(),
+)
+
 VALID_OUTCOMES = {"solved", "partial", "failed", "stuck", "no_op", "unknown"}
 VALID_SOURCES = {"manual", "heuristic", "llm"}
 
@@ -334,9 +328,7 @@ class EvaluationJob(Base):
     __tablename__ = "evaluation_jobs"
 
     job_id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("users.id"), nullable=True
-    )
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     kind: Mapped[str] = mapped_column(String, nullable=False)
     session_id: Mapped[str] = mapped_column(String, nullable=False)
     client_source: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -367,8 +359,8 @@ class ToolCall(Base):
     __tablename__ = "tool_calls"
 
     tool_use_id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("users.id"), nullable=True, index=True
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True
     )
     usage_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("usage.id"), nullable=True, index=True

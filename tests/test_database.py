@@ -66,11 +66,12 @@ def test_init_db_log_usage_and_fetch_rows(database_module, isolated_home):
             total_cost_usd=0.00005,
             status=200,
             base_url_id=base_url_id,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
-    rows = database_module.fetch_recent_usage(limit=10)
+    rows = database_module.fetch_recent_usage(limit=10, user_id="test-user")
 
     assert len(rows) == 1
     assert isinstance(rows[0]["id"], str)
@@ -124,6 +125,7 @@ def test_log_usage_normalizes_model_before_rollups(fresh_db):
         client_source="opencode",
         session_id="normalized-session",
         endpoint="otlp",
+        user_id="test-user",
     )
     log_usage(usage, db_path=fresh_db.db_path)
 
@@ -170,11 +172,12 @@ def test_fetch_recent_usage_returns_expected_row_shape(fresh_db):
             total_cost_usd=0.00005,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
-    row = database_module.fetch_recent_usage(limit=1)[0]
+    row = database_module.fetch_recent_usage(limit=1, user_id="test-user")[0]
 
     assert set(row) == {
         "id",
@@ -237,6 +240,7 @@ def test_fetch_recent_usage_aggregates_tool_names(fresh_db):
         total_cost_usd=0.005,
         status=200,
         base_url_id=None,
+        user_id="test-user",
     )
     database_module.log_usage(usage_obj, db_path=db_path)
 
@@ -250,10 +254,13 @@ def test_fetch_recent_usage_aggregates_tool_names(fresh_db):
             client_source="claude-code",
             ts=TS_2026_04_17_00 + i,
             db_path=db_path,
+            user_id="test-user",
         )
 
     # Fetch and verify aggregated tool names
-    rows = database_module.fetch_recent_usage(limit=1, db_path=db_path)
+    rows = database_module.fetch_recent_usage(
+        limit=1, db_path=db_path, user_id="test-user"
+    )
     assert len(rows) == 1
     assert rows[0]["tool_names"] is not None
     # Should contain all three tool names (order may vary)
@@ -289,11 +296,14 @@ def test_fetch_recent_usage_no_tool_calls(fresh_db):
             total_cost_usd=0.005,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
-    rows = database_module.fetch_recent_usage(limit=1, db_path=db_path)
+    rows = database_module.fetch_recent_usage(
+        limit=1, db_path=db_path, user_id="test-user"
+    )
     assert len(rows) == 1
     assert rows[0]["tool_names"] is None
 
@@ -326,23 +336,26 @@ def test_usage_filters_includes_client_source(fresh_db):
                 total_cost_usd=0.00005,
                 status=200,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
     rows = database_module.fetch_recent_usage(
-        limit=10, client_source="claude-code", db_path=db_path
+        limit=10, client_source="claude-code", db_path=db_path, user_id="test-user"
     )
     assert len(rows) == 1
     assert rows[0]["client_source"] == "claude-code"
 
     rows = database_module.fetch_recent_usage(
-        limit=10, client_source="codex", db_path=db_path
+        limit=10, client_source="codex", db_path=db_path, user_id="test-user"
     )
     assert len(rows) == 1
     assert rows[0]["client_source"] == "codex"
 
-    rows = database_module.fetch_recent_usage(limit=10, db_path=db_path)
+    rows = database_module.fetch_recent_usage(
+        limit=10, db_path=db_path, user_id="test-user"
+    )
     assert len(rows) == 2
 
 
@@ -374,13 +387,17 @@ def test_count_usage_filters_by_client_source(fresh_db):
                 total_cost_usd=0.00005,
                 status=200,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
-    assert database_module.count_usage(client_source="claude-code") == 2
-    assert database_module.count_usage(client_source="codex") == 1
-    assert database_module.count_usage() == 3
+    assert (
+        database_module.count_usage(client_source="claude-code", user_id="test-user")
+        == 2
+    )
+    assert database_module.count_usage(client_source="codex", user_id="test-user") == 1
+    assert database_module.count_usage(user_id="test-user") == 3
 
 
 def test_aggregate_usage_by_period_filters_by_client_source(fresh_db):
@@ -414,15 +431,18 @@ def test_aggregate_usage_by_period_filters_by_client_source(fresh_db):
                 total_cost_usd=0.005,
                 status=200,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
-    result = database_module.aggregate_usage_by_period(client_source="claude-code")
+    result = database_module.aggregate_usage_by_period(
+        client_source="claude-code", user_id="test-user"
+    )
     assert len(result) == 1
     assert result[0]["total_tokens"] == 150
 
-    result = database_module.aggregate_usage_by_period()
+    result = database_module.aggregate_usage_by_period(user_id="test-user")
     assert len(result) == 2
 
 
@@ -453,6 +473,7 @@ def test_summarize_usage_daily_includes_avg_effective_price(fresh_db):
             total_cost_usd=0.0005,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -478,11 +499,12 @@ def test_summarize_usage_daily_includes_avg_effective_price(fresh_db):
             total_cost_usd=0.001,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
-    rows = database_module.summarize_usage_daily()
+    rows = database_module.summarize_usage_daily(user_id="test-user")
     assert rows[0]["avg_effective_price_usd"] == pytest.approx(0.0015 / 450, abs=1e-8)
 
 
@@ -517,11 +539,12 @@ def test_summarize_usage_by_provider_includes_avg_effective_price(fresh_db):
                 total_cost_usd=total_cost,
                 status=200,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
-    rows = database_module.summarize_usage_by_provider()
+    rows = database_module.summarize_usage_by_provider(user_id="test-user")
     assert rows[0]["avg_effective_price_usd"] == pytest.approx(0.0015 / 450, abs=1e-8)
 
 
@@ -607,162 +630,17 @@ def test_init_db_does_not_mutate_existing_usage_table(database_module, isolated_
     assert "session_id" not in columns
 
 
-def test_migrate_database_adds_usage_columns(
-    database_module, schema_migrations_module, isolated_home
-):
-    import sqlite3
-
-    db_file = isolated_home / "usage.db"
-    connection = sqlite3.connect(db_file)
-    connection.execute(
-        """
-        CREATE TABLE usage (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            model TEXT NOT NULL,
-            endpoint TEXT NOT NULL,
-            prompt_tokens INTEGER,
-            completion_tokens INTEGER,
-            reasoning_tokens INTEGER,
-            cached_tokens INTEGER,
-            total_tokens INTEGER,
-            latency_ms INTEGER,
-            ttft_ms INTEGER,
-            tool_tokens INTEGER,
-            status INTEGER
-        )
-        """
-    )
-    connection.commit()
-    connection.close()
-
-    changes = schema_migrations_module.migrate_database(str(db_file))
-
-    column_names = schema_migrations_module._table_column_names(
-        database_module.get_engine(str(db_file)), "usage"
-    )
-    assert "prompt_length" in column_names
-    assert "base_url_id" in column_names
-    assert "input_cost_usd" in column_names
-    assert "output_cost_usd" in column_names
-    assert "cache_creation_tokens" in column_names
-    assert "usage.cache_creation_tokens" in changes
-    assert "total_cost_usd" in column_names
-    assert "client_source" in column_names
-    assert "session_id" in column_names
-    assert "client_ip" in column_names
-    assert "usage.prompt_length" in changes
-    assert "usage.base_url_id" in changes
-    assert "usage.input_cost_usd" in changes
-    assert "usage.output_cost_usd" in changes
-    assert "usage.total_cost_usd" in changes
-    assert "usage.client_source" in changes
-    assert "usage.session_id" in changes
-    assert "usage.client_ip" in changes
-
-    import sqlite3
-
-    connection = sqlite3.connect(db_file)
-    table_info = connection.execute("PRAGMA table_info(usage)").fetchall()
-    connection.close()
-
-    defaults = {row[1]: row[4] for row in table_info}
-    assert defaults["input_cost_usd"] == "0"
-    assert defaults["output_cost_usd"] == "0"
-    assert defaults["total_cost_usd"] == "0"
-
-
-def test_migrate_database_creates_price_snapshots_table(fresh_db):
-    database_module = fresh_db.database_module
-    db_path = fresh_db.db_path
-    database_module.init_db(db_path)
-
-    import sqlite3
-
-    connection = sqlite3.connect(db_path)
-    table_info = connection.execute("PRAGMA table_info(price_snapshots)").fetchall()
-    connection.close()
-
-    column_names = {row[1] for row in table_info}
-    assert {
-        "date",
-        "model",
-        "source",
-        "rates_json",
-        "recorded_at",
-        "rates_hash",
-    } <= column_names
-    assert "provider" not in column_names
-
-
-def test_migrate_database_drops_price_snapshot_provider(fresh_db):
-    """Legacy provider-keyed snapshots merge by model and usage rows follow."""
-    database_module = fresh_db.database_module
-    db_path = fresh_db.db_path
-    database_module.init_db(db_path)
-
-    import sqlite3
-
-    connection = sqlite3.connect(db_path)
-    connection.executescript(
-        """
-        DROP TABLE price_snapshots;
-        CREATE TABLE price_snapshots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
-            source TEXT NOT NULL, rates_hash TEXT NOT NULL,
-            rates_json TEXT NOT NULL, recorded_at BIGINT NOT NULL,
-            UNIQUE (date, provider, model, source, rates_hash)
-        );
-        INSERT INTO price_snapshots VALUES
-            (1, '2026-05-19', 'a', 'm', 'yaml', 'h', '{}', 1),
-            (2, '2026-05-19', 'b', 'm', 'yaml', 'h', '{}', 2),
-            (3, '2026-05-19', 'b', 'm', 'yaml', 'other', '{}', 3);
-        """
-    )
-    connection.commit()
-    connection.close()
-
-    for snapshot_id in (2, 3):
-        database_module.log_usage(
-            database_module.Usage(
-                ts=TS_2026_04_17_00,
-                provider="b",
-                model="m",
-                client_source="c",
-                session_id=f"s{snapshot_id}",
-                endpoint="/v1/chat/completions",
-                price_snapshot_id=snapshot_id,
-                status=200,
-            ),
-            db_path=db_path,
-        )
-
-    from src.schema_migrations import migrate_database
-
-    assert "price_snapshots.drop_provider" in migrate_database(db_path)
-
-    connection = sqlite3.connect(db_path)
-    rows = connection.execute(
-        "SELECT id, model, rates_hash FROM price_snapshots ORDER BY id"
-    ).fetchall()
-    columns = {r[1] for r in connection.execute("PRAGMA table_info(price_snapshots)")}
-    bound = sorted(
-        r[0] for r in connection.execute("SELECT price_snapshot_id FROM usage")
-    )
-    connection.close()
-    assert rows == [(1, "m", "h"), (3, "m", "other")]
-    assert bound == [1, 3]  # the usage row on deleted snapshot 2 now points at 1
-    assert "provider" not in columns
-
-
 def test_get_usage_high_watermark_ts_returns_latest_ts(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    assert database_module.get_usage_high_watermark_ts(db_path=db_path) == 0
+    assert (
+        database_module.get_usage_high_watermark_ts(
+            db_path=db_path, user_id="test-user"
+        )
+        == 0
+    )
 
     database_module.log_usage(
         database_module.Usage(
@@ -787,12 +665,16 @@ def test_get_usage_high_watermark_ts_returns_latest_ts(fresh_db):
             total_cost_usd=0.3,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
     assert (
-        database_module.get_usage_high_watermark_ts(db_path=db_path) == TS_2026_04_17_00
+        database_module.get_usage_high_watermark_ts(
+            db_path=db_path, user_id="test-user"
+        )
+        == TS_2026_04_17_00
     )
 
 
@@ -855,6 +737,7 @@ def test_reprice_estimated_rows_rebinds_and_updates_costs(
             output_cost_usd=0.0,
             total_cost_usd=0.0,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -867,7 +750,9 @@ def test_reprice_estimated_rows_rebinds_and_updates_costs(
     )
 
     assert summary == {"candidates": 1, "repriced": 1, "skipped": 0}
-    rows = database_module.fetch_recent_usage(limit=1, db_path=db_path)
+    rows = database_module.fetch_recent_usage(
+        limit=1, db_path=db_path, user_id="test-user"
+    )
     assert rows[0]["price_snapshot_id"] is not None
     # 1000*2/1e6 + 500*4/1e6 = 0.004
     assert rows[0]["total_cost_usd"] == pytest.approx(0.004)
@@ -904,6 +789,7 @@ def test_reprice_estimated_rows_respects_filters_and_skips_unresolvable(
                 output_cost_usd=0.0,
                 total_cost_usd=0.0,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -928,7 +814,9 @@ def test_reprice_estimated_rows_respects_filters_and_skips_unresolvable(
         "skipped": 1,
     }
 
-    rows = database_module.fetch_recent_usage(limit=10, db_path=db_path)
+    rows = database_module.fetch_recent_usage(
+        limit=10, db_path=db_path, user_id="test-user"
+    )
     by_provider = {row["provider"]: row for row in rows}
     assert by_provider["p1"]["price_snapshot_id"] is not None
     assert by_provider["p2"]["price_snapshot_id"] is None
@@ -960,6 +848,7 @@ def test_reprice_limit_scans_past_unresolvable_rows(database_module, isolated_ho
                 output_cost_usd=0.0,
                 total_cost_usd=0.0,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -972,7 +861,9 @@ def test_reprice_limit_scans_past_unresolvable_rows(database_module, isolated_ho
     )
 
     assert summary == {"candidates": 2, "repriced": 1, "skipped": 1}
-    rows = database_module.fetch_recent_usage(limit=10, db_path=db_path)
+    rows = database_module.fetch_recent_usage(
+        limit=10, db_path=db_path, user_id="test-user"
+    )
     by_model = {row["model"]: row for row in rows}
     assert by_model["m1"]["price_snapshot_id"] is not None
     assert by_model["missing-model"]["price_snapshot_id"] is None
@@ -1001,6 +892,7 @@ def test_reprice_counts_snapshot_failure_as_skipped(
             output_cost_usd=0.0,
             total_cost_usd=0.0,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -1018,7 +910,9 @@ def test_reprice_counts_snapshot_failure_as_skipped(
 
     # Costs were recomputed but the row stays unbound, so it is not "repriced".
     assert summary == {"candidates": 1, "repriced": 0, "skipped": 1}
-    rows = database_module.fetch_recent_usage(limit=1, db_path=db_path)
+    rows = database_module.fetch_recent_usage(
+        limit=1, db_path=db_path, user_id="test-user"
+    )
     assert rows[0]["price_snapshot_id"] is None
 
 
@@ -1050,6 +944,7 @@ def test_summarize_usage_window_groups_by_session_source_and_model(fresh_db):
             total_cost_usd=0.30,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         database_module.Usage(
             ts=TS_2026_04_17_00_01,
@@ -1073,6 +968,7 @@ def test_summarize_usage_window_groups_by_session_source_and_model(fresh_db):
             total_cost_usd=0.15,
             status=500,
             base_url_id=None,
+            user_id="test-user",
         ),
         database_module.Usage(
             ts=TS_2026_04_17_00_02,
@@ -1096,13 +992,16 @@ def test_summarize_usage_window_groups_by_session_source_and_model(fresh_db):
             total_cost_usd=0.70,
             status=None,
             base_url_id=None,
+            user_id="test-user",
         ),
     ]
 
     for row in rows:
         database_module.log_usage(row, db_path=db_path)
 
-    summary = database_module.summarize_usage_window(after_ts=0, db_path=db_path)
+    summary = database_module.summarize_usage_window(
+        after_ts=0, db_path=db_path, user_id="test-user"
+    )
 
     assert summary["window"] == {
         "after_ts": 0,
@@ -1165,6 +1064,7 @@ def test_summarize_usage_window_filters_after_and_until_ts(fresh_db):
                 total_cost_usd=0,
                 status=200,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -1173,6 +1073,7 @@ def test_summarize_usage_window_filters_after_and_until_ts(fresh_db):
         after_ts=TS_2026_04_17_00,
         until_ts=TS_2026_04_17_00_01,
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert summary["window"]["row_count"] == 1
@@ -1208,6 +1109,7 @@ def test_summarize_usage_window_filters_metadata_and_includes_rows(fresh_db):
             total_cost_usd=0,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         database_module.Usage(
             ts=TS_2026_04_18_00,
@@ -1231,6 +1133,7 @@ def test_summarize_usage_window_filters_metadata_and_includes_rows(fresh_db):
             total_cost_usd=0,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
     ]
 
@@ -1247,6 +1150,7 @@ def test_summarize_usage_window_filters_metadata_and_includes_rows(fresh_db):
         model="gpt-test",
         include_rows=True,
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert summary["window"]["row_count"] == 1
@@ -1261,7 +1165,7 @@ def test_summarize_usage_window_empty_window(fresh_db):
     database_module.init_db(db_path)
 
     summary = database_module.summarize_usage_window(
-        after_ts=TS_2026_04_17_00, db_path=db_path
+        after_ts=TS_2026_04_17_00, db_path=db_path, user_id="test-user"
     )
 
     assert summary["window"] == {
@@ -1301,6 +1205,7 @@ def test_aggregate_usage_by_period_includes_cost_totals(fresh_db):
             total_cost_usd=0.00005,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -1324,11 +1229,14 @@ def test_aggregate_usage_by_period_includes_cost_totals(fresh_db):
             total_cost_usd=0.0001,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
-    daily = database_module.aggregate_usage_by_period(granularity="day")
+    daily = database_module.aggregate_usage_by_period(
+        granularity="day", user_id="test-user"
+    )
 
     assert daily == [
         {
@@ -1378,6 +1286,7 @@ def test_throughput_excludes_tool_execution_time(fresh_db):
         input_cost_usd=0.0,
         output_cost_usd=0.0,
         total_cost_usd=0.0,
+        user_id="test-user",
     )
     database_module.log_usage(usage, db_path=db_path)
     record_tool_call(
@@ -1387,36 +1296,39 @@ def test_throughput_excludes_tool_execution_time(fresh_db):
         duration_ms=500,
         ts=TS_2026_04_17_10 // 1000,
         db_path=db_path,
+        user_id="test-user",
     )
 
     # Net latency 1000 - 500 = 500ms → 100 tokens / 0.5s = 200 tok/s
-    daily = database_module.aggregate_usage_by_period(granularity="day")
+    daily = database_module.aggregate_usage_by_period(
+        granularity="day", user_id="test-user"
+    )
     assert daily[0]["avg_throughput"] == 200.0
 
     # Rollup summary exposes the tool sum and nets throughput
-    summary = database_module.summarize_usage_daily()
+    summary = database_module.summarize_usage_daily(user_id="test-user")
     assert summary[0]["tool_duration_sum_ms"] == 500
     assert summary[0]["avg_throughput"] == 200.0
 
     # Raw summary path (short range) too
     raw = database_module.summarize_usage_daily(
-        since="2026-04-17T00:00:00", until="2026-04-17T23:59:59"
+        since="2026-04-17T00:00:00", until="2026-04-17T23:59:59", user_id="test-user"
     )
     assert raw[0]["tool_duration_sum_ms"] == 500
     assert raw[0]["avg_throughput"] == 200.0
 
     # by-source too (source-dimension Speed bar reads avg_throughput)
-    by_source = database_module.summarize_usage_by_source()
+    by_source = database_module.summarize_usage_by_source(user_id="test-user")
     assert by_source[0]["tool_duration_sum_ms"] == 500
     assert by_source[0]["avg_throughput"] == 200.0
 
     # by-provider API path nets in the rollup branch
-    by_provider = database_module.summarize_usage_by_provider()
+    by_provider = database_module.summarize_usage_by_provider(user_id="test-user")
     assert by_provider[0]["tool_duration_sum_ms"] == 500
     assert by_provider[0]["avg_throughput"] == 200.0
 
     # daily rollup reader (TrendChart) nets too
-    daily_rollup = database_module.aggregate_daily_by_period()
+    daily_rollup = database_module.aggregate_daily_by_period(user_id="test-user")
     assert daily_rollup[0]["tool_duration_sum_ms"] == 500
     assert daily_rollup[0]["avg_throughput"] == 200.0
 
@@ -1447,6 +1359,7 @@ def test_throughput_keeps_tool_time_for_api_request_sources(fresh_db):
         input_cost_usd=0.0,
         output_cost_usd=0.0,
         total_cost_usd=0.0,
+        user_id="test-user",
     )
     database_module.log_usage(usage, db_path=db_path)
     record_tool_call(
@@ -1456,10 +1369,13 @@ def test_throughput_keeps_tool_time_for_api_request_sources(fresh_db):
         duration_ms=500,
         ts=TS_2026_04_17_10 // 1000,
         db_path=db_path,
+        user_id="test-user",
     )
 
     # Latency already excludes the tool, so throughput stays 100 tok/s.
-    daily = database_module.aggregate_usage_by_period(granularity="day")
+    daily = database_module.aggregate_usage_by_period(
+        granularity="day", user_id="test-user"
+    )
     assert daily[0]["tool_duration_sum_ms"] == 0
     assert daily[0]["avg_throughput"] == 100.0
 
@@ -1490,6 +1406,7 @@ def test_fetch_tool_calls_derives_row_relative_start(fresh_db):
         input_cost_usd=0.0,
         output_cost_usd=0.0,
         total_cost_usd=0.0,
+        user_id="test-user",
     )
     database_module.log_usage(usage, db_path=db_path)
 
@@ -1508,9 +1425,12 @@ def test_fetch_tool_calls_derives_row_relative_start(fresh_db):
             duration_ms=duration_ms,
             ts=completion_ms + (5000 if tool_use_id == "tool-late" else 0),
             db_path=db_path,
+            user_id="test-user",
         )
 
-    calls = database_module.fetch_tool_calls(usage_id=usage.id, db_path=db_path)
+    calls = database_module.fetch_tool_calls(
+        usage_id=usage.id, db_path=db_path, user_id="test-user"
+    )
     starts = {call["tool_use_id"]: call["start_ms"] for call in calls}
     assert starts == {"tool-short": 600, "tool-long": 100, "tool-late": 4900}
 
@@ -1528,6 +1448,7 @@ def test_fetch_tool_calls_derives_row_relative_start(fresh_db):
         input_cost_usd=0.0,
         output_cost_usd=0.0,
         total_cost_usd=0.0,
+        user_id="test-user",
     )
     database_module.log_usage(claude_usage, db_path=db_path)
     record_tool_call(
@@ -1537,10 +1458,11 @@ def test_fetch_tool_calls_derives_row_relative_start(fresh_db):
         duration_ms=300,
         ts=completion_ms,
         db_path=db_path,
+        user_id="test-user",
     )
 
     claude_calls = database_module.fetch_tool_calls(
-        usage_id=claude_usage.id, db_path=db_path
+        usage_id=claude_usage.id, db_path=db_path, user_id="test-user"
     )
     assert claude_calls[0]["start_ms"] is None
 
@@ -1628,105 +1550,6 @@ def test_get_or_create_base_url_retries_in_fresh_transaction_after_duplicate_ins
     assert state["rolled_back"] is True
 
 
-def test_migrate_database_drops_removed_base_url_columns(
-    database_module, schema_migrations_module, isolated_home
-):
-    import sqlite3
-
-    db_file = isolated_home / "usage.db"
-    connection = sqlite3.connect(db_file)
-    connection.execute(
-        """
-        CREATE TABLE base_urls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            base_url TEXT NOT NULL UNIQUE,
-            provider_name TEXT,
-            source TEXT,
-            validation_status TEXT,
-            last_error TEXT
-        )
-        """
-    )
-    connection.commit()
-    connection.close()
-
-    changes = schema_migrations_module.migrate_database(str(db_file))
-
-    column_names = schema_migrations_module._table_column_names(
-        database_module.get_engine(str(db_file)), "base_urls"
-    )
-    assert "validation_status" not in column_names
-    assert "last_error" not in column_names
-    assert "base_urls.validation_status" in changes
-    assert "base_urls.last_error" in changes
-
-
-def test_ensure_column_ignores_duplicate_column_from_concurrent_migration(
-    schema_migrations_module, monkeypatch
-):
-    state = {"column_exists": set()}
-
-    class FakeInspector:
-        def get_table_names(self):
-            return ["usage"]
-
-        def get_columns(self, table_name):
-            columns = [{"name": "id"}, {"name": "prompt_tokens"}]
-            for name in state["column_exists"]:
-                columns.append({"name": name})
-            if "prompt_length" not in state["column_exists"]:
-                return columns
-            if "base_url_id" not in state["column_exists"]:
-                columns.append({"name": "prompt_length"})
-            return columns
-
-    class FakeConnection:
-        def execute(self, statement):
-            sql = str(statement)
-            if "prompt_length" in sql:
-                state["column_exists"].add("prompt_length")
-                raise schema_migrations_module.SQLAlchemyError(
-                    "duplicate column name: prompt_length"
-                )
-            if "base_url_id" in sql:
-                state["column_exists"].add("base_url_id")
-                raise schema_migrations_module.SQLAlchemyError(
-                    "duplicate column name: base_url_id"
-                )
-            raise schema_migrations_module.SQLAlchemyError("duplicate column")
-
-    class FakeBegin:
-        def __enter__(self):
-            return FakeConnection()
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    class FakeDialect:
-        name = "sqlite"
-
-    class FakeEngine:
-        dialect = FakeDialect()
-
-        def begin(self):
-            return FakeBegin()
-
-    monkeypatch.setattr(
-        schema_migrations_module, "inspect", lambda engine: FakeInspector()
-    )
-
-    assert (
-        schema_migrations_module._ensure_column(
-            FakeEngine(),
-            "usage",
-            "prompt_length",
-            sqlite_definition="INTEGER NOT NULL DEFAULT 0",
-            postgresql_definition="INTEGER NOT NULL DEFAULT 0",
-        )
-        is False
-    )
-
-
 def test_upsert_daily_aggregate_inserts_and_updates(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
@@ -1754,6 +1577,7 @@ def test_upsert_daily_aggregate_inserts_and_updates(fresh_db):
         total_cost_usd=0.003,
         status=200,
         base_url_id=None,
+        user_id="test-user",
     )
     database_module.log_usage(usage1, db_path=db_path)
 
@@ -1790,6 +1614,7 @@ def test_upsert_daily_aggregate_inserts_and_updates(fresh_db):
         total_cost_usd=0.006,
         status=500,
         base_url_id=None,
+        user_id="test-user",
     )
     database_module.log_usage(usage2, db_path=db_path)
 
@@ -1832,6 +1657,7 @@ def test_upsert_daily_aggregate_handles_null_client_source(fresh_db):
         total_cost_usd=0.003,
         status=200,
         base_url_id=None,
+        user_id="test-user",
     )
     database_module.log_usage(usage, db_path=db_path)
 
@@ -1870,6 +1696,7 @@ def test_upsert_daily_aggregate_separates_by_date(fresh_db):
             total_cost_usd=0.003,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         )
         database_module.log_usage(usage, db_path=db_path)
 
@@ -1908,6 +1735,7 @@ def test_log_usage_automaticaly_upserts_daily_aggregate(fresh_db):
             total_cost_usd=0.003,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -1951,10 +1779,11 @@ def test_summarize_usage_daily_reads_from_aggregate_table(fresh_db):
             total_cost_usd=0.003,
             status=status,
             base_url_id=None,
+            user_id="test-user",
         )
         database_module.log_usage(usage, db_path=db_path)
 
-    summary = database_module.summarize_usage_daily()
+    summary = database_module.summarize_usage_daily(user_id="test-user")
 
     assert len(summary) == 1
     row = summary[0]
@@ -1999,10 +1828,13 @@ def test_summarize_usage_daily_filters_by_provider(fresh_db):
             total_cost_usd=0.003,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         )
         database_module.log_usage(usage, db_path=db_path)
 
-    summary = database_module.summarize_usage_daily(provider="anthropic")
+    summary = database_module.summarize_usage_daily(
+        provider="anthropic", user_id="test-user"
+    )
     assert len(summary) == 1
     assert summary[0]["provider"] == "anthropic"
 
@@ -2035,10 +1867,13 @@ def test_summarize_usage_daily_filters_by_since(fresh_db):
             total_cost_usd=0.003,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         )
         database_module.log_usage(usage, db_path=db_path)
 
-    summary = database_module.summarize_usage_daily(since="2026-04-20")
+    summary = database_module.summarize_usage_daily(
+        since="2026-04-20", user_id="test-user"
+    )
     assert len(summary) == 1
     assert summary[0]["requests"] == 1
 
@@ -2083,6 +1918,7 @@ def _log_usage_row(
             total_cost_usd=total_cost,
             status=status,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -2129,6 +1965,7 @@ def test_summarize_usage_daily_sub_day_range(fresh_db):
     summary = database_module.summarize_usage_daily(
         since="2026-04-17T09:00:00",
         until="2026-04-17T12:00:00",
+        user_id="test-user",
     )
     assert len(summary) == 1
     row = summary[0]
@@ -2157,6 +1994,7 @@ def test_count_usage_sub_day_range(fresh_db):
     count = database_module.count_usage(
         since="2026-04-17T09:00:00",
         until="2026-04-17T12:00:00",
+        user_id="test-user",
     )
     assert count == 2
 
@@ -2181,6 +2019,7 @@ def test_summarize_usage_by_source_sub_day_range(fresh_db):
     summary = database_module.summarize_usage_by_source(
         since="2026-04-17T09:00:00",
         until="2026-04-17T12:00:00",
+        user_id="test-user",
     )
     assert len(summary) == 1
     assert summary[0]["client_source"] == "claude-code"
@@ -2208,6 +2047,7 @@ def test_summarize_usage_by_provider_sub_day_range(fresh_db):
     summary = database_module.summarize_usage_by_provider(
         since="2026-04-17T09:00:00",
         until="2026-04-17T12:00:00",
+        user_id="test-user",
     )
     assert len(summary) == 1
     assert summary[0]["provider"] == "anthropic"
@@ -2247,10 +2087,11 @@ def test_aggregate_daily_by_period_reads_from_aggregate_table(fresh_db):
             total_cost_usd=0.003,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         )
         database_module.log_usage(usage, db_path=db_path)
 
-    result = database_module.aggregate_daily_by_period()
+    result = database_module.aggregate_daily_by_period(user_id="test-user")
 
     assert len(result) == 2
     assert result[0]["period"] == "2026-04-17"
@@ -2290,196 +2131,15 @@ def test_aggregate_daily_by_period_filters_by_provider(fresh_db):
             total_cost_usd=0.003,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         )
         database_module.log_usage(usage, db_path=db_path)
 
-    result = database_module.aggregate_daily_by_period(provider="anthropic")
+    result = database_module.aggregate_daily_by_period(
+        provider="anthropic", user_id="test-user"
+    )
     assert len(result) == 1
     assert result[0]["requests"] == 1
-
-
-def test_migrate_database_creates_usage_daily_table(
-    database_module, schema_migrations_module, isolated_home
-):
-    import sqlite3
-
-    db_file = isolated_home / "usage.db"
-    connection = sqlite3.connect(db_file)
-    connection.execute(
-        """
-        CREATE TABLE usage (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            model TEXT NOT NULL,
-            endpoint TEXT NOT NULL,
-            prompt_tokens INTEGER,
-            completion_tokens INTEGER,
-            reasoning_tokens INTEGER,
-            cached_tokens INTEGER,
-            total_tokens INTEGER,
-            latency_ms INTEGER,
-            ttft_ms INTEGER,
-            tool_tokens INTEGER,
-            cache_creation_tokens INTEGER,
-            input_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-            output_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-            total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-            status INTEGER
-        )
-        """
-    )
-    connection.execute(
-        """
-        INSERT INTO usage (ts, provider, model, endpoint, prompt_tokens,
-            completion_tokens, reasoning_tokens, cached_tokens, total_tokens,
-            latency_ms, ttft_ms, tool_tokens, cache_creation_tokens,
-            input_cost_usd, output_cost_usd, total_cost_usd, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "2026-04-17T10:00:00+00:00",
-            "anthropic",
-            "claude-sonnet-4-6",
-            "/v1/messages",
-            100,
-            50,
-            10,
-            20,
-            160,
-            200,
-            50,
-            5,
-            0,
-            0.001,
-            0.002,
-            0.003,
-            200,
-        ),
-    )
-    connection.execute(
-        """
-        INSERT INTO usage (ts, provider, model, endpoint, prompt_tokens,
-            completion_tokens, reasoning_tokens, cached_tokens, total_tokens,
-            latency_ms, ttft_ms, tool_tokens, cache_creation_tokens,
-            input_cost_usd, output_cost_usd, total_cost_usd, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "2026-04-17T11:00:00+00:00",
-            "anthropic",
-            "claude-sonnet-4-6",
-            "/v1/messages",
-            200,
-            100,
-            20,
-            40,
-            320,
-            300,
-            80,
-            10,
-            0,
-            0.002,
-            0.004,
-            0.006,
-            500,
-        ),
-    )
-    connection.commit()
-    connection.close()
-
-    changes = schema_migrations_module.migrate_database(str(db_file))
-
-    assert schema_migrations_module._table_exists(
-        database_module.get_engine(str(db_file)), "usage_daily"
-    )
-    assert "usage_daily.backfill" in changes
-
-    # Verify backfill
-    with database_module.get_engine(str(db_file)).connect() as conn:
-        rows = list(conn.execute(database_module.select(database_module.UsageDaily)))
-    assert len(rows) == 1
-    assert rows[0].request_count == 2
-    assert rows[0].prompt_tokens == 300
-    assert rows[0].latency_sum_ms == 500
-    assert rows[0].successful_requests == 1
-    assert rows[0].failed_requests == 1
-
-
-def test_migrate_database_backfill_idempotent(
-    database_module, schema_migrations_module, isolated_home
-):
-    import sqlite3
-
-    db_file = isolated_home / "usage.db"
-    connection = sqlite3.connect(db_file)
-    connection.execute(
-        """
-        CREATE TABLE usage (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            model TEXT NOT NULL,
-            endpoint TEXT NOT NULL,
-            prompt_tokens INTEGER,
-            completion_tokens INTEGER,
-            reasoning_tokens INTEGER,
-            cached_tokens INTEGER,
-            total_tokens INTEGER,
-            latency_ms INTEGER,
-            ttft_ms INTEGER,
-            tool_tokens INTEGER,
-            cache_creation_tokens INTEGER,
-            input_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-            output_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-            total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-            status INTEGER
-        )
-        """
-    )
-    connection.execute(
-        """
-        INSERT INTO usage (ts, provider, model, endpoint, prompt_tokens,
-            completion_tokens, reasoning_tokens, cached_tokens, total_tokens,
-            latency_ms, ttft_ms, tool_tokens, cache_creation_tokens,
-            input_cost_usd, output_cost_usd, total_cost_usd, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "2026-04-17T10:00:00+00:00",
-            "anthropic",
-            "claude-sonnet-4-6",
-            "/v1/messages",
-            100,
-            50,
-            10,
-            20,
-            160,
-            200,
-            50,
-            5,
-            0,
-            0.001,
-            0.002,
-            0.003,
-            200,
-        ),
-    )
-    connection.commit()
-    connection.close()
-
-    schema_migrations_module.migrate_database(str(db_file))
-    changes2 = schema_migrations_module.migrate_database(str(db_file))
-
-    # Second run should not create or backfill again
-    assert "usage_daily.create" not in changes2
-    assert "usage_daily.backfill" not in changes2
-
-    # Data should still be there, not duplicated
-    with database_module.get_engine(str(db_file)).connect() as conn:
-        rows = list(conn.execute(database_module.select(database_module.UsageDaily)))
-    assert len(rows) == 1
-    assert rows[0].request_count == 1
 
 
 def test_aggregate_usage_by_period_hourly_with_tz_offset(fresh_db):
@@ -2514,13 +2174,14 @@ def test_aggregate_usage_by_period_hourly_with_tz_offset(fresh_db):
                 total_cost_usd=0.005,
                 status=200,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
     # With +05:30 offset, 10:30 UTC -> 16:00 IST, 11:45 UTC -> 17:15 IST
     result = database_module.aggregate_usage_by_period(
-        granularity="hour", tz_offset="+05:30"
+        granularity="hour", tz_offset="+05:30", user_id="test-user"
     )
     assert len(result) == 2
     assert result[0]["period"] == "2026-05-05 16:00"
@@ -2563,11 +2224,14 @@ def test_aggregate_usage_by_period_hourly_merges_same_hour(fresh_db):
                 total_cost_usd=0.003,
                 status=200,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
-    result = database_module.aggregate_usage_by_period(granularity="hour")
+    result = database_module.aggregate_usage_by_period(
+        granularity="hour", user_id="test-user"
+    )
     assert len(result) == 1
     assert result[0]["period"] == "2026-05-05 10:00"
     assert result[0]["requests"] == 2
@@ -2609,11 +2273,14 @@ def test_aggregate_usage_by_period_hourly_counts_failures(fresh_db):
                 total_cost_usd=0.002,
                 status=status,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
-    result = database_module.aggregate_usage_by_period(granularity="hour")
+    result = database_module.aggregate_usage_by_period(
+        granularity="hour", user_id="test-user"
+    )
     assert len(result) == 1
     assert result[0]["requests"] == 3
     assert result[0]["successful_requests"] == 2
@@ -2647,13 +2314,14 @@ def test_aggregate_usage_by_period_hourly_negative_tz_offset(fresh_db):
             total_cost_usd=0.002,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
     # 03:30 UTC with -05:00 offset = 22:30 previous day (2026-05-04 22:00)
     result = database_module.aggregate_usage_by_period(
-        granularity="hour", tz_offset="-05:00"
+        granularity="hour", tz_offset="-05:00", user_id="test-user"
     )
     assert len(result) == 1
     assert result[0]["period"] == "2026-05-04 22:00"
@@ -2688,11 +2356,14 @@ def test_aggregate_usage_by_period_with_epoch_ts(fresh_db):
             total_cost_usd=0.005,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
-    result = database_module.aggregate_usage_by_period(granularity="day")
+    result = database_module.aggregate_usage_by_period(
+        granularity="day", user_id="test-user"
+    )
     assert len(result) == 1
     assert result[0]["period"] == "2026-04-17"
     assert result[0]["requests"] == 1
@@ -2732,6 +2403,7 @@ def test_aggregate_daily_by_dimension_groups_by_model(fresh_db):
                 total_cost_usd=cost,
                 status=200,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -2740,6 +2412,7 @@ def test_aggregate_daily_by_dimension_groups_by_model(fresh_db):
         dimension="model",
         since="2026-05-07T00:00:00Z",
         until="2026-05-09T00:00:00Z",
+        user_id="test-user",
     )
 
     # Should have 3 entries: claude-sonnet-4-6 on 05-07, claude-sonnet-4-6 on 05-08, gpt-4o on 05-07
@@ -2786,6 +2459,7 @@ def test_aggregate_daily_by_dimension_groups_by_provider(fresh_db):
                 total_cost_usd=cost,
                 status=200,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -2794,6 +2468,7 @@ def test_aggregate_daily_by_dimension_groups_by_provider(fresh_db):
         dimension="provider",
         since="2026-05-07T00:00:00Z",
         until="2026-05-08T00:00:00Z",
+        user_id="test-user",
     )
 
     assert len(result) == 2
@@ -2825,6 +2500,7 @@ def test_fetch_sessions_groups_by_session_id(fresh_db):
                 output_cost_usd=0.002,
                 total_cost_usd=0.003,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -2846,11 +2522,12 @@ def test_fetch_sessions_groups_by_session_id(fresh_db):
             output_cost_usd=0.01,
             total_cost_usd=0.015,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
-    result = database_module.fetch_sessions(db_path=db_path)
+    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
     assert len(result) == 2
     assert result[0]["session_id"] == "sess-2"
     assert result[0]["request_count"] == 1
@@ -2879,11 +2556,12 @@ def test_fetch_sessions_excludes_null_session_id(fresh_db):
             output_cost_usd=0.001,
             total_cost_usd=0.002,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
-    result = database_module.fetch_sessions(db_path=db_path)
+    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
     assert len(result) == 0
 
 
@@ -2907,11 +2585,14 @@ def test_fetch_sessions_filters_by_client_source(fresh_db):
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
-    result = database_module.fetch_sessions(client_source="codex", db_path=db_path)
+    result = database_module.fetch_sessions(
+        client_source="codex", db_path=db_path, user_id="test-user"
+    )
     assert len(result) == 1
     assert result[0]["session_id"] == "s2"
 
@@ -2937,18 +2618,25 @@ def test_fetch_sessions_hide_noop_keeps_single_request_opencode(fresh_db):
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
     database_module.upsert_session_evaluation(
-        "oc-1", "no_op", source="heuristic", db_path=db_path
+        "oc-1", "no_op", source="heuristic", db_path=db_path, user_id="test-user"
     )
-    result = database_module.fetch_sessions(hide_noop=True, db_path=db_path)
+    result = database_module.fetch_sessions(
+        hide_noop=True, db_path=db_path, user_id="test-user"
+    )
     assert result == []
 
-    database_module.delete_session_evaluation("oc-1", db_path=db_path)
-    result = database_module.fetch_sessions(hide_noop=True, db_path=db_path)
+    database_module.delete_session_evaluation(
+        "oc-1", db_path=db_path, user_id="test-user"
+    )
+    result = database_module.fetch_sessions(
+        hide_noop=True, db_path=db_path, user_id="test-user"
+    )
     assert [row["session_id"] for row in result] == ["oc-1"]
 
 
@@ -2973,18 +2661,25 @@ def test_fetch_sessions_hide_noop_keeps_single_request_kilo(fresh_db):
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
     database_module.upsert_session_evaluation(
-        "kilo-1", "no_op", source="heuristic", db_path=db_path
+        "kilo-1", "no_op", source="heuristic", db_path=db_path, user_id="test-user"
     )
-    result = database_module.fetch_sessions(hide_noop=True, db_path=db_path)
+    result = database_module.fetch_sessions(
+        hide_noop=True, db_path=db_path, user_id="test-user"
+    )
     assert result == []
 
-    database_module.delete_session_evaluation("kilo-1", db_path=db_path)
-    result = database_module.fetch_sessions(hide_noop=True, db_path=db_path)
+    database_module.delete_session_evaluation(
+        "kilo-1", db_path=db_path, user_id="test-user"
+    )
+    result = database_module.fetch_sessions(
+        hide_noop=True, db_path=db_path, user_id="test-user"
+    )
     assert [row["session_id"] for row in result] == ["kilo-1"]
 
 
@@ -3007,6 +2702,7 @@ def test_fetch_sessions_accepts_browser_iso_boundary_filters(fresh_db):
             output_cost_usd=0.001,
             total_cost_usd=0.002,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -3015,6 +2711,7 @@ def test_fetch_sessions_accepts_browser_iso_boundary_filters(fresh_db):
         since="2026-05-09T10:00:00.000Z",
         until="2026-05-09T10:00:00.000Z",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert [session["session_id"] for session in result] == ["boundary"]
@@ -3040,12 +2737,13 @@ def test_fetch_sessions_sorting(fresh_db):
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
     result = database_module.fetch_sessions(
-        sort_by="total_tokens", sort_order="asc", db_path=db_path
+        sort_by="total_tokens", sort_order="asc", db_path=db_path, user_id="test-user"
     )
     assert result[0]["session_id"] == "s-low"
     assert result[1]["session_id"] == "s-high"
@@ -3071,6 +2769,7 @@ def test_fetch_sessions_sort_by_duration(fresh_db):
             output_cost_usd=0.001,
             total_cost_usd=0.002,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -3091,12 +2790,13 @@ def test_fetch_sessions_sort_by_duration(fresh_db):
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
     result = database_module.fetch_sessions(
-        sort_by="duration_s", sort_order="desc", db_path=db_path
+        sort_by="duration_s", sort_order="desc", db_path=db_path, user_id="test-user"
     )
     assert result[0]["session_id"] == "long"
     assert result[1]["session_id"] == "short"
@@ -3122,11 +2822,14 @@ def test_fetch_sessions_pagination(fresh_db):
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
-    result = database_module.fetch_sessions(limit=2, offset=1, db_path=db_path)
+    result = database_module.fetch_sessions(
+        limit=2, offset=1, db_path=db_path, user_id="test-user"
+    )
     assert len(result) == 2
 
 
@@ -3149,11 +2852,14 @@ def test_fetch_session_selector_rows_returns_only_dropdown_fields(fresh_db):
             output_cost_usd=0.001,
             total_cost_usd=0.002,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
-    result = database_module.fetch_session_selector_rows(db_path=db_path)
+    result = database_module.fetch_session_selector_rows(
+        db_path=db_path, user_id="test-user"
+    )
 
     assert result == [
         {
@@ -3187,6 +2893,7 @@ def test_fetch_session_selector_rows_applies_filters_sort_and_pagination(fresh_d
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -3199,6 +2906,7 @@ def test_fetch_session_selector_rows_applies_filters_sort_and_pagination(fresh_d
         limit=1,
         offset=0,
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert [row["session_id"] for row in result] == ["s2"]
@@ -3224,11 +2932,12 @@ def test_count_sessions(fresh_db):
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
-    assert database_module.count_sessions(db_path=db_path) == 2
+    assert database_module.count_sessions(db_path=db_path, user_id="test-user") == 2
 
 
 def test_count_usage_with_session_id(fresh_db):
@@ -3251,13 +2960,29 @@ def test_count_usage_with_session_id(fresh_db):
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
 
-    assert database_module.count_usage(session_id="s1", db_path=db_path) == 2
-    assert database_module.count_usage(session_id="s2", db_path=db_path) == 1
-    assert database_module.count_usage(session_id="nonexistent", db_path=db_path) == 0
+    assert (
+        database_module.count_usage(
+            session_id="s1", db_path=db_path, user_id="test-user"
+        )
+        == 2
+    )
+    assert (
+        database_module.count_usage(
+            session_id="s2", db_path=db_path, user_id="test-user"
+        )
+        == 1
+    )
+    assert (
+        database_module.count_usage(
+            session_id="nonexistent", db_path=db_path, user_id="test-user"
+        )
+        == 0
+    )
 
 
 def test_count_usage_with_session_id_and_other_filters(fresh_db):
@@ -3281,6 +3006,7 @@ def test_count_usage_with_session_id_and_other_filters(fresh_db):
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -3288,20 +3014,25 @@ def test_count_usage_with_session_id_and_other_filters(fresh_db):
     # session_id + provider filter should narrow to 1
     assert (
         database_module.count_usage(
-            session_id="s1", provider="anthropic", db_path=db_path
+            session_id="s1", provider="anthropic", db_path=db_path, user_id="test-user"
         )
         == 1
     )
     # session_id + client_source filter
     assert (
         database_module.count_usage(
-            session_id="s1", client_source="claude-code", db_path=db_path
+            session_id="s1",
+            client_source="claude-code",
+            db_path=db_path,
+            user_id="test-user",
         )
         == 2
     )
     # session_id + mismatched provider
     assert (
-        database_module.count_usage(session_id="s1", provider="google", db_path=db_path)
+        database_module.count_usage(
+            session_id="s1", provider="google", db_path=db_path, user_id="test-user"
+        )
         == 0
     )
 
@@ -3327,6 +3058,7 @@ def test_summarize_sessions(fresh_db):
                 output_cost_usd=0.001,
                 total_cost_usd=0.002,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -3346,11 +3078,12 @@ def test_summarize_sessions(fresh_db):
             output_cost_usd=0.005,
             total_cost_usd=0.01,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
-    result = database_module.summarize_sessions(db_path=db_path)
+    result = database_module.summarize_sessions(db_path=db_path, user_id="test-user")
     assert result["session_count"] == 2
     assert result["total_tokens"] == 500
     assert result["total_cost_usd"] == pytest.approx(0.016)
@@ -3371,6 +3104,7 @@ def test_fetch_recent_usage_only_failed_filter(fresh_db):
                 model="m1",
                 endpoint="/chat",
                 status=200,
+                user_id="test-user",
             )
         )
         session.add(
@@ -3380,17 +3114,20 @@ def test_fetch_recent_usage_only_failed_filter(fresh_db):
                 model="m1",
                 endpoint="/chat",
                 status=500,
+                user_id="test-user",
             )
         )
         session.commit()
 
     # When: fetch all
-    all_rows = database_module.fetch_recent_usage(limit=10, db_path=db_path)
+    all_rows = database_module.fetch_recent_usage(
+        limit=10, db_path=db_path, user_id="test-user"
+    )
     assert len(all_rows) == 2
 
     # When: fetch only failed
     failed_rows = database_module.fetch_recent_usage(
-        limit=10, only_failed=True, db_path=db_path
+        limit=10, only_failed=True, db_path=db_path, user_id="test-user"
     )
     assert len(failed_rows) == 1
     assert failed_rows[0]["status"] == 500
@@ -3413,11 +3150,14 @@ def test_usage_daily_status_breakdown(database_module, isolated_home):
             output_cost_usd=0,
             total_cost_usd=0,
             prompt_length=0,
+            user_id="test-user",
         )
         database_module.upsert_daily_aggregate(usage, db_path=db_path)
 
     # Check aggregation
-    summary = database_module.summarize_usage_daily(since="2024-01-01", db_path=db_path)
+    summary = database_module.summarize_usage_daily(
+        since="2024-01-01", db_path=db_path, user_id="test-user"
+    )
     assert len(summary) == 1
     row = summary[0]
     assert row["requests"] == 4
@@ -3427,58 +3167,6 @@ def test_usage_daily_status_breakdown(database_module, isolated_home):
     assert row["status_4xx"] == 1  # 403
     assert row["status_5xx"] == 1
     assert row["status_unknown"] == 0
-
-
-def test_migration_adds_status_columns(database_module, isolated_home, load_module):
-    schema_migrations = load_module("src.schema_migrations")
-    db_path = str(isolated_home / "migration_test.db")
-
-    # 1. Create table without new columns
-    engine = database_module.get_engine(db_path)
-    with engine.begin() as conn:
-        conn.execute(
-            database_module.text("""
-            CREATE TABLE usage_daily (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                model TEXT NOT NULL,
-                client_source TEXT NOT NULL DEFAULT '',
-                request_count INTEGER NOT NULL DEFAULT 0,
-                prompt_tokens INTEGER NOT NULL DEFAULT 0,
-                completion_tokens INTEGER NOT NULL DEFAULT 0,
-                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-                cached_tokens INTEGER NOT NULL DEFAULT 0,
-                total_tokens INTEGER NOT NULL DEFAULT 0,
-                tool_tokens INTEGER NOT NULL DEFAULT 0,
-                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-                prompt_length INTEGER NOT NULL DEFAULT 0,
-                input_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-                output_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-                total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-                successful_requests INTEGER NOT NULL DEFAULT 0,
-                failed_requests INTEGER NOT NULL DEFAULT 0,
-                latency_sum_ms INTEGER NOT NULL DEFAULT 0,
-                UNIQUE(date, provider, model, client_source)
-            )
-        """)
-        )
-
-    # 2. Run migration
-    applied = schema_migrations.migrate_database(db_path)
-    assert any("usage_daily.status_429" in a for a in applied)
-    assert any("usage_daily.status_4xx" in a for a in applied)
-    assert any("usage_daily.status_5xx" in a for a in applied)
-    assert any("usage_daily.status_unknown" in a for a in applied)
-
-    # 3. Verify columns exist
-    from sqlalchemy import inspect
-
-    columns = [c["name"] for c in inspect(engine).get_columns("usage_daily")]
-    assert "status_429" in columns
-    assert "status_4xx" in columns
-    assert "status_5xx" in columns
-    assert "status_unknown" in columns
 
 
 # ---------------------------------------------------------------------------
@@ -3510,6 +3198,7 @@ def test_session_record_created_from_usage_ingestion(fresh_db):
             output_cost_usd=0.002,
             total_cost_usd=0.003,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -3531,6 +3220,7 @@ def test_session_record_created_from_usage_ingestion(fresh_db):
             output_cost_usd=0.004,
             total_cost_usd=0.006,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -3583,6 +3273,7 @@ def test_session_record_primary_model_picks_higher_cost(fresh_db):
             output_cost_usd=0.002,
             total_cost_usd=0.003,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -3605,6 +3296,7 @@ def test_session_record_primary_model_picks_higher_cost(fresh_db):
             output_cost_usd=0.01,
             total_cost_usd=0.015,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -3666,11 +3358,12 @@ def test_fetch_sessions_reads_from_persisted_table(fresh_db):
                 providers_json='{"anthropic": 0.05}',
                 last_usage_id=None,
                 updated_at="2026-05-09T09:00:00+00:00",
+                user_id="test-user",
             )
         )
         session.commit()
 
-    result = database_module.fetch_sessions(db_path=db_path)
+    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
     assert len(result) == 1
     assert result[0]["session_id"] == "manual-sess"
     assert result[0]["request_count"] == 5
@@ -3705,6 +3398,7 @@ def test_rebuild_sessions_from_usage(fresh_db):
                 output_cost_usd=0.002,
                 total_cost_usd=0.003,
                 status=200,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -3726,6 +3420,7 @@ def test_rebuild_sessions_from_usage(fresh_db):
             output_cost_usd=0.01,
             total_cost_usd=0.015,
             status=200,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -3734,7 +3429,7 @@ def test_rebuild_sessions_from_usage(fresh_db):
     count = database_module.rebuild_sessions_from_usage(db_path=db_path)
     assert count == 2
 
-    result = database_module.fetch_sessions(db_path=db_path)
+    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
     assert len(result) == 2
 
     by_id = {r["session_id"]: r for r in result}
@@ -3777,6 +3472,7 @@ def test_rebuild_sessions_from_usage_recomputes_tool_calls_json(fresh_db):
         output_cost_usd=0.002,
         total_cost_usd=0.003,
         status=200,
+        user_id="test-user",
     )
     database_module.log_usage(usage, db_path=db_path)
 
@@ -3788,12 +3484,13 @@ def test_rebuild_sessions_from_usage_recomputes_tool_calls_json(fresh_db):
             tool_name=tool_name,
             ts=TS_2026_05_09_10,
             db_path=db_path,
+            user_id="test-user",
         )
 
     count = database_module.rebuild_sessions_from_usage(db_path=db_path)
     assert count == 1
 
-    result = database_module.fetch_sessions(db_path=db_path)
+    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
     assert len(result) == 1
     assert result[0]["tool_calls_json"] == {"bash": 2, "read": 1}
 
@@ -3809,6 +3506,7 @@ def _insert_session_record(database_module, db_path, session_id="sess-1", **over
 
     values = {
         "session_id": session_id,
+        "user_id": "test-user",
         "client_source": "test",
         "started": 1778493600000000,
         "ended": 1778495400000000,
@@ -3840,9 +3538,12 @@ def test_upsert_session_evaluation_creates_new(fresh_db):
         evidence=["User marked solved"],
         failure_reason=None,
         db_path=db_path,
+        user_id="test-user",
     )
 
-    result = database_module.get_session_evaluation("sess-1", db_path=db_path)
+    result = database_module.get_session_evaluation(
+        "sess-1", db_path=db_path, user_id="test-user"
+    )
     assert result is not None
     assert result["outcome"] == "solved"
     assert result["source"] == "manual"
@@ -3868,9 +3569,12 @@ def test_upsert_session_evaluation_preserves_llm_task_titles(fresh_db):
         task_title="Fixed dashboard navigation",
         task_title_zh="修复仪表板导航",
         db_path=db_path,
+        user_id="test-user",
     )
 
-    result = database_module.get_session_evaluation("sess-1", db_path=db_path)
+    result = database_module.get_session_evaluation(
+        "sess-1", db_path=db_path, user_id="test-user"
+    )
     assert result is not None
     assert result["task_title"] == "Fixed dashboard navigation"
     assert result["task_title_zh"] == "修复仪表板导航"
@@ -3890,9 +3594,10 @@ def test_fetch_sessions_includes_task_title_zh_in_evaluation(fresh_db):
         task_title="Tuned filters",
         task_title_zh="调整筛选器",
         db_path=db_path,
+        user_id="test-user",
     )
 
-    result = database_module.fetch_sessions(db_path=db_path)
+    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
 
     assert result[0]["evaluation"]["task_title"] == "Tuned filters"
     assert result[0]["evaluation"]["task_title_zh"] == "调整筛选器"
@@ -3910,6 +3615,7 @@ def test_upsert_session_evaluation_overwrites_existing(fresh_db):
         outcome="solved",
         source="manual",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.upsert_session_evaluation(
         session_id="sess-1",
@@ -3917,9 +3623,12 @@ def test_upsert_session_evaluation_overwrites_existing(fresh_db):
         source="manual",
         failure_reason="Agent got stuck",
         db_path=db_path,
+        user_id="test-user",
     )
 
-    result = database_module.get_session_evaluation("sess-1", db_path=db_path)
+    result = database_module.get_session_evaluation(
+        "sess-1", db_path=db_path, user_id="test-user"
+    )
     assert result is not None
     assert result["outcome"] == "failed"
     assert result["failure_reason"] == "Agent got stuck"
@@ -3937,6 +3646,7 @@ def test_upsert_session_evaluation_raises_when_session_not_found(fresh_db):
             outcome="solved",
             source="manual",
             db_path=db_path,
+            user_id="test-user",
         )
 
 
@@ -3947,7 +3657,9 @@ def test_get_session_evaluation_returns_none_when_not_evaluated(fresh_db):
     database_module.init_db(db_path)
     _insert_session_record(database_module, db_path)
 
-    result = database_module.get_session_evaluation("sess-1", db_path=db_path)
+    result = database_module.get_session_evaluation(
+        "sess-1", db_path=db_path, user_id="test-user"
+    )
     assert result is None
 
 
@@ -3957,7 +3669,9 @@ def test_get_session_evaluation_returns_none_when_session_absent(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    result = database_module.get_session_evaluation("nonexistent", db_path=db_path)
+    result = database_module.get_session_evaluation(
+        "nonexistent", db_path=db_path, user_id="test-user"
+    )
     assert result is None
 
 
@@ -3973,12 +3687,17 @@ def test_delete_session_evaluation_clears_columns(fresh_db):
         outcome="solved",
         source="manual",
         db_path=db_path,
+        user_id="test-user",
     )
 
-    deleted = database_module.delete_session_evaluation("sess-1", db_path=db_path)
+    deleted = database_module.delete_session_evaluation(
+        "sess-1", db_path=db_path, user_id="test-user"
+    )
     assert deleted is True
 
-    result = database_module.get_session_evaluation("sess-1", db_path=db_path)
+    result = database_module.get_session_evaluation(
+        "sess-1", db_path=db_path, user_id="test-user"
+    )
     assert result is None
 
     from sqlalchemy import select
@@ -4001,7 +3720,9 @@ def test_delete_session_evaluation_returns_false_when_session_absent(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    deleted = database_module.delete_session_evaluation("nonexistent", db_path=db_path)
+    deleted = database_module.delete_session_evaluation(
+        "nonexistent", db_path=db_path, user_id="test-user"
+    )
     assert deleted is False
 
 
@@ -4055,6 +3776,7 @@ def test_model_effectiveness_groups_by_primary_model(fresh_db):
     result = database_module.aggregate_model_effectiveness(
         group_by="model",
         db_path=db_path,
+        user_id="test-user",
     )
 
     by_key = {group["key"]: group for group in result["groups"]}
@@ -4115,6 +3837,7 @@ def test_model_effectiveness_unknown_and_no_op_do_not_pollute_solve_rate(fresh_d
     result = database_module.aggregate_model_effectiveness(
         group_by="model",
         db_path=db_path,
+        user_id="test-user",
     )
 
     group = result["groups"][0]
@@ -4173,6 +3896,7 @@ def test_model_effectiveness_groups_by_source_and_filters(fresh_db):
         until="2026-05-11T10:20:00.000Z",
         client_source="codex",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert [group["key"] for group in result["groups"]] == ["codex"]
@@ -4210,6 +3934,7 @@ def test_model_effectiveness_cost_per_solved_null_when_zero_solved(fresh_db):
     result = database_module.aggregate_model_effectiveness(
         group_by="provider",
         db_path=db_path,
+        user_id="test-user",
     )
 
     group = result["groups"][0]
@@ -4292,6 +4017,7 @@ def test_daily_effectiveness_report_aggregates_day_metrics_in_sql(fresh_db):
     report = database_module.daily_session_effectiveness_report(
         date="2026-05-10",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert report["date"] == "2026-05-10"
@@ -4350,6 +4076,7 @@ def test_daily_effectiveness_report_returns_sql_model_source_groups(fresh_db):
     report = database_module.daily_session_effectiveness_report(
         date="2026-05-10",
         db_path=db_path,
+        user_id="test-user",
     )
 
     groups = {
@@ -4376,6 +4103,7 @@ def test_daily_effectiveness_report_rejects_invalid_date(fresh_db):
         database_module.daily_session_effectiveness_report(
             date="2026-02-30",
             db_path=db_path,
+            user_id="test-user",
         )
 
 
@@ -4399,6 +4127,7 @@ def test_create_session_evaluation_job_persists_queued_job(fresh_db):
         session_id="sess-llm",
         client_source="codex",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert job["job_id"]
@@ -4407,7 +4136,9 @@ def test_create_session_evaluation_job_persists_queued_job(fresh_db):
     assert job["status"] == "queued"
     assert job["error"] is None
 
-    polled = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    polled = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert polled == job
 
 
@@ -4424,6 +4155,7 @@ def test_create_session_evaluation_job_records_trigger(fresh_db):
         client_source="codex",
         trigger="manual",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert manual["trigger"] == "manual"
@@ -4441,6 +4173,7 @@ def test_create_session_evaluation_job_defaults_trigger_to_manual(fresh_db):
         session_id="sess-default",
         client_source="codex",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert job["trigger"] == "manual"
@@ -4456,11 +4189,13 @@ def test_find_active_session_evaluation_job_reuses_non_stale_job(fresh_db):
         session_id="sess-llm",
         client_source="codex",
         db_path=db_path,
+        user_id="test-user",
     )
 
     active = database_module.find_active_session_evaluation_job(
         session_id="sess-llm",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert active is not None
@@ -4479,11 +4214,13 @@ def test_create_session_evaluation_job_reuses_active_job_after_unique_conflict(
         session_id="sess-llm",
         client_source="codex",
         db_path=db_path,
+        user_id="test-user",
     )
     second = database_module.create_session_evaluation_job(
         session_id="sess-llm",
         client_source="codex",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert second["job_id"] == first["job_id"]
@@ -4502,13 +4239,14 @@ def test_create_session_evaluation_job_persists_evaluator_type(fresh_db):
         client_source="codex",
         evaluator_type="claude",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert job["evaluator_type"] == "claude"
     assert (
-        database_module.get_evaluation_job(job["job_id"], db_path=db_path)[
-            "evaluator_type"
-        ]
+        database_module.get_evaluation_job(
+            job["job_id"], db_path=db_path, user_id="test-user"
+        )["evaluator_type"]
         == "claude"
     )
 
@@ -4524,21 +4262,28 @@ def test_update_queued_evaluation_job_evaluator_preserves_queue_position(fresh_d
         client_source="codex",
         evaluator_type="codex",
         db_path=db_path,
+        user_id="test-user",
     )
     job = database_module.create_session_evaluation_job(
         session_id="second",
         client_source="codex",
         evaluator_type="codex",
         db_path=db_path,
+        user_id="test-user",
     )
-    before = database_module.get_evaluation_job_progress(job["job_id"], db_path=db_path)
+    before = database_module.get_evaluation_job_progress(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
 
     updated = database_module.update_queued_evaluation_job_evaluator(
         job["job_id"],
         evaluator_type="claude",
         db_path=db_path,
+        user_id="test-user",
     )
-    after = database_module.get_evaluation_job_progress(job["job_id"], db_path=db_path)
+    after = database_module.get_evaluation_job_progress(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
 
     assert updated is not None
     assert updated["job_id"] == job["job_id"]
@@ -4556,6 +4301,7 @@ def test_update_queued_evaluation_job_evaluator_rejects_running_job(fresh_db):
         client_source="codex",
         evaluator_type="codex",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.claim_next_evaluation_job(db_path=db_path)
 
@@ -4563,13 +4309,14 @@ def test_update_queued_evaluation_job_evaluator_rejects_running_job(fresh_db):
         job["job_id"],
         evaluator_type="claude",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert updated is None
     assert (
-        database_module.get_evaluation_job(job["job_id"], db_path=db_path)[
-            "evaluator_type"
-        ]
+        database_module.get_evaluation_job(
+            job["job_id"], db_path=db_path, user_id="test-user"
+        )["evaluator_type"]
         == "codex"
     )
 
@@ -4588,6 +4335,7 @@ def test_list_session_evaluation_jobs_with_progress_includes_history(fresh_db):
         evaluator_type="codex",
         created_at="2026-05-14T09:00:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.claim_next_evaluation_job(
         now="2026-05-14T09:01:00+00:00",
@@ -4604,11 +4352,13 @@ def test_list_session_evaluation_jobs_with_progress_includes_history(fresh_db):
         evaluator_type="claude",
         created_at="2026-05-14T09:02:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
 
     jobs = database_module.list_session_evaluation_jobs_with_progress(
         "sess-history",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert [job["job_id"] for job in jobs] == [queued["job_id"], failed["job_id"]]
@@ -4629,16 +4379,20 @@ def test_stale_session_evaluation_job_is_failed_before_new_job(fresh_db):
         client_source="codex",
         created_at="2026-05-11T10:00:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
 
     active = database_module.find_active_session_evaluation_job(
         session_id="sess-llm",
         now="2026-05-11T10:06:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert active is None
-    stale = database_module.get_evaluation_job(old_job["job_id"], db_path=db_path)
+    stale = database_module.get_evaluation_job(
+        old_job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert stale is not None
     assert stale["status"] == "failed"
     assert stale["error"] == "Evaluation job timed out"
@@ -4657,6 +4411,7 @@ def test_running_session_evaluation_job_uses_started_at_for_stale_check(fresh_db
         client_source="codex",
         created_at="2026-05-11T10:00:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
     claimed = database_module.claim_next_evaluation_job(
         now="2026-05-11T10:05:00+00:00",
@@ -4667,6 +4422,7 @@ def test_running_session_evaluation_job_uses_started_at_for_stale_check(fresh_db
         session_id="sess-running",
         now="2026-05-11T10:06:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert claimed["job_id"] == job["job_id"]
@@ -4707,18 +4463,21 @@ def test_claim_next_evaluation_job_orders_manual_before_auto_then_newest_session
         client_source="codex",
         trigger="auto",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.create_session_evaluation_job(
         session_id="new-auto",
         client_source="codex",
         trigger="auto",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.create_session_evaluation_job(
         session_id="manual",
         client_source="codex",
         trigger="manual",
         db_path=db_path,
+        user_id="test-user",
     )
 
     first = database_module.claim_next_evaluation_job(db_path=db_path)
@@ -4756,12 +4515,14 @@ def test_claim_next_evaluation_job_skips_candidate_claimed_by_competing_worker(
         client_source="codex",
         trigger="manual",
         db_path=db_path,
+        user_id="test-user",
     )
     second = database_module.create_session_evaluation_job(
         session_id="second",
         client_source="codex",
         trigger="manual",
         db_path=db_path,
+        user_id="test-user",
     )
 
     original_next_queued_job_id = database_module.evaluation_jobs._next_queued_job_id
@@ -4792,9 +4553,9 @@ def test_claim_next_evaluation_job_skips_candidate_claimed_by_competing_worker(
 
     assert claimed["job_id"] == second["job_id"]
     assert (
-        database_module.get_evaluation_job(first["job_id"], db_path=db_path)[
-            "started_at"
-        ]
+        database_module.get_evaluation_job(
+            first["job_id"], db_path=db_path, user_id="test-user"
+        )["started_at"]
         == "2026-05-14T11:01:00+00:00"
     )
 
@@ -4812,35 +4573,38 @@ def test_get_evaluation_job_progress_reports_queue_position(fresh_db):
         client_source="codex",
         trigger="manual",
         db_path=db_path,
+        user_id="test-user",
     )
     queued_1 = database_module.create_session_evaluation_job(
         session_id="queued-1",
         client_source="codex",
         trigger="manual",
         db_path=db_path,
+        user_id="test-user",
     )
     queued_2 = database_module.create_session_evaluation_job(
         session_id="queued-2",
         client_source="codex",
         trigger="auto",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.claim_next_evaluation_job(db_path=db_path)
 
     assert (
-        database_module.get_evaluation_job_progress(running["job_id"], db_path=db_path)[
-            "queue_position"
-        ]
+        database_module.get_evaluation_job_progress(
+            running["job_id"], db_path=db_path, user_id="test-user"
+        )["queue_position"]
         == 1
     )
     queued_progress = database_module.get_evaluation_job_progress(
-        queued_1["job_id"], db_path=db_path
+        queued_1["job_id"], db_path=db_path, user_id="test-user"
     )
     assert queued_progress["ahead_count"] == 1
     assert queued_progress["queue_position"] == 2
     assert (
         database_module.get_evaluation_job_progress(
-            queued_2["job_id"], db_path=db_path
+            queued_2["job_id"], db_path=db_path, user_id="test-user"
         )["queue_position"]
         == 3
     )
@@ -4859,6 +4623,7 @@ def test_evaluation_job_active_helpers_count_list_and_fail_stale_running_jobs(fr
         trigger="manual",
         created_at="2026-05-14T09:00:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
     fresh = database_module.create_session_evaluation_job(
         session_id="fresh",
@@ -4866,6 +4631,7 @@ def test_evaluation_job_active_helpers_count_list_and_fail_stale_running_jobs(fr
         trigger="auto",
         created_at="2026-05-14T09:03:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
     first = database_module.claim_next_evaluation_job(
         now="2026-05-14T09:00:00+00:00",
@@ -4881,6 +4647,7 @@ def test_evaluation_job_active_helpers_count_list_and_fail_stale_running_jobs(fr
     active = database_module.list_active_evaluation_jobs(
         session_ids=["fresh"],
         db_path=db_path,
+        user_id="test-user",
     )
     assert [job["job_id"] for job in active] == [fresh["job_id"]]
 
@@ -4895,6 +4662,7 @@ def test_evaluation_job_active_helpers_count_list_and_fail_stale_running_jobs(fr
         database_module.get_evaluation_job(
             stale["job_id"],
             db_path=db_path,
+            user_id="test-user",
         )["status"]
         == "failed"
     )
@@ -4902,6 +4670,7 @@ def test_evaluation_job_active_helpers_count_list_and_fail_stale_running_jobs(fr
         database_module.get_evaluation_job(
             fresh["job_id"],
             db_path=db_path,
+            user_id="test-user",
         )["status"]
         == "running"
     )
@@ -4921,6 +4690,7 @@ def test_fail_stale_running_evaluation_jobs_does_not_overwrite_terminal_update(
         trigger="manual",
         created_at="2026-05-14T09:00:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.claim_next_evaluation_job(
         now="2026-05-14T09:00:00+00:00",
@@ -4957,7 +4727,9 @@ def test_fail_stale_running_evaluation_jobs_does_not_overwrite_terminal_update(
         db_path=db_path,
     )
 
-    current = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    current = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert failed_count == 0
     assert current["status"] == "succeeded"
     assert current["finished_at"] == "2026-05-14T09:05:30+00:00"
@@ -4977,6 +4749,7 @@ def test_find_active_session_evaluation_job_does_not_overwrite_terminal_update(
         trigger="manual",
         created_at="2026-05-14T09:00:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
     original_fail_stale_job = getattr(
         database_module.evaluation_jobs,
@@ -5008,9 +4781,12 @@ def test_find_active_session_evaluation_job_does_not_overwrite_terminal_update(
         session_id="stale",
         now="2026-05-14T09:06:00+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
 
-    current = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    current = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert active is None
     assert current["status"] == "succeeded"
     assert current["finished_at"] == "2026-05-14T09:05:30+00:00"
@@ -5027,6 +4803,7 @@ def test_mark_evaluation_job_succeeded_does_not_overwrite_failed_job(fresh_db):
         client_source="codex",
         trigger="manual",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.claim_next_evaluation_job(db_path=db_path)
     database_module.mark_evaluation_job_failed(
@@ -5037,7 +4814,9 @@ def test_mark_evaluation_job_succeeded_does_not_overwrite_failed_job(fresh_db):
 
     database_module.mark_evaluation_job_succeeded(job["job_id"], db_path=db_path)
 
-    current = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    current = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert current["status"] == "failed"
     assert current["error"] == "first failure"
 
@@ -5053,6 +4832,7 @@ def test_mark_evaluation_job_running_does_not_revive_failed_job(fresh_db):
         client_source="codex",
         trigger="manual",
         db_path=db_path,
+        user_id="test-user",
     )
     database_module.claim_next_evaluation_job(db_path=db_path)
     database_module.mark_evaluation_job_failed(
@@ -5065,307 +4845,12 @@ def test_mark_evaluation_job_running_does_not_revive_failed_job(fresh_db):
         job["job_id"], db_path=db_path
     )
 
-    current = database_module.get_evaluation_job(job["job_id"], db_path=db_path)
+    current = database_module.get_evaluation_job(
+        job["job_id"], db_path=db_path, user_id="test-user"
+    )
     assert changed is False
     assert current["status"] == "failed"
     assert current["error"] == "first failure"
-
-
-def test_migrate_database_creates_evaluation_jobs_table(
-    database_module, schema_migrations_module, isolated_home
-):
-    db_path = str(isolated_home / "usage.db")
-    engine = database_module.get_engine(db_path)
-    database_module.metadata.drop_all(engine)
-
-    applied = schema_migrations_module.migrate_database(db_path)
-
-    assert "evaluation_jobs.create" in applied
-    assert "evaluation_jobs.active_unique_index" in applied
-    assert schema_migrations_module._table_exists(engine, "evaluation_jobs")
-    assert {
-        "job_id",
-        "kind",
-        "session_id",
-        "client_source",
-        "evaluator_type",
-        "status",
-        "created_at",
-        "started_at",
-        "finished_at",
-        "error",
-    }.issubset(schema_migrations_module._table_column_names(engine, "evaluation_jobs"))
-    assert "ix_evaluation_jobs_one_active_per_session" in (
-        schema_migrations_module._index_names(engine, "evaluation_jobs")
-    )
-
-
-def test_migrate_database_adds_session_selector_indexes(
-    database_module, schema_migrations_module, isolated_home
-):
-    from sqlalchemy import inspect
-
-    db_path = str(isolated_home / "usage.db")
-    database_module.init_db(db_path)
-
-    applied = schema_migrations_module.migrate_database(db_path=db_path)
-
-    index_names = {
-        index["name"]
-        for index in inspect(database_module.get_engine(db_path)).get_indexes(
-            "sessions"
-        )
-    }
-    assert "ix_sessions_started_desc" in index_names
-    assert "ix_sessions_client_source_started_desc" in index_names
-    assert "sessions.ix_sessions_started_desc" in applied
-    assert "sessions.ix_sessions_client_source_started_desc" in applied
-
-
-def test_migration_adds_session_task_title_zh(
-    database_module, schema_migrations_module, isolated_home
-):
-    db_path = str(isolated_home / "usage.db")
-    database_module.init_db(db_path)
-    engine = database_module.get_engine(db_path)
-
-    with engine.begin() as connection:
-        connection.execute(
-            database_module.text("ALTER TABLE sessions DROP COLUMN task_title_zh")
-        )
-
-    applied = schema_migrations_module.migrate_database(db_path)
-    applied_again = schema_migrations_module.migrate_database(db_path)
-
-    assert "sessions.task_title_zh" in applied
-    assert "sessions.task_title_zh" not in applied_again
-    assert "task_title_zh" in schema_migrations_module._table_column_names(
-        engine, "sessions"
-    )
-
-
-def test_migration_adds_session_cache_creation_tokens(
-    database_module, schema_migrations_module, isolated_home
-):
-    db_path = str(isolated_home / "usage.db")
-    database_module.init_db(db_path)
-    engine = database_module.get_engine(db_path)
-
-    with engine.begin() as connection:
-        connection.execute(
-            database_module.text(
-                "ALTER TABLE sessions DROP COLUMN cache_creation_tokens"
-            )
-        )
-
-    applied = schema_migrations_module.migrate_database(db_path)
-    applied_again = schema_migrations_module.migrate_database(db_path)
-
-    assert "sessions.cache_creation_tokens" in applied
-    assert "sessions.cache_creation_tokens" not in applied_again
-    assert "cache_creation_tokens" in schema_migrations_module._table_column_names(
-        engine, "sessions"
-    )
-
-
-def test_migration_backfills_session_cache_creation_tokens_without_touching_evaluation(
-    database_module, schema_migrations_module, isolated_home
-):
-    """The new column defaults existing rows to 0; the migration must backfill
-    it from usage without wiping evaluation fields (unlike rebuild_sessions_from_usage,
-    which deletes and recreates rows and would drop them)."""
-    db_path = str(isolated_home / "usage.db")
-    database_module.init_db(db_path)
-    engine = database_module.get_engine(db_path)
-
-    database_module.log_usage(
-        database_module.Usage(
-            ts=TS_2026_05_09_10,
-            provider="anthropic",
-            model="claude-sonnet-4-6",
-            client_source="claude-code",
-            session_id="sess-backfill",
-            endpoint="/v1/messages",
-            prompt_tokens=100,
-            completion_tokens=50,
-            cached_tokens=20,
-            cache_creation_tokens=500,
-            total_tokens=650,
-            input_cost_usd=0.01,
-            output_cost_usd=0.02,
-            total_cost_usd=0.03,
-            status=200,
-        ),
-        db_path=db_path,
-    )
-
-    database_module.upsert_session_evaluation(
-        "sess-backfill",
-        outcome="solved",
-        source="llm",
-        task_title="Test task",
-        db_path=db_path,
-    )
-
-    from sqlalchemy.orm import Session
-
-    def assert_backfilled_and_evaluation_intact():
-        with Session(engine) as session:
-            record = session.get(database_module.SessionRecord, "sess-backfill")
-            assert record.cache_creation_tokens == 500
-            assert record.outcome == "solved"
-            assert record.task_title == "Test task"
-
-    # Scenario 1: column never existed (fresh upgrade path).
-    with engine.begin() as connection:
-        connection.execute(
-            database_module.text(
-                "ALTER TABLE sessions DROP COLUMN cache_creation_tokens"
-            )
-        )
-
-    applied = schema_migrations_module.migrate_database(db_path)
-    assert "sessions.cache_creation_tokens" in applied
-    assert "sessions.cache_creation_tokens_backfill" in applied
-    assert_backfilled_and_evaluation_intact()
-
-    # Scenario 2: once truly in sync, a subsequent run should not redo the
-    # (expensive) full-table backfill.
-    applied_again = schema_migrations_module.migrate_database(db_path)
-    assert "sessions.cache_creation_tokens" not in applied_again
-    assert "sessions.cache_creation_tokens_backfill" not in applied_again
-
-    # Scenario 3: crash recovery -- column exists (from a prior run that added
-    # it) but the backfill UPDATE never ran, e.g. the process died in between.
-    # The next migrate_database() call must detect the drift and self-heal
-    # instead of leaving the column permanently stuck at 0.
-    with engine.begin() as connection:
-        connection.execute(
-            database_module.text(
-                "UPDATE sessions SET cache_creation_tokens = 0 "
-                "WHERE session_id = 'sess-backfill'"
-            )
-        )
-
-    applied_after_crash = schema_migrations_module.migrate_database(db_path)
-    assert "sessions.cache_creation_tokens" not in applied_after_crash
-    assert "sessions.cache_creation_tokens_backfill" in applied_after_crash
-    assert_backfilled_and_evaluation_intact()
-
-
-def test_migration_adds_usage_cache_creation_tokens_before_session_backfill(
-    database_module, schema_migrations_module, isolated_home
-):
-    """A pre-existing DB from before cache_creation_tokens existed on `usage`
-    (not just `sessions`) must not crash the sessions backfill, which reads
-    usage.cache_creation_tokens."""
-    db_path = str(isolated_home / "usage.db")
-    database_module.init_db(db_path)
-    engine = database_module.get_engine(db_path)
-
-    database_module.log_usage(
-        database_module.Usage(
-            ts=TS_2026_05_09_10,
-            provider="anthropic",
-            model="claude-sonnet-4-6",
-            client_source="claude-code",
-            session_id="sess-legacy",
-            endpoint="/v1/messages",
-            prompt_tokens=100,
-            completion_tokens=50,
-            cached_tokens=20,
-            cache_creation_tokens=500,
-            total_tokens=650,
-            input_cost_usd=0.01,
-            output_cost_usd=0.02,
-            total_cost_usd=0.03,
-            status=200,
-        ),
-        db_path=db_path,
-    )
-
-    # Simulate a DB that predates cache_creation_tokens entirely: dropping the
-    # usage column loses the value recorded above, same as any legacy row
-    # that was never tracked -- the point is the migration must not crash on
-    # a `usage` table that genuinely lacks the column the backfill reads.
-    with engine.begin() as connection:
-        connection.execute(
-            database_module.text("ALTER TABLE usage DROP COLUMN cache_creation_tokens")
-        )
-        connection.execute(
-            database_module.text(
-                "ALTER TABLE sessions DROP COLUMN cache_creation_tokens"
-            )
-        )
-
-    applied = schema_migrations_module.migrate_database(db_path)
-
-    assert "usage.cache_creation_tokens" in applied
-    assert "sessions.cache_creation_tokens" in applied
-    assert "sessions.cache_creation_tokens_backfill" in applied
-    assert "cache_creation_tokens" in schema_migrations_module._table_column_names(
-        engine, "usage"
-    )
-
-    from sqlalchemy.orm import Session
-
-    with Session(engine) as session:
-        record = session.get(database_module.SessionRecord, "sess-legacy")
-        assert record.cache_creation_tokens == 0
-
-
-@pytest.mark.slow
-def test_migrate_database_adds_evaluation_job_trigger(
-    schema_migrations_module, database_module, isolated_home
-):
-    db_path = str(isolated_home / "usage.db")
-    database_module.init_db(db_path)
-    engine = database_module.get_engine(db_path)
-
-    with engine.begin() as connection:
-        connection.execute(
-            database_module.text("ALTER TABLE evaluation_jobs DROP COLUMN trigger")
-        )
-
-    applied = schema_migrations_module.migrate_database(db_path)
-
-    assert "evaluation_jobs.trigger" in applied
-    assert "trigger" in schema_migrations_module._table_column_names(
-        engine, "evaluation_jobs"
-    )
-
-
-@pytest.mark.slow
-def test_migrate_database_adds_evaluation_job_evaluator_type(
-    schema_migrations_module, database_module, isolated_home
-):
-    db_path = str(isolated_home / "usage.db")
-    database_module.init_db(db_path)
-    engine = database_module.get_engine(db_path)
-
-    with engine.begin() as connection:
-        connection.execute(
-            database_module.text(
-                "INSERT INTO evaluation_jobs (job_id, kind, session_id, client_source, trigger, status, created_at) "
-                "VALUES ('legacy-job', 'session_evaluation', 'legacy-session', 'codex', 'manual', 'failed', '2026-05-14T09:00:00+00:00')"
-            )
-        )
-        connection.execute(
-            database_module.text(
-                "ALTER TABLE evaluation_jobs DROP COLUMN evaluator_type"
-            )
-        )
-
-    applied = schema_migrations_module.migrate_database(db_path)
-
-    assert "evaluation_jobs.evaluator_type" in applied
-    with engine.connect() as connection:
-        row = connection.execute(
-            database_module.text(
-                "SELECT evaluator_type FROM evaluation_jobs WHERE job_id = 'legacy-job'"
-            )
-        ).fetchone()
-    assert row[0] == "codex"
 
 
 def test_upsert_daily_aggregate_with_epoch_ts(fresh_db):
@@ -5395,6 +4880,7 @@ def test_upsert_daily_aggregate_with_epoch_ts(fresh_db):
             total_cost_usd=0.005,
             status=200,
             base_url_id=None,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -5440,6 +4926,7 @@ def test_fetch_recent_usage_filters_by_since_until_with_epoch_ts(fresh_db):
                 total_cost_usd=0.005,
                 status=200,
                 base_url_id=None,
+                user_id="test-user",
             ),
             db_path=db_path,
         )
@@ -5447,7 +4934,7 @@ def test_fetch_recent_usage_filters_by_since_until_with_epoch_ts(fresh_db):
     # Filter with ISO string since/until (API boundary stays ISO)
     since_iso = "2026-04-17T12:00:00+00:00"
     rows = database_module.fetch_recent_usage(
-        limit=100, since=since_iso, db_path=db_path
+        limit=100, since=since_iso, db_path=db_path, user_id="test-user"
     )
     assert len(rows) == 1  # only Apr 18 row
 
@@ -5491,6 +4978,7 @@ def _insert_usage_with_tools(
         total_cost_usd=0.005,
         status=200,
         base_url_id=None,
+        user_id="test-user",
     )
     database_module.log_usage(usage_obj, db_path=db_path)
     ts_ms = ts // 1000
@@ -5503,6 +4991,7 @@ def _insert_usage_with_tools(
             client_source=client_source,
             ts=ts_ms + i,
             db_path=db_path,
+            user_id="test-user",
         )
     return usage_obj
 
@@ -5527,7 +5016,7 @@ def test_distinct_tool_names(fresh_db):
         session_id="s2",
     )
 
-    result = database_module.distinct_tool_names(db_path=db_path)
+    result = database_module.distinct_tool_names(db_path=db_path, user_id="test-user")
     assert result == ["bash", "edit", "read"]  # sorted, deduped
 
 
@@ -5556,11 +5045,12 @@ def test_distinct_tool_names_with_time_range(fresh_db):
         since="2026-04-17T00:00:00+00:00",
         until="2026-04-17T23:59:59+00:00",
         db_path=db_path,
+        user_id="test-user",
     )
     assert result == ["bash"]
 
     # All tools
-    result = database_module.distinct_tool_names(db_path=db_path)
+    result = database_module.distinct_tool_names(db_path=db_path, user_id="test-user")
     assert result == ["bash", "edit"]
 
 
@@ -5584,7 +5074,7 @@ def test_summarize_tool_calls(fresh_db):
         session_id="s2",
     )
 
-    result = database_module.summarize_tool_calls(db_path=db_path)
+    result = database_module.summarize_tool_calls(db_path=db_path, user_id="test-user")
     counts = {row["tool_name"]: row["count"] for row in result}
     assert counts == {"bash": 2, "read": 1}
 
@@ -5610,23 +5100,25 @@ def test_fetch_recent_usage_filters_by_tool_name(fresh_db):
     )
 
     rows = database_module.fetch_recent_usage(
-        limit=10, tool_name="bash", db_path=db_path
+        limit=10, tool_name="bash", db_path=db_path, user_id="test-user"
     )
     assert len(rows) == 1
     assert "bash" in rows[0]["tool_names"]
 
     rows = database_module.fetch_recent_usage(
-        limit=10, tool_name="edit", db_path=db_path
+        limit=10, tool_name="edit", db_path=db_path, user_id="test-user"
     )
     assert len(rows) == 1
     assert "edit" in rows[0]["tool_names"]
 
     rows = database_module.fetch_recent_usage(
-        limit=10, tool_name="nonexistent", db_path=db_path
+        limit=10, tool_name="nonexistent", db_path=db_path, user_id="test-user"
     )
     assert len(rows) == 0
 
-    rows = database_module.fetch_recent_usage(limit=10, db_path=db_path)
+    rows = database_module.fetch_recent_usage(
+        limit=10, db_path=db_path, user_id="test-user"
+    )
     assert len(rows) == 2
 
 
@@ -5646,11 +5138,16 @@ def test_fetch_recent_usage_filters_by_tool_name_case_insensitive(fresh_db):
     )
 
     rows = database_module.fetch_recent_usage(
-        limit=10, tool_name="Bash", db_path=db_path
+        limit=10, tool_name="Bash", db_path=db_path, user_id="test-user"
     )
     assert len(rows) == 1
 
-    assert database_module.count_usage(tool_name="Bash", db_path=db_path) == 1
+    assert (
+        database_module.count_usage(
+            tool_name="Bash", db_path=db_path, user_id="test-user"
+        )
+        == 1
+    )
 
 
 def test_count_usage_filters_by_tool_name(fresh_db):
@@ -5680,10 +5177,25 @@ def test_count_usage_filters_by_tool_name(fresh_db):
         session_id="s3",
     )
 
-    assert database_module.count_usage(tool_name="bash", db_path=db_path) == 2
-    assert database_module.count_usage(tool_name="edit", db_path=db_path) == 1
-    assert database_module.count_usage(tool_name="nonexistent", db_path=db_path) == 0
-    assert database_module.count_usage(db_path=db_path) == 3
+    assert (
+        database_module.count_usage(
+            tool_name="bash", db_path=db_path, user_id="test-user"
+        )
+        == 2
+    )
+    assert (
+        database_module.count_usage(
+            tool_name="edit", db_path=db_path, user_id="test-user"
+        )
+        == 1
+    )
+    assert (
+        database_module.count_usage(
+            tool_name="nonexistent", db_path=db_path, user_id="test-user"
+        )
+        == 0
+    )
+    assert database_module.count_usage(db_path=db_path, user_id="test-user") == 3
 
 
 def test_usage_filters_tool_name_empty_string(fresh_db):
@@ -5700,7 +5212,9 @@ def test_usage_filters_tool_name_empty_string(fresh_db):
         session_id="s1",
     )
 
-    rows = database_module.fetch_recent_usage(limit=10, tool_name="", db_path=db_path)
+    rows = database_module.fetch_recent_usage(
+        limit=10, tool_name="", db_path=db_path, user_id="test-user"
+    )
     assert len(rows) == 0  # no tool calls with empty name
 
 
@@ -5732,6 +5246,7 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
             input_cost_usd=1.0,
             output_cost_usd=1.0,
             total_cost_usd=2.0,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -5754,13 +5269,16 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
             input_cost_usd=0.1,
             output_cost_usd=0.1,
             total_cost_usd=0.2,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
     usage_id = next(
         r["id"]
-        for r in database_module.fetch_recent_usage(limit=10, db_path=db_path)
+        for r in database_module.fetch_recent_usage(
+            limit=10, db_path=db_path, user_id="test-user"
+        )
         if r["session_id"] == "session-recalc"
     )
 
@@ -5769,6 +5287,7 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
         usage_id,
         model_costs={"recalc-model": new_cost},
         db_path=db_path,
+        user_id="test-user",
     )
 
     assert result is not None
@@ -5787,12 +5306,14 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
 
     row = next(
         r
-        for r in database_module.fetch_recent_usage(limit=10, db_path=db_path)
+        for r in database_module.fetch_recent_usage(
+            limit=10, db_path=db_path, user_id="test-user"
+        )
         if r["id"] == usage_id
     )
     assert float(row["total_cost_usd"]) == 6.0
 
-    daily = database_module.summarize_usage_daily(db_path=db_path)
+    daily = database_module.summarize_usage_daily(db_path=db_path, user_id="test-user")
     bucket = next(d for d in daily if d["model"] == "recalc-model")
     # Old combined total was 2.0 + 0.2 = 2.2; the recalculated row's total
     # went 2.0 -> 6.0, so the bucket should read 6.0 + 0.2 = 6.2, not 6.0.
@@ -5829,6 +5350,7 @@ def test_recalculate_usage_cost_adjusts_session_rollup(fresh_db):
             input_cost_usd=1.0,
             output_cost_usd=1.0,
             total_cost_usd=2.0,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -5851,13 +5373,16 @@ def test_recalculate_usage_cost_adjusts_session_rollup(fresh_db):
             input_cost_usd=2.5,
             output_cost_usd=2.5,
             total_cost_usd=5.0,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
 
     usage_id = next(
         r["id"]
-        for r in database_module.fetch_recent_usage(limit=10, db_path=db_path)
+        for r in database_module.fetch_recent_usage(
+            limit=10, db_path=db_path, user_id="test-user"
+        )
         if r["model"] == "recalc-model-a"
     )
 
@@ -5866,6 +5391,7 @@ def test_recalculate_usage_cost_adjusts_session_rollup(fresh_db):
         usage_id,
         model_costs={"recalc-model-a": new_cost},
         db_path=db_path,
+        user_id="test-user",
     )
     assert result is not None
     assert result.skipped is False
@@ -5906,18 +5432,23 @@ def test_recalculate_usage_cost_skips_when_no_pricing_match(fresh_db):
             input_cost_usd=0.5,
             output_cost_usd=0.5,
             total_cost_usd=1.0,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
-    usage_id = database_module.fetch_recent_usage(limit=1, db_path=db_path)[0]["id"]
+    usage_id = database_module.fetch_recent_usage(
+        limit=1, db_path=db_path, user_id="test-user"
+    )[0]["id"]
 
     result = database_module.recalculate_usage_cost(
-        usage_id, model_costs={}, db_path=db_path
+        usage_id, model_costs={}, db_path=db_path, user_id="test-user"
     )
 
     assert result is not None
     assert result.skipped is True
-    row = database_module.fetch_recent_usage(limit=1, db_path=db_path)[0]
+    row = database_module.fetch_recent_usage(
+        limit=1, db_path=db_path, user_id="test-user"
+    )[0]
     assert float(row["total_cost_usd"]) == 1.0
 
 
@@ -5927,7 +5458,9 @@ def test_recalculate_usage_cost_returns_none_for_missing_row(fresh_db):
     database_module.init_db(db_path)
 
     assert (
-        database_module.recalculate_usage_cost("nonexistent-id", db_path=db_path)
+        database_module.recalculate_usage_cost(
+            "nonexistent-id", db_path=db_path, user_id="test-user"
+        )
         is None
     )
 
@@ -6151,87 +5684,6 @@ def _old_shape_db(db_file) -> None:
     connection.close()
 
 
-def test_migrate_database_adds_tenancy_schema_preserves_data(
-    database_module, schema_migrations_module, isolated_home, monkeypatch
-):
-    """AC 1: old-shape DB migrates with data preserved, keys swapped, and a
-    second run is a no-op for the tenancy steps."""
-    # These cover the tenancy step; the owner-assignment step has its own tests.
-    import src.config.app
-
-    monkeypatch.setitem(src.config.app.CONFIG, "auth", {"provider": "google"})
-    import sqlite3
-
-    db_file = isolated_home / "usage.db"
-    _old_shape_db(db_file)
-
-    changes = schema_migrations_module.migrate_database(str(db_file))
-    assert "usage.user_id" in changes
-    assert "usage_daily.user_id" in changes
-    assert "sessions.user_id" in changes
-    assert "tool_calls.user_id" not in changes  # created fresh by init_db
-    assert "evaluation_jobs.user_id" in changes
-    assert "usage_daily.unique_swap" in changes
-
-    engine = database_module.get_engine(str(db_file))
-    with engine.connect() as conn:
-        usage_rows = list(
-            conn.execute(database_module.text("SELECT id, user_id FROM usage"))
-        )
-        assert usage_rows == [("uuid-1", None)]
-        daily_rows = list(
-            conn.execute(
-                database_module.text(
-                    "SELECT date, request_count, prompt_tokens, user_id FROM usage_daily"
-                )
-            )
-        )
-        assert daily_rows == [("2026-04-17", 42, 4242, None)]
-        sessions_rows = list(
-            conn.execute(
-                database_module.text(
-                    "SELECT session_id, request_count, user_id FROM sessions"
-                )
-            )
-        )
-        assert sessions_rows == [("sess-1", 42, None)]
-        jobs_rows = list(
-            conn.execute(
-                database_module.text("SELECT job_id, user_id FROM evaluation_jobs")
-            )
-        )
-        assert jobs_rows == [("job-1", None)]
-
-    connection = sqlite3.connect(db_file)
-    try:
-        # Old table-level UNIQUE is gone (no sqlite_autoindex on usage_daily)
-        autoindexes = [
-            row[1]
-            for row in connection.execute("PRAGMA index_list(usage_daily)").fetchall()
-            if row[1].startswith("sqlite_autoindex")
-        ]
-        assert autoindexes == []
-        # Both partial unique indexes exist
-        index_names = {
-            row[1] for row in connection.execute("PRAGMA index_list(usage_daily)")
-        }
-        assert "uq_usage_daily_local" in index_names
-        assert "uq_usage_daily_user" in index_names
-        # sessions PK is still the bare session_id
-        table_info = connection.execute("PRAGMA table_info(sessions)").fetchall()
-        pk_columns = [row[1] for row in table_info if row[5]]
-        assert pk_columns == ["session_id"]
-    finally:
-        connection.close()
-
-    tenancy_changes = {
-        change
-        for change in schema_migrations_module.migrate_database(str(db_file))
-        if "user_id" in change or change == "usage_daily.unique_swap"
-    }
-    assert tenancy_changes == set()
-
-
 def test_init_db_creates_tenancy_shapes(fresh_db):
     """AC 2: init_db alone (no migrate_database) creates the new shapes."""
     from sqlalchemy import inspect
@@ -6245,8 +5697,8 @@ def test_init_db_creates_tenancy_shapes(fresh_db):
         assert "user_id" in {c["name"] for c in inspector.get_columns(table)}
 
     daily_indexes = {i["name"]: i for i in inspector.get_indexes("usage_daily")}
-    assert daily_indexes["uq_usage_daily_local"]["unique"]
-    assert daily_indexes["uq_usage_daily_user"]["unique"]
+    assert daily_indexes["uq_usage_daily"]["unique"]
+    assert "uq_usage_daily_local" not in daily_indexes
 
     for table, index_name in [
         ("usage", "ix_usage_user_id"),
@@ -6256,10 +5708,10 @@ def test_init_db_creates_tenancy_shapes(fresh_db):
         assert index_name in {i["name"] for i in inspector.get_indexes(table)}
 
 
-def test_upsert_daily_aggregate_separates_null_and_user_rows(fresh_db):
-    """AC 4: same (date, provider, model, client_source) with user_id None vs
-    'u1' produces two rows; increments land in the right row (both ON
-    CONFLICT branches)."""
+def test_upsert_daily_aggregate_separates_user_rows(fresh_db):
+    """Same (date, provider, model, client_source) for users u0 and u1
+    produces two rows; increments land in the right row (both ON CONFLICT
+    branches)."""
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -6284,8 +5736,8 @@ def test_upsert_daily_aggregate_separates_null_and_user_rows(fresh_db):
             total_cost_usd=0.003,
         )
 
-    database_module.upsert_daily_aggregate(make_usage(None), db_path=db_path)
-    database_module.upsert_daily_aggregate(make_usage(None), db_path=db_path)
+    database_module.upsert_daily_aggregate(make_usage("u0"), db_path=db_path)
+    database_module.upsert_daily_aggregate(make_usage("u0"), db_path=db_path)
     database_module.upsert_daily_aggregate(make_usage("u1"), db_path=db_path)
     database_module.upsert_daily_aggregate(make_usage("u1"), db_path=db_path)
 
@@ -6299,16 +5751,15 @@ def test_upsert_daily_aggregate_separates_null_and_user_rows(fresh_db):
         )
     assert len(rows) == 2
     by_user = {row.user_id: row for row in rows}
-    assert set(by_user) == {None, "u1"}
-    assert by_user[None].request_count == 2
-    assert by_user[None].prompt_tokens == 200
+    assert set(by_user) == {"u0", "u1"}
+    assert by_user["u0"].request_count == 2
+    assert by_user["u0"].prompt_tokens == 200
     assert by_user["u1"].request_count == 2
     assert by_user["u1"].prompt_tokens == 200
 
 
-def test_upsert_session_from_usage_stamps_null_user_id_and_scopes_tenant(fresh_db):
-    """AC 5: a usage row with user_id None creates a session row with NULL
-    user_id; users with distinct session_ids get distinct rows and the helper
+def test_upsert_session_from_usage_scopes_tenant(fresh_db):
+    """Users with distinct session_ids get distinct rows and the helper
     returns only the (user_id, session_id) match.
 
     The tenant guard (bare session_id PK): a second user writing the same
@@ -6344,7 +5795,7 @@ def test_upsert_session_from_usage_stamps_null_user_id_and_scopes_tenant(fresh_d
         )
 
     database_module.upsert_session_from_usage(
-        make_usage("local-session", None), db_path=db_path
+        make_usage("local-session", "u0"), db_path=db_path
     )
     database_module.upsert_session_from_usage(
         make_usage("tenant-session", "u1"), db_path=db_path
@@ -6362,18 +5813,18 @@ def test_upsert_session_from_usage_stamps_null_user_id_and_scopes_tenant(fresh_d
                 )
             )
         )
-    assert rows == [("local-session", None, 1), ("tenant-session", "u1", 2)]
+    assert rows == [("local-session", "u0", 1), ("tenant-session", "u1", 2)]
 
     engine = database_module.get_engine(db_path)
     with OrmSession(engine) as session:
-        local_record = get_session_record(session, "local-session", user_id=None)
+        local_record = get_session_record(session, "local-session", user_id="u0")
         assert local_record is not None
-        assert local_record.user_id is None
+        assert local_record.user_id == "u0"
         assert local_record.request_count == 1
         tenant_record = get_session_record(session, "tenant-session", user_id="u1")
         assert tenant_record is not None
         assert tenant_record.request_count == 2
-        assert get_session_record(session, "tenant-session", user_id=None) is None
+        assert get_session_record(session, "tenant-session", user_id="u0") is None
         assert get_session_record(session, "tenant-session", user_id="u3") is None
         assert get_session_record(session, "local-session", user_id="u1") is None
 
@@ -6388,7 +5839,7 @@ def test_upsert_session_from_usage_stamps_null_user_id_and_scopes_tenant(fresh_d
                 "SELECT user_id, request_count FROM sessions WHERE session_id = 'local-session'"
             )
         ).one()
-    assert local_row.user_id is None
+    assert local_row.user_id == "u0"
     assert local_row.request_count == 1
 
 
@@ -6448,169 +5899,6 @@ def test_rebuild_sessions_from_usage_stamps_user_id(fresh_db):
     assert rows[0].tool_calls_json == '{"bash": 1}'
 
 
-def test_migrate_database_merges_duplicate_usage_daily_rows(
-    database_module, schema_migrations_module, isolated_home, monkeypatch
-):
-    """Duplicate (date, provider, model, client_source) rows (possible on
-    create_all-era DBs that never had the old UNIQUE) are merged by summing
-    before the partial indexes are created."""
-    # These cover the tenancy step; the owner-assignment step has its own tests.
-    import src.config.app
-
-    monkeypatch.setitem(src.config.app.CONFIG, "auth", {"provider": "google"})
-    db_file = isolated_home / "usage.db"
-    _create_all_era_db(db_file)
-
-    changes = schema_migrations_module.migrate_database(str(db_file))
-    assert "usage_daily.unique_swap" in changes
-
-    with database_module.get_engine(str(db_file)).connect() as conn:
-        rows = list(
-            conn.execute(
-                database_module.text(
-                    "SELECT date, request_count, prompt_tokens, completion_tokens, "
-                    "total_tokens, total_cost_usd, latency_sum_ms, user_id "
-                    "FROM usage_daily ORDER BY date"
-                )
-            )
-        )
-    assert rows == [
-        ("2026-04-17", 3, 30, 15, 45, pytest.approx(0.009), 300, None),
-        ("2026-04-18", 7, 70, 0, 0, 0, 0, None),
-    ]
-
-    import sqlite3
-
-    connection = sqlite3.connect(db_file)
-    try:
-        index_names = {
-            row[1] for row in connection.execute("PRAGMA index_list(usage_daily)")
-        }
-        assert "uq_usage_daily_local" in index_names
-        assert "uq_usage_daily_user" in index_names
-    finally:
-        connection.close()
-
-    tenancy_changes = {
-        change
-        for change in schema_migrations_module.migrate_database(str(db_file))
-        if "user_id" in change or change == "usage_daily.unique_swap"
-    }
-    assert tenancy_changes == set()
-
-
-def test_migrate_database_converges_after_crashed_usage_daily_recreate(
-    database_module, schema_migrations_module, isolated_home
-):
-    """A crashed recreate leaves usage_daily_new behind; the next run must
-    drop it and converge (data preserved, indexes created)."""
-    import sqlite3
-
-    db_file = isolated_home / "usage.db"
-    _old_shape_db(db_file)
-
-    connection = sqlite3.connect(db_file)
-    connection.execute("CREATE TABLE usage_daily_new AS SELECT * FROM usage_daily")
-    connection.commit()
-    connection.close()
-
-    changes = schema_migrations_module.migrate_database(str(db_file))
-    assert "usage_daily.unique_swap" in changes
-
-    connection = sqlite3.connect(db_file)
-    try:
-        tables = {
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-        assert "usage_daily_new" not in tables
-        index_names = {
-            row[1] for row in connection.execute("PRAGMA index_list(usage_daily)")
-        }
-        assert "uq_usage_daily_local" in index_names
-        assert "uq_usage_daily_user" in index_names
-        rows = list(
-            connection.execute(
-                "SELECT date, request_count, prompt_tokens FROM usage_daily"
-            )
-        )
-        assert rows == [("2026-04-17", 42, 4242)]
-    finally:
-        connection.close()
-
-    tenancy_changes = {
-        change
-        for change in schema_migrations_module.migrate_database(str(db_file))
-        if "user_id" in change or change == "usage_daily.unique_swap"
-    }
-    assert tenancy_changes == set()
-
-
-def test_upsert_daily_aggregate_accumulates_after_migration_recreate(
-    database_module, schema_migrations_module, isolated_home, monkeypatch
-):
-    """The write path works against the recreated table: the ON CONFLICT
-    upsert accumulates onto migrated rows and new rows still get ids."""
-    # These cover the tenancy step; the owner-assignment step has its own tests.
-    import src.config.app
-
-    monkeypatch.setitem(src.config.app.CONFIG, "auth", {"provider": "google"})
-    db_file = isolated_home / "usage.db"
-    _old_shape_db(db_file)
-    schema_migrations_module.migrate_database(str(db_file))
-
-    def make_usage(model, ts=TS_2026_04_17_10):
-        return database_module.Usage(
-            ts=ts,
-            provider="anthropic",
-            model=model,
-            client_source="claude-code",
-            session_id="sess-1",
-            endpoint="/v1/messages",
-            prompt_tokens=10,
-            prompt_length=500,
-            completion_tokens=5,
-            total_tokens=15,
-            latency_ms=50,
-            status=200,
-            input_cost_usd=0.001,
-            output_cost_usd=0.002,
-            total_cost_usd=0.003,
-        )
-
-    database_module.upsert_daily_aggregate(make_usage("m1"), db_path=str(db_file))
-
-    with database_module.get_engine(str(db_file)).connect() as conn:
-        rows = list(
-            conn.execute(
-                database_module.text(
-                    "SELECT model, request_count, prompt_tokens, latency_sum_ms "
-                    "FROM usage_daily ORDER BY model"
-                )
-            )
-        )
-    assert rows == [("m1", 43, 4252, 50)]
-
-    database_module.upsert_daily_aggregate(make_usage("m2"), db_path=str(db_file))
-
-    with database_module.get_engine(str(db_file)).connect() as conn:
-        rows = list(
-            conn.execute(
-                database_module.text(
-                    "SELECT id, model, request_count FROM usage_daily ORDER BY model"
-                )
-            )
-        )
-    assert len(rows) == 2
-    by_model = {row.model: row for row in rows}
-    assert by_model["m1"].request_count == 43
-    assert by_model["m2"].request_count == 1
-    assert by_model["m2"].id is not None
-    assert by_model["m2"].id > by_model["m1"].id
-
-
 def test_recalculate_usage_cost_targets_user_slice(fresh_db):
     """The daily delta UPDATE lands only in the row matching the usage row's
     user_id when both a NULL-slice and a real-user-slice row exist."""
@@ -6636,6 +5924,7 @@ def test_recalculate_usage_cost_targets_user_slice(fresh_db):
             input_cost_usd=0.1,
             output_cost_usd=0.1,
             total_cost_usd=0.2,
+            user_id="test-user",
         ),
         db_path=db_path,
     )
@@ -6661,7 +5950,9 @@ def test_recalculate_usage_cost_targets_user_slice(fresh_db):
 
     usage_id = next(
         r["id"]
-        for r in database_module.fetch_recent_usage(limit=10, db_path=db_path)
+        for r in database_module.fetch_recent_usage(
+            limit=10, db_path=db_path, user_id="test-user"
+        )
         if r["session_id"] == "session-recalc-local"
     )
 
@@ -6670,6 +5961,7 @@ def test_recalculate_usage_cost_targets_user_slice(fresh_db):
         usage_id,
         model_costs={"recalc-model": new_cost},
         db_path=db_path,
+        user_id="test-user",
     )
     assert result is not None
     assert result.skipped is False
@@ -6684,6 +5976,91 @@ def test_recalculate_usage_cost_targets_user_slice(fresh_db):
         )
     assert len(rows) == 2
     by_user = {row.user_id: row for row in rows}
-    # NULL slice: 0.2 -> 6.0; the u1 slice is untouched.
-    assert float(by_user[None].total_cost_usd) == pytest.approx(6.0)
+    # test-user slice: 0.2 -> 6.0; the u1 slice is untouched.
+    assert float(by_user["test-user"].total_cost_usd) == pytest.approx(6.0)
     assert float(by_user["u1"].total_cost_usd) == pytest.approx(2.0)
+
+
+def test_migrate_database_swaps_legacy_usage_daily_indexes(fresh_db):
+    """A database from before user_id was required carried two partial unique
+    indexes on usage_daily; migrating replaces them with one plain index and is
+    then a no-op."""
+    schema_migrations = fresh_db.schema_migrations_module
+    database_module = fresh_db.database_module
+    engine = database_module.get_engine(fresh_db.db_path)
+
+    with engine.begin() as conn:
+        conn.execute(database_module.text("DROP INDEX uq_usage_daily"))
+        conn.execute(
+            database_module.text(
+                "CREATE UNIQUE INDEX uq_usage_daily_local ON usage_daily "
+                "(date, provider, model, client_source) WHERE user_id IS NULL"
+            )
+        )
+        conn.execute(
+            database_module.text(
+                "CREATE UNIQUE INDEX uq_usage_daily_user ON usage_daily "
+                "(date, provider, model, client_source, user_id) "
+                "WHERE user_id IS NOT NULL"
+            )
+        )
+
+    changes = schema_migrations.migrate_database(fresh_db.db_path)
+
+    assert "usage_daily.drop_uq_usage_daily_local" in changes
+    assert "usage_daily.drop_uq_usage_daily_user" in changes
+    assert "usage_daily.uq_usage_daily" in changes
+    from sqlalchemy import inspect
+
+    names = {i["name"] for i in inspect(engine).get_indexes("usage_daily")}
+    assert "uq_usage_daily" in names
+    assert not names & {"uq_usage_daily_local", "uq_usage_daily_user"}
+    assert schema_migrations.migrate_database(fresh_db.db_path) == []
+
+
+def test_migrate_database_rejects_sqlite_with_nullable_user_id(fresh_db):
+    import pytest
+
+    schema_migrations = fresh_db.schema_migrations_module
+    database_module = fresh_db.database_module
+    engine = database_module.get_engine(fresh_db.db_path)
+    with engine.begin() as conn:
+        conn.execute(database_module.text("DROP TABLE tool_calls"))
+        conn.execute(
+            database_module.text(
+                "CREATE TABLE tool_calls (tool_use_id TEXT PRIMARY KEY, user_id TEXT)"
+            )
+        )
+        conn.execute(database_module.text("DROP INDEX uq_usage_daily"))
+
+    try:
+        with pytest.raises(RuntimeError, match="tool_calls"):
+            schema_migrations.migrate_database(fresh_db.db_path)
+
+        # Rejected before any DDL: the dropped index was not recreated.
+        from sqlalchemy import inspect
+
+        names = {i["name"] for i in inspect(engine).get_indexes("usage_daily")}
+        assert "uq_usage_daily" not in names
+    finally:  # the test schema is shared across the session
+        from src.database.models import ToolCall
+
+        with engine.begin() as conn:
+            conn.execute(database_module.text("DROP TABLE tool_calls"))
+        ToolCall.__table__.create(engine)
+        schema_migrations.migrate_database(fresh_db.db_path)
+
+
+def test_migrate_database_creates_missing_model_indexes(fresh_db):
+    schema_migrations = fresh_db.schema_migrations_module
+    database_module = fresh_db.database_module
+    engine = database_module.get_engine(fresh_db.db_path)
+    with engine.begin() as conn:
+        conn.execute(database_module.text("DROP INDEX ix_sessions_started_desc"))
+        conn.execute(database_module.text("DROP INDEX ix_usage_session_id"))
+
+    changes = schema_migrations.migrate_database(fresh_db.db_path)
+
+    assert {"sessions.ix_sessions_started_desc", "usage.ix_usage_session_id"} <= set(
+        changes
+    )

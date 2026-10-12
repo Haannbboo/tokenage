@@ -53,7 +53,7 @@ def create_session_evaluation_job(
     *,
     session_id: str,
     client_source: str | None,
-    user_id: str | None = None,
+    user_id: str,
     trigger: str = "manual",
     evaluator_type: str = "codex",
     created_at: str | None = None,
@@ -108,6 +108,8 @@ def get_evaluation_job(
     user_id: str | None = None,
     db_path: str | None = None,
 ) -> dict[str, Any] | None:
+    # ponytail: user_id=None is the evaluation worker's all-tenants view; it goes
+    # away when evaluation moves to the client.
     with Session(get_engine(db_path)) as session:
         query = select(EvaluationJob).where(EvaluationJob.job_id == job_id)
         if user_id is not None:
@@ -120,7 +122,7 @@ def promote_evaluation_job_to_manual(
     job_id: str,
     *,
     evaluator_type: str | None = None,
-    user_id: str | None = None,
+    user_id: str,
     db_path: str | None = None,
 ) -> dict[str, Any] | None:
     values: dict[str, Any] = {"trigger": "manual"}
@@ -132,9 +134,8 @@ def promote_evaluation_job_to_manual(
             EvaluationJob.kind == SESSION_EVALUATION_JOB_KIND,
             EvaluationJob.status == "queued",
             EvaluationJob.trigger == "auto",
+            EvaluationJob.user_id == user_id,
         ]
-        if user_id is not None:
-            filters.append(EvaluationJob.user_id == user_id)
         session.execute(update(EvaluationJob).where(and_(*filters)).values(**values))
         session.commit()
         job = session.get(EvaluationJob, job_id)
@@ -145,7 +146,7 @@ def update_queued_evaluation_job_evaluator(
     job_id: str,
     *,
     evaluator_type: str,
-    user_id: str | None = None,
+    user_id: str,
     db_path: str | None = None,
 ) -> dict[str, Any] | None:
     with Session(get_engine(db_path)) as session:
@@ -153,9 +154,8 @@ def update_queued_evaluation_job_evaluator(
             EvaluationJob.job_id == job_id,
             EvaluationJob.kind == SESSION_EVALUATION_JOB_KIND,
             EvaluationJob.status == "queued",
+            EvaluationJob.user_id == user_id,
         ]
-        if user_id is not None:
-            filters.append(EvaluationJob.user_id == user_id)
         result = session.execute(
             update(EvaluationJob)
             .where(and_(*filters))
@@ -309,6 +309,7 @@ def list_active_evaluation_jobs(
     user_id: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
+    # ponytail: user_id=None is the evaluation worker's all-tenants view.
     with Session(get_engine(db_path)) as session:
         query = select(EvaluationJob).where(
             and_(
@@ -327,7 +328,7 @@ def list_active_evaluation_jobs(
 def list_active_evaluation_jobs_with_progress(
     *,
     session_ids: list[str] | None = None,
-    user_id: str | None = None,
+    user_id: str,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     progress = _active_progress_map(user_id=user_id, db_path=db_path)
@@ -347,7 +348,7 @@ def list_active_evaluation_jobs_with_progress(
 
 
 def _active_progress_map(
-    user_id: str | None = None, db_path: str | None = None
+    user_id: str, db_path: str | None = None
 ) -> dict[str, dict[str, int]]:
     with Session(get_engine(db_path)) as session:
         running_query = select(EvaluationJob).where(
@@ -356,8 +357,7 @@ def _active_progress_map(
                 EvaluationJob.status == "running",
             )
         )
-        if user_id is not None:
-            running_query = running_query.where(EvaluationJob.user_id == user_id)
+        running_query = running_query.where(EvaluationJob.user_id == user_id)
         running = (
             session.execute(
                 running_query.order_by(
@@ -378,8 +378,7 @@ def _active_progress_map(
                 )
             )
         )
-        if user_id is not None:
-            queued_query = queued_query.where(EvaluationJob.user_id == user_id)
+        queued_query = queued_query.where(EvaluationJob.user_id == user_id)
         queued = (
             session.execute(queued_query.order_by(*_queued_job_order())).scalars().all()
         )
@@ -399,7 +398,7 @@ def _active_progress_map(
 
 def get_evaluation_job_progress(
     job_id: str,
-    user_id: str | None = None,
+    user_id: str,
     db_path: str | None = None,
 ) -> dict[str, Any] | None:
     job = get_evaluation_job(job_id, user_id=user_id, db_path=db_path)
@@ -415,7 +414,7 @@ def get_evaluation_job_progress(
 def list_session_evaluation_jobs_with_progress(
     session_id: str,
     *,
-    user_id: str | None = None,
+    user_id: str,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     progress = _active_progress_map(user_id=user_id, db_path=db_path)
@@ -454,7 +453,7 @@ def list_session_evaluation_jobs_with_progress(
 def find_active_session_evaluation_job(
     *,
     session_id: str,
-    user_id: str | None = None,
+    user_id: str,
     now: str | None = None,
     db_path: str | None = None,
 ) -> dict[str, Any] | None:

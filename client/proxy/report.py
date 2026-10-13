@@ -15,6 +15,10 @@ from client.proxy.usage import extract_usage
 from protocol.usage_report import ToolCallReport, UsageReport
 
 REPORT_TIMEOUT_SECONDS = 10.0
+RATE_LIMIT_RETRIES = 3
+MAX_RETRY_DELAY_SECONDS = 60.0
+# Bounds reports waiting out a 429 at once; beyond this they drop.
+_retry_slots = threading.BoundedSemaphore(100)
 logger = logging.getLogger("tokenage.client.proxy")
 
 
@@ -56,22 +60,49 @@ def build_report(
 
 
 def post_report(report: UsageReport) -> None:
-    """POST once with the device's ingest token. No retry: log and drop."""
+    """POST with the device's ingest token; log and drop on failure.
+
+    Only a 429 is retried (the server rejected it before recording, so a retry
+    can't duplicate a row), after `Retry-After`, up to RATE_LIMIT_RETRIES times.
+    """
     try:
         creds = load_credentials() or {}
         server_url, token = creds.get("server_url"), creds.get("ingest_token")
         if not server_url or not token:
             logger.warning("usage report dropped: not signed in")
             return
-        httpx.post(
-            f"{server_url.rstrip('/')}/ingest/v1/usage",
-            json=report.model_dump(mode="json"),
-            headers={"x-tokenage-token": token},
-            timeout=REPORT_TIMEOUT_SECONDS,
-        ).raise_for_status()
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            response = httpx.post(
+                f"{server_url.rstrip('/')}/ingest/v1/usage",
+                json=report.model_dump(mode="json"),
+                headers={"x-tokenage-token": token},
+                timeout=REPORT_TIMEOUT_SECONDS,
+            )
+            if response.status_code != 429:
+                response.raise_for_status()
+                return
+            # ponytail: sleeping threads are the buffer, capped by _retry_slots;
+            # a persistent queue only if drops under sustained limiting matter.
+            if attempt == RATE_LIMIT_RETRIES or not _retry_slots.acquire(
+                blocking=False
+            ):
+                break
+            try:
+                time.sleep(_retry_delay(response))
+            finally:
+                _retry_slots.release()
+        logger.warning("usage report dropped: rate limited")
     except Exception as exc:
         # The message never includes headers, so the token stays out of logs.
         logger.warning("usage report dropped: %s", type(exc).__name__)
+
+
+def _retry_delay(response: httpx.Response) -> float:
+    try:
+        seconds = float(response.headers.get("retry-after", ""))
+    except ValueError:
+        seconds = 5.0
+    return min(max(seconds, 1.0), MAX_RETRY_DELAY_SECONDS)
 
 
 def send_in_background(report: UsageReport) -> None:

@@ -71,6 +71,7 @@ PROJECT_MODULES = [
     "src.pricing",
     "src.schema_migrations",
     "src.otlp",
+    "src.ratelimit",
     "src.recorder",
     "src.utils",
     "src.provider_parser",

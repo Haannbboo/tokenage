@@ -124,3 +124,21 @@ def test_ingest_works_under_every_auth_provider(
     h = {"x-tokenage-token": token}
     assert client.post("/ingest/v1/usage", json=_report(), headers=h).status_code == 204
     assert client.post("/ingest/v1/usage", json=_report()).status_code == 401
+
+
+def test_usage_ingest_is_rate_limited_per_token(api_module, fresh_db, monkeypatch):
+    from src.config.app import CONFIG
+
+    monkeypatch.setitem(CONFIG["rate_limits"], "ingest_per_minute", 1)
+    token1, _ = _token(fresh_db)
+    token2, _ = _token(fresh_db, email="b@example.com")
+    client = TestClient(api_module.app)
+    post = lambda t: client.post(  # noqa: E731
+        "/ingest/v1/usage", json=_report(), headers={"x-tokenage-token": t}
+    )
+
+    assert post(token1).status_code == 204
+    limited = post(token1)
+    assert limited.status_code == 429
+    assert int(limited.headers["Retry-After"]) >= 1
+    assert post(token2).status_code == 204  # other tokens unaffected

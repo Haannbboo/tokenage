@@ -1,26 +1,20 @@
-import asyncio
-import concurrent.futures
 import json
 import logging
 import os
-import threading
 import time
 import uuid
-from collections import OrderedDict, deque
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import NoReturn
 
 from fastapi import FastAPI, HTTPException, Request
 
 from src.config.app import CONFIG
 
-from .auth import resolve_token
-from .auth.tokens import hash_token
 from .database import init_db
 from .provider_parser import parse_provider_metadata
+from .ratelimit import resolve_ingest_request_async
 from .recorder import record_tool_call, record_usage, update_tool_call_duration
 from .utils import secs_to_micros
 
@@ -58,128 +52,6 @@ _claude_last_usage: dict[str, tuple[str, str | None, int]] = {}
 # Fallback window when a usage row has no known latency, used to tell a
 # just-decided tool (still awaiting its result) from a result-less stale one.
 CLAUDE_TOOL_FLUSH_GRACE_MS = 2000
-
-# Rate limiting state: token_id -> deque of request timestamps
-_rate_limit_state: dict[str, deque] = {}
-_last_rate_limit_cleanup = 0.0
-_rate_limit_lock = threading.Lock()
-_invalid_token_cache: OrderedDict[str, float] = OrderedDict()
-# ponytail: bounded 4096-entry expiry scan; add an expiry index if profiling
-# shows lock contention.
-INVALID_TOKEN_CACHE_SIZE = 4096
-INVALID_TOKEN_CACHE_TTL_SECONDS = 60
-AUTH_LOOKUP_TIMEOUT_SECONDS = 10
-_auth_executor = concurrent.futures.ThreadPoolExecutor(
-    max_workers=4, thread_name_prefix="tokenage-auth"
-)
-
-
-def _resolve_ingest_user(request: Request) -> tuple[str, str, str]:
-    """Return (user_id, token_id, device_id) for the request.
-
-    Requires an ingest token (x-tokenage-token); there is no tokenless path,
-    loopback included. Raises HTTPException(401) otherwise.
-    """
-    token = request.headers.get("x-tokenage-token")
-    if not token:
-        _reject_invalid_token(request)
-
-    token_id = hash_token(token)
-    if _invalid_token_is_cached(token_id):
-        _reject_invalid_token(request)
-    result = resolve_token(token)
-    if result is None:
-        _remember_invalid_token(token_id)
-        _reject_invalid_token(request)
-
-    user, auth_token = result
-    # resolve_token already rejects device-less ingest tokens; check anyway so
-    # an unattributed row can never be written.
-    if auth_token.kind != "ingest" or auth_token.device_id is None:
-        _remember_invalid_token(token_id)
-        _reject_invalid_token(request)
-
-    return user.id, token_id, auth_token.device_id
-
-
-def _reject_invalid_token(request: Request) -> NoReturn:
-    # ponytail: no trusted-proxy config; never trust forwarded addresses here.
-    client_ip = request.client.host if request.client else "unknown"
-    key = (
-        f"invalid:{client_ip}"
-        if request.headers.get("x-tokenage-token")
-        else f"missing:{client_ip}"
-    )
-    _check_rate_limit(key)
-    raise HTTPException(status_code=401, detail="invalid token")
-
-
-def _invalid_token_is_cached(token_id: str) -> bool:
-    now = time.time()
-    with _rate_limit_lock:
-        stale = [
-            key for key, expires_at in _invalid_token_cache.items() if expires_at <= now
-        ]
-        for key in stale:
-            del _invalid_token_cache[key]
-        expires_at = _invalid_token_cache.get(token_id)
-        if expires_at is None:
-            return False
-        _invalid_token_cache.move_to_end(token_id)
-        return expires_at > now
-
-
-def _remember_invalid_token(token_id: str) -> None:
-    with _rate_limit_lock:
-        _invalid_token_cache[token_id] = time.time() + INVALID_TOKEN_CACHE_TTL_SECONDS
-        _invalid_token_cache.move_to_end(token_id)
-        while len(_invalid_token_cache) > INVALID_TOKEN_CACHE_SIZE:
-            _invalid_token_cache.popitem(last=False)
-
-
-def _check_rate_limit(token_id: str) -> None:
-    """Raise HTTPException(429) if the token (or rejected caller) exceeds the rate limit."""
-    global _last_rate_limit_cleanup
-
-    max_per_minute = CONFIG.get("otlp", {}).get("rate_limit_per_minute", 300)
-    with _rate_limit_lock:
-        now = time.time()
-        window_start = now - 60
-
-        if now - _last_rate_limit_cleanup >= 60:
-            _last_rate_limit_cleanup = now
-            stale_keys = [
-                key
-                for key, timestamps in _rate_limit_state.items()
-                if not timestamps or timestamps[-1] < window_start
-            ]
-            for key in stale_keys:
-                del _rate_limit_state[key]
-
-        dq = _rate_limit_state.get(token_id)
-        if dq is None:
-            dq = deque()
-            _rate_limit_state[token_id] = dq
-        while dq and dq[0] < window_start:
-            dq.popleft()
-
-        if len(dq) >= max_per_minute:
-            raise HTTPException(status_code=429, detail="rate limit exceeded")
-
-        dq.append(now)
-
-
-async def _resolve_ingest_user_async(request: Request):
-    try:
-        loop = asyncio.get_running_loop()
-        return await asyncio.wait_for(
-            loop.run_in_executor(_auth_executor, _resolve_ingest_user, request),
-            timeout=AUTH_LOOKUP_TIMEOUT_SECONDS,
-        )
-    except TimeoutError as exc:
-        raise HTTPException(
-            status_code=503, detail="authentication unavailable"
-        ) from exc
 
 
 def _scoped_id(identifier: str, user_id: str) -> str:
@@ -1052,13 +924,6 @@ async def _read_capped_json(request: Request) -> dict:
     return json.loads(body_bytes)
 
 
-async def _resolve_ingest_request(request: Request) -> tuple[str, str, str]:
-    """Auth + rate limit; returns (user_id, token_id, device_id)."""
-    user_id, token_id, device_id = await _resolve_ingest_user_async(request)
-    _check_rate_limit(token_id)
-    return user_id, token_id, device_id
-
-
 def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
     """Yield (record, service_name, session_id) for each ingestable record."""
     for resource_log in body.get("resourceLogs", []):
@@ -1083,7 +948,7 @@ def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
 @app.post("/v1/logs")
 async def receive_logs(request: Request):
     # Auth + rate limit + body cap — all before any record is parsed.
-    user_id, _, device_id = await _resolve_ingest_request(request)
+    user_id, _, device_id = await resolve_ingest_request_async(request)
 
     # Evict stale codex_state entries (older than 10 minutes)
     now = time.time_ns() // 1000

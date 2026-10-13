@@ -102,8 +102,10 @@ def test_token_wins_over_loopback_and_bad_token_falls_back_to_owner(
         _me_email(client, headers={"Authorization": f"Bearer {token}"})
         == "a@example.com"
     )
-    # A stale cookie on loopback must not lock the owner out.
-    assert _me_email(client, headers={"Authorization": "Bearer nope"}) == OWNER
+    # A bad bearer token is rejected, never silently the owner.
+    assert _me_email(client, headers={"Authorization": "Bearer nope"}) is None
+    # A stale cookie on loopback must not lock the owner's browser out.
+    assert _me_email(client, headers={"Cookie": f"{SESSION_COOKIE}=nope"}) == OWNER
 
 
 def test_local_data_is_scoped_to_the_owner_not_shared(api_module, fresh_db):
@@ -288,3 +290,28 @@ def test_otlp_tokenless_loopback_is_401_under_google(
 
 
 # --------------------------------------------------------------- migration
+
+
+def test_api_is_rate_limited_per_user_but_loopback_owner_is_exempt(
+    api_module, fresh_db, monkeypatch
+):
+    import src.config.app
+    from src.auth.tokens import mint_token
+
+    monkeypatch.setitem(src.config.app.CONFIG["rate_limits"], "api_per_minute", 2)
+    _set_provider(monkeypatch, "google")
+    token, _ = mint_token("u@example.com", kind="web", db_path=fresh_db.db_path)
+    client = _remote(api_module)
+    headers = {"authorization": f"Bearer {token}"}
+
+    assert [client.get("/usage", headers=headers).status_code for _ in range(2)] == [
+        200,
+        200,
+    ]
+    limited = client.get("/usage", headers=headers)
+    assert limited.status_code == 429
+    assert int(limited.headers["Retry-After"]) >= 1
+
+    _set_provider(monkeypatch, "local")
+    owner = TestClient(api_module.app)  # direct loopback: no token, never limited
+    assert all(owner.get("/usage").status_code == 200 for _ in range(5))

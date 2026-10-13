@@ -39,7 +39,7 @@ from .auth import (
     get_current_user,
 )
 from .auth import router as auth_router
-from .auth.tokens import list_user_devices, resolve_token, set_device_status
+from .auth.tokens import list_user_devices, set_device_status
 from .database import (
     VALID_OUTCOMES,
     VALID_SOURCES,
@@ -85,6 +85,7 @@ from .evaluation import (
 from .evaluation_worker import load_evaluation_worker_config, run_evaluation_worker
 from .pricing.costs import resolve_cost_match
 from .pricing.snapshots import enrich_rows
+from .ratelimit import check_rate_limit, resolve_ingest_request
 from .recorder import record_tool_call, record_usage
 from .utils import normalize_model_name
 
@@ -273,8 +274,19 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if _is_public_path(request.url.path):
             return await call_next(request)
-        if _resolve_request_user(request) is None:
+        resolved = _resolve_request_user(request)
+        if resolved is None:
             return JSONResponse(status_code=401, content=AUTH_GATE_LOGIN_REQUIRED)
+        user, auth_token = resolved
+        if auth_token is not None:  # the loopback owner (no token) is exempt
+            try:
+                check_rate_limit(f"api:{user.id}", "api_per_minute")
+            except HTTPException as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": exc.detail},
+                    headers=exc.headers,
+                )
         return await call_next(request)
 
 
@@ -737,20 +749,12 @@ def ingest_usage(request: Request, report: UsageReport):
     """Record one client-proxy usage report. Ingest tokens only: no cookie,
     bearer or loopback-owner fallback. The server prices; the client sends
     metadata only."""
-    token = request.headers.get("x-tokenage-token")
-    resolved = resolve_token(token) if token else None
-    if (
-        resolved is None
-        or resolved[1].kind != "ingest"
-        or resolved[1].device_id is None  # resolve_token already rejects these
-    ):
-        raise HTTPException(status_code=401, detail="invalid token")
-    user_id = resolved[0].id
+    user_id, _, device_id = resolve_ingest_request(request)
     fields = report.model_dump(exclude={"tool_calls", "base_url"})
     usage = record_usage(
         **fields,
         user_id=user_id,
-        device_id=resolved[1].device_id,
+        device_id=device_id,
         base_url=report.base_url,
         base_url_provider=report.provider,
         base_url_source="proxy_config",

@@ -265,6 +265,21 @@ def test_migrate_adds_device_id_and_swaps_daily_index(fresh_db):
     assert "device_id" in cols
 
 
+def test_migrate_drops_usage_client_ip(fresh_db):
+    sm = fresh_db.schema_migrations_module
+    from sqlalchemy import inspect
+
+    from src.database import get_engine, text
+
+    engine = get_engine(fresh_db.db_path)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE usage ADD COLUMN client_ip VARCHAR"))
+        conn.execute(text("CREATE INDEX ix_usage_client_ip ON usage (client_ip)"))
+    assert "usage.drop_client_ip" in sm.migrate_database(fresh_db.db_path)
+    assert "client_ip" not in {c["name"] for c in inspect(engine).get_columns("usage")}
+    assert sm.migrate_database(fresh_db.db_path) == []
+
+
 def test_dimension_device_returns_names(fresh_db):
     db = fresh_db.database_module
     path = fresh_db.db_path

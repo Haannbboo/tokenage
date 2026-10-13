@@ -323,53 +323,6 @@ def test_record_usage_writes_price_snapshot(test_db):
         costs_module.MODEL_COST_SOURCES.update(original_model_cost_sources)
 
 
-def test_record_usage_persists_client_ip(test_db):
-    from src.recorder import record_usage
-
-    record_usage(
-        device_id="test-device",
-        ts=1779148800000000,
-        provider="openai",
-        model="gpt-4",
-        client_source="test",
-        session_id="sess-ip",
-        endpoint="/v1/chat/completions",
-        prompt_tokens=100,
-        completion_tokens=50,
-        total_tokens=150,
-        status=200,
-        client_ip="100.88.94.9",
-        db_path=test_db,
-        user_id="test-user",
-    )
-
-    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
-    assert len(rows) == 1
-    assert rows[0]["client_ip"] == "100.88.94.9"
-
-
-def test_record_usage_client_ip_defaults_to_none(test_db):
-    from src.recorder import record_usage
-
-    record_usage(
-        device_id="test-device",
-        ts=1779148800000000,
-        provider="openai",
-        model="gpt-4",
-        endpoint="/v1/chat/completions",
-        prompt_tokens=100,
-        completion_tokens=50,
-        total_tokens=150,
-        status=200,
-        db_path=test_db,
-        user_id="test-user",
-    )
-
-    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
-    assert len(rows) == 1
-    assert rows[0]["client_ip"] is None
-
-
 def test_record_usage_skips_zero_tokens_on_success(test_db):
     """Status 200 with all token fields zero/None should not be recorded."""
     from src.recorder import record_usage
@@ -772,9 +725,7 @@ def test_record_usage_merges_proxy_duplicate_into_existing_otlp_row(test_db):
     otlp_usage = _record_otlp_usage(test_db)
     assert otlp_usage is not None
 
-    proxy_usage = _record_proxy_usage(
-        test_db, session_id="proxy-would-be-session", client_ip="10.0.0.5"
-    )
+    proxy_usage = _record_proxy_usage(test_db, session_id="proxy-would-be-session")
 
     assert proxy_usage is not None
     assert proxy_usage.id == otlp_usage.id
@@ -783,7 +734,6 @@ def test_record_usage_merges_proxy_duplicate_into_existing_otlp_row(test_db):
     row = rows[0]
     assert row["endpoint"] == "otlp"
     assert row["session_id"] == "otlp-session-1"  # OTLP's session_id wins
-    assert row["client_ip"] == "10.0.0.5"  # gap-filled from the proxy
 
 
 def test_record_usage_merges_otlp_duplicate_into_existing_proxy_row(test_db):
@@ -794,7 +744,7 @@ def test_record_usage_merges_otlp_duplicate_into_existing_proxy_row(test_db):
     from src.database.engine import get_engine
     from src.database.models import SessionRecord
 
-    proxy_usage = _record_proxy_usage(test_db, session_id=None, client_ip="10.0.0.5")
+    proxy_usage = _record_proxy_usage(test_db, session_id=None)
     assert proxy_usage is not None
 
     otlp_usage = _record_otlp_usage(
@@ -812,7 +762,6 @@ def test_record_usage_merges_otlp_duplicate_into_existing_proxy_row(test_db):
     assert row["endpoint"] == "/v1/messages"  # surviving row is the proxy's
     assert row["provider"] == "anthropic"  # proxy's provider is untouched
     assert row["session_id"] == "otlp-session-1"  # backfilled from OTLP
-    assert row["client_ip"] == "10.0.0.5"  # proxy's own value untouched
 
     # Backfilling session_id for the first time should also populate the
     # sessions table, using the proxy row's own (accurate) tokens/cost.

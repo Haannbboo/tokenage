@@ -76,6 +76,15 @@ def migrate_database(db_path: str | None = None) -> list[str]:
                 applied.append(f"{name}.device_id")
         insp = inspect(engine)  # drop the cached pre-ALTER view
 
+    # usage.client_ip was dropped once devices replaced it (privacy); the index
+    # goes first because SQLite cannot drop an indexed column.
+    if any(c["name"] == "client_ip" for c in insp.get_columns("usage")):
+        with engine.begin() as connection:
+            connection.execute(text("DROP INDEX IF EXISTS ix_usage_client_ip"))
+            connection.execute(text("ALTER TABLE usage DROP COLUMN client_ip"))
+        applied.append("usage.drop_client_ip")
+        insp = inspect(engine)
+
     existing = {
         table: {index["name"] for index in indexes}
         for (_, table), indexes in insp.get_multi_indexes().items()

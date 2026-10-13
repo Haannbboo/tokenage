@@ -883,12 +883,6 @@ export function LogsPage() {
                             <span className="detail-label">{t('Device')}</span>
                             <span className="detail-value">{row.device_name ?? t('Unknown')}</span>
                           </div>
-                          {row.client_ip && (
-                            <div className="detail-group">
-                              <span className="detail-label">{t('Client IP')}</span>
-                              <span className="detail-value">{row.client_ip}</span>
-                            </div>
-                          )}
                           {expandedToolCalls && (
                             <RequestTimeline
                               latencyMs={row.latency_ms}

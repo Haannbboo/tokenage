@@ -74,8 +74,8 @@ _auth_executor = concurrent.futures.ThreadPoolExecutor(
 )
 
 
-def _resolve_ingest_user(request: Request) -> tuple[str, str]:
-    """Return (user_id, token_id) for the request.
+def _resolve_ingest_user(request: Request) -> tuple[str, str, str]:
+    """Return (user_id, token_id, device_id) for the request.
 
     Requires an ingest token (x-tokenage-token); there is no tokenless path,
     loopback included. Raises HTTPException(401) otherwise.
@@ -93,11 +93,13 @@ def _resolve_ingest_user(request: Request) -> tuple[str, str]:
         _reject_invalid_token(request)
 
     user, auth_token = result
-    if auth_token.kind != "ingest":
+    # resolve_token already rejects device-less ingest tokens; check anyway so
+    # an unattributed row can never be written.
+    if auth_token.kind != "ingest" or auth_token.device_id is None:
         _remember_invalid_token(token_id)
         _reject_invalid_token(request)
 
-    return user.id, token_id
+    return user.id, token_id, auth_token.device_id
 
 
 def _reject_invalid_token(request: Request) -> NoReturn:
@@ -649,6 +651,7 @@ def _parse_opencode_record(
     client_ip: str | None = None,
     *,
     user_id: str,
+    device_id: str,
 ) -> None:
     fields = _extract_opencode_fields(
         record,
@@ -659,7 +662,7 @@ def _parse_opencode_record(
         user_id=user_id,
     )
     tool_calls = fields.pop("_tool_info", [])
-    usage = record_usage(**fields)
+    usage = record_usage(**fields, device_id=device_id)
     if usage:
         for tool_info in tool_calls:
             record_tool_call(
@@ -837,6 +840,7 @@ def _parse_log_record(
     client_ip: str | None = None,
     *,
     user_id: str,
+    device_id: str,
 ) -> None:
     if service_name in RETIRED_SERVICE_NAMES:
         return
@@ -944,7 +948,7 @@ def _parse_log_record(
             record, attrs, usage_session_id or "", client_ip, user_id=user_id
         )
         if fields is not None:
-            usage = record_usage(**fields)
+            usage = record_usage(**fields, device_id=device_id)
             if usage:
                 prompt_id = _attr(attrs, "prompt.id")
                 prompt_key = _scoped_id(prompt_id, user_id) if prompt_id else None
@@ -975,7 +979,7 @@ def _parse_log_record(
         )
         if fields is not None:
             tool_calls = fields.pop("_tool_info", [])
-            usage = record_usage(**fields)
+            usage = record_usage(**fields, device_id=device_id)
             if usage:
                 for tool_info in tool_calls:
                     record_tool_call(
@@ -996,7 +1000,12 @@ def _parse_log_record(
         _handle_codex_state_event(attrs, user_id=user_id)
     elif event_name == OPENCODE_EVENT and service_name == "opencode":
         _parse_opencode_record(
-            record, attrs, usage_session_id or "", client_ip=client_ip, user_id=user_id
+            record,
+            attrs,
+            usage_session_id or "",
+            client_ip=client_ip,
+            user_id=user_id,
+            device_id=device_id,
         )
     elif event_name == KILO_EVENT and service_name in KILO_SERVICE_NAMES:
         _parse_opencode_record(
@@ -1006,6 +1015,7 @@ def _parse_log_record(
             client_source="kilo",
             client_ip=client_ip,
             user_id=user_id,
+            device_id=device_id,
         )
     elif (
         service_name not in KNOWN_SERVICE_NAMES
@@ -1055,11 +1065,11 @@ async def _read_capped_json(request: Request) -> dict:
     return json.loads(body_bytes)
 
 
-async def _resolve_ingest_request(request: Request) -> tuple[str, str]:
-    """Auth + rate limit; returns (user_id, token_id)."""
-    user_id, token_id = await _resolve_ingest_user_async(request)
+async def _resolve_ingest_request(request: Request) -> tuple[str, str, str]:
+    """Auth + rate limit; returns (user_id, token_id, device_id)."""
+    user_id, token_id, device_id = await _resolve_ingest_user_async(request)
     _check_rate_limit(token_id)
-    return user_id, token_id
+    return user_id, token_id, device_id
 
 
 def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
@@ -1087,7 +1097,7 @@ def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
 async def receive_logs(request: Request):
     # Auth + rate limit + body cap — all before any record is parsed.
     client_ip: str | None = request.client.host if request.client else None
-    user_id, _ = await _resolve_ingest_request(request)
+    user_id, _, device_id = await _resolve_ingest_request(request)
 
     # Evict stale codex_state entries (older than 10 minutes)
     now = time.time_ns() // 1000
@@ -1130,7 +1140,14 @@ async def receive_logs(request: Request):
         records = records[:max_records]
 
     for record, service_name, session_id in records:
-        _parse_log_record(record, service_name, session_id, client_ip, user_id=user_id)
+        _parse_log_record(
+            record,
+            service_name,
+            session_id,
+            client_ip,
+            user_id=user_id,
+            device_id=device_id,
+        )
     if rejected:
         # OTLP partial success: still 200 so the exporter does not retry the same
         # oversized batch forever, but the dropped count is reported, not hidden.

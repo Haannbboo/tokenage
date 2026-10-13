@@ -20,6 +20,7 @@ export function ToolCallsChart({
     provider?: string
     model?: string | null
     client_source?: string | null
+    device_id?: string | null
     since?: string | null
     until?: string | null
     only_failed?: boolean
@@ -39,6 +40,7 @@ export function ToolCallsChart({
         if (filterParams.provider) url.searchParams.set('provider', filterParams.provider)
         if (filterParams.model) url.searchParams.set('model', filterParams.model)
         if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source)
+        if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
         if (filterParams.until) url.searchParams.set('until', filterParams.until)
         if (filterParams.only_failed) url.searchParams.set('only_failed', 'true')

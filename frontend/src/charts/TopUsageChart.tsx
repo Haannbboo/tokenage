@@ -7,7 +7,24 @@ import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
 import { t } from '../i18n/index.ts'
 
-type Dimension = 'model' | 'provider' | 'source'
+type Dimension = 'model' | 'provider' | 'source' | 'device'
+
+// One row per (device, day) from /usage/daily-by-dimension?dimension=device.
+// dimension is null for usage that cannot be attributed (shown as Unknown).
+type DeviceDailyRow = {
+  dimension: string | null
+  dimension_name: string | null
+  requests: number | null
+  prompt_tokens: number | null
+  cached_tokens: number | null
+  cache_creation_tokens: number | null
+  completion_tokens: number | null
+  total_tokens: number | null
+  total_cost_usd: number | null
+  latency_sum_ms: number | null
+  successful_requests: number | null
+  failed_requests: number | null
+}
 
 type SourceSummaryRow = {
   client_source: string | null
@@ -41,6 +58,7 @@ export function TopUsageChart({
     provider?: string
     model?: string | null
     client_source?: string | null
+    device_id?: string | null
     since?: string | null
     until?: string | null
     only_failed?: boolean
@@ -49,6 +67,7 @@ export function TopUsageChart({
   const [dimension, setDimension] = useState<Dimension>('model')
   const [metric, setMetric] = useState<Metric>('tokens')
   const [sourceSummary, setSourceSummary] = useState<SourceSummaryRow[]>([])
+  const [deviceRows, setDeviceRows] = useState<DeviceDailyRow[]>([])
 
   // Fetch source summary data when source dimension is selected
   useEffect(() => {
@@ -60,6 +79,7 @@ export function TopUsageChart({
         if (filterParams.provider) url.searchParams.set('provider', filterParams.provider)
         if (filterParams.model) url.searchParams.set('model', filterParams.model)
         if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source)
+        if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
         if (filterParams.until) url.searchParams.set('until', filterParams.until)
         if (filterParams.only_failed) url.searchParams.set('only_failed', 'true')
@@ -73,6 +93,34 @@ export function TopUsageChart({
       }
     }
     fetchSourceSummary()
+    return () => controller.abort()
+  }, [dimension, filterParams])
+
+  useEffect(() => {
+    if (dimension !== 'device') return
+    const controller = new AbortController()
+    setDeviceRows([])
+    async function fetchDeviceRows() {
+      try {
+        const url = new URL('/usage/daily-by-dimension', window.location.origin)
+        url.searchParams.set('dimension', 'device')
+        if (filterParams.provider) url.searchParams.set('provider', filterParams.provider)
+        if (filterParams.model) url.searchParams.set('model', filterParams.model)
+        if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source)
+        if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
+        if (filterParams.since) url.searchParams.set('since', filterParams.since)
+        if (filterParams.until) url.searchParams.set('until', filterParams.until)
+
+        const res = await fetch(url.toString(), { signal: controller.signal })
+        if (res.ok) {
+          const rows = await res.json()
+          if (!controller.signal.aborted) setDeviceRows(rows)
+        }
+      } catch {
+        // Ignore abort errors
+      }
+    }
+    fetchDeviceRows()
     return () => controller.abort()
   }, [dimension, filterParams])
 
@@ -152,6 +200,40 @@ export function TopUsageChart({
       }))
     }
 
+    if (dimension === 'device') {
+      const map = new Map<string, { name: string; tokens: number; completion: number; prompt: number; cached: number; cacheCreation: number; latency: number; cost: number; successful: number; total: number }>()
+      for (const r of deviceRows) {
+        const key = r.dimension ?? 'unknown'
+        const existing = map.get(key) || { name: r.dimension_name ?? t('Unknown'), tokens: 0, completion: 0, prompt: 0, cached: 0, cacheCreation: 0, latency: 0, cost: 0, successful: 0, total: 0 }
+        existing.tokens += r.total_tokens ?? 0
+        existing.completion += r.completion_tokens ?? 0
+        existing.prompt += r.prompt_tokens ?? 0
+        existing.cached += r.cached_tokens ?? 0
+        existing.cacheCreation += r.cache_creation_tokens ?? 0
+        existing.latency += r.latency_sum_ms ?? 0
+        existing.cost += r.total_cost_usd ?? 0
+        existing.successful += r.successful_requests ?? 0
+        existing.total += (r.successful_requests ?? 0) + (r.failed_requests ?? 0)
+        map.set(key, existing)
+      }
+      return Array.from(map.values()).map((v, i) => ({
+        name: v.name,
+        icon: null,
+        tokens: v.tokens,
+        promptTokens: v.prompt,
+        completionTokens: v.completion,
+        cachedTokens: v.cached,
+        cost: v.cost,
+        throughput: netThroughput(v.completion, v.latency, 0),
+        pricePerMillion: v.tokens > 0 ? (v.cost / v.tokens) * 1_000_000 : null,
+        successRate: v.total > 0 ? (v.successful / v.total) * 100 : 100,
+        cacheHitRate: (v.prompt + v.cacheCreation) > 0 ? (v.cached / (v.prompt + v.cacheCreation)) * 100 : 0,
+        color: PALETTE[i % PALETTE.length],
+        badgeBg: getSourceBadgeBg(v.name),
+        badgeText: getSourceBadgeText(v.name),
+      }))
+    }
+
     // source dimension
     return sourceSummary.map((row, i) => {
       const name = row.client_source || 'unknown'
@@ -178,9 +260,9 @@ export function TopUsageChart({
         badgeText: getSourceBadgeText(name),
       }
     })
-  }, [summary, dimension, theme, sourceSummary])
+  }, [summary, dimension, theme, sourceSummary, deviceRows])
 
-  const dimensionLabel = dimension === 'model' ? t('Models') : dimension === 'provider' ? t('Providers') : t('Sources')
+  const dimensionLabel = dimension === 'model' ? t('Models') : dimension === 'provider' ? t('Providers') : dimension === 'device' ? t('Devices') : t('Sources')
 
   const chart = (
     <HorizontalBarChart
@@ -199,13 +281,13 @@ export function TopUsageChart({
         gap: '8px',
       }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', background: 'var(--tab-toggle-bg)', borderRadius: '6px', padding: '2px' }}>
-          {(['model', 'provider', 'source'] as Dimension[]).map(d => (
+          {(['model', 'provider', 'source', 'device'] as Dimension[]).map(d => (
             <button
               key={d}
               className={`tab-toggle-btn ${dimension === d ? 'active' : ''}`}
               onClick={() => setDimension(d)}
             >
-              {d === 'model' ? t('Models') : d === 'provider' ? t('Providers') : t('Sources')}
+              {d === 'model' ? t('Models') : d === 'provider' ? t('Providers') : d === 'device' ? t('Devices') : t('Sources')}
             </button>
           ))}
         </div>

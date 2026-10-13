@@ -5,7 +5,7 @@ import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
 export function useDashboardData() {
-  const { refreshTrigger, setError, activeFilter, activeSource, dateRange, customSince, customUntil, timezone } = useApp()
+  const { refreshTrigger, setError, activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil, timezone } = useApp()
   const tz = resolveTimezone(timezone)
 
   const [summary, setSummary] = useState<UsageSummary[]>([])
@@ -51,22 +51,24 @@ export function useDashboardData() {
       if (activeFilter.status_5xx) url.searchParams.set('status_5xx', 'true')
     }
     if (activeSource) url.searchParams.set('client_source', activeSource)
+    if (activeDevice) url.searchParams.set('device_id', activeDevice)
     if (since) url.searchParams.set('since', since)
     if (until) url.searchParams.set('until', until)
     return url
-  }, [dateRange, customSince, customUntil, activeFilter, activeSource])
+  }, [dateRange, customSince, customUntil, activeFilter, activeSource, activeDevice])
 
   const dashboardFilterParams = useMemo(() => ({
     provider: activeFilter?.provider,
     model: activeFilter?.model,
     client_source: activeSource,
+    device_id: activeDevice,
     since: dateRange === 'custom' ? customSince : getSinceDate(dateRange),
     until: dateRange === 'custom' ? customUntil : null,
     only_failed: activeFilter?.only_failed,
     status_429: activeFilter?.status_429,
     status_4xx: activeFilter?.status_4xx,
     status_5xx: activeFilter?.status_5xx
-  }), [activeFilter, activeSource, dateRange, customSince, customUntil])
+  }), [activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil])
 
   // Dashboard fetch
   useEffect(() => {
@@ -100,6 +102,7 @@ export function useDashboardData() {
           if (activeFilter.status_5xx) heatmapUrl.searchParams.set('status_5xx', 'true')
         }
         if (activeSource) heatmapUrl.searchParams.set('client_source', activeSource)
+        if (activeDevice) heatmapUrl.searchParams.set('device_id', activeDevice)
 
         const totalCountUrl = new URL('/usage/count', window.location.origin)
 
@@ -134,7 +137,7 @@ export function useDashboardData() {
 
     void fetchDashboard()
     return () => controller.abort()
-  }, [activeFilter, activeSource, dateRange, customSince, customUntil, refreshTrigger, applyFilterParams, setError, tz])
+  }, [activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil, refreshTrigger, applyFilterParams, setError, tz])
 
   // Sources fetch
   useEffect(() => {

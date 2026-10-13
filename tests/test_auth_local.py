@@ -112,6 +112,7 @@ def test_local_data_is_scoped_to_the_owner_not_shared(api_module, fresh_db):
 
     _, third = mint_token("c@example.com", kind="cli", db_path=fresh_db.db_path)
     record_usage(
+        device_id="test-device",
         provider="p",
         model="m",
         endpoint="/e",

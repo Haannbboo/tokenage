@@ -135,6 +135,7 @@ def test_usage_run_summary_endpoint_passes_filters(api_module, monkeypatch):
         "since": "2026-04-17T00:00:00+00:00",
         "until": "2026-04-18T00:00:00+00:00",
         "client_source": "codex",
+        "device_id": None,
         "session_id": "conv-1",
         "provider": "openai",
         "model": "gpt-test",
@@ -197,6 +198,7 @@ def test_usage_run_summary_route_parses_query_filters(api_module, monkeypatch):
         "since": "2026-04-17T00:00:00+00:00",
         "until": "2026-04-18T00:00:00+00:00",
         "client_source": "codex",
+        "device_id": None,
         "session_id": "conv-1",
         "provider": "openai",
         "model": "gpt-test",
@@ -581,6 +583,7 @@ def test_usage_by_provider_endpoint_includes_avg_effective_price_per_million(
         "provider": "openai",
         "model": "gpt-4o",
         "client_source": "codex",
+        "device_id": None,
     }
 
 
@@ -671,6 +674,7 @@ def test_daily_by_dimension_endpoint_passes_all_filters(api_module, monkeypatch)
         "provider": "anthropic",
         "model": "claude-sonnet-4-6",
         "client_source": "claude-code",
+        "device_id": None,
     }
 
 

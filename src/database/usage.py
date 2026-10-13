@@ -36,7 +36,7 @@ from ..utils import (
     secs_to_micros,
 )
 from .engine import get_engine
-from .models import BaseUrl, ToolCall, Usage, UsageDaily
+from .models import BaseUrl, Device, ToolCall, Usage, UsageDaily
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,7 @@ def merge_duplicate_usage(
     session_id: str | None,
     client_ip: str | None,
     user_id: str,
+    device_id: str,
     db_path: str | None = None,
 ) -> Usage | None:
     """Find a same-shaped usage row already recorded by the other collection path
@@ -146,7 +147,8 @@ def merge_duplicate_usage(
 
     `is_otlp` is whether the call currently being recorded is OTLP-sourced;
     the lookup searches the opposite path (OTLP looks for a proxy row and
-    vice versa) so a request captured by both never double-counts.
+    vice versa) so a request captured by both never double-counts. The match
+    includes the device: identical events from two machines never merge.
 
     Only `session_id` and `client_ip` are merged onto the existing row. OTLP
     is treated as authoritative for session_id (it carries the agent's real
@@ -176,6 +178,7 @@ def merge_duplicate_usage(
                 and_(
                     endpoint_filter,
                     Usage.user_id == user_id,
+                    Usage.device_id == device_id,
                     Usage.client_source.in_(other_path_sources),
                     Usage.model == normalize_model_name(model),
                     Usage.prompt_tokens == prompt_tokens,
@@ -236,6 +239,7 @@ def merge_duplicate_usage(
 
 def log_usage(usage: Usage, db_path: str | None = None) -> None:
     """Persist a single usage row and update the daily aggregation table."""
+    _require_device_id(usage)
     usage.provider = normalize_provider_name(usage.provider)
     usage.model = normalize_model_name(usage.model)
     with Session(get_engine(db_path), expire_on_commit=False) as session:
@@ -261,6 +265,13 @@ def log_usage(usage: Usage, db_path: str | None = None) -> None:
         )
 
 
+def _require_device_id(usage: Usage) -> None:
+    # A NULL in the daily unique key never conflicts, so a device-less live row
+    # would silently split its daily bucket instead of incrementing it.
+    if usage.device_id is None:
+        raise ValueError("usage.device_id is required on the live write path")
+
+
 def _usage_date(usage: Usage) -> str:
     """UTC date bucket for a usage row's daily aggregate."""
     return datetime.fromtimestamp(micros_to_secs(usage.ts), tz=UTC).strftime("%Y-%m-%d")
@@ -278,11 +289,16 @@ def _usage_daily_match(usage: Usage, date: str) -> Any:
         UsageDaily.model == usage.model,
         UsageDaily.client_source == (usage.client_source or ""),
         UsageDaily.user_id == usage.user_id,
+        UsageDaily.device_id == usage.device_id,
     )
 
 
-def upsert_daily_aggregate(usage: Usage, db_path: str | None = None) -> None:
-    """Incrementally update the daily aggregation table for a single usage row."""
+def daily_values(usage: Usage) -> dict[str, Any]:
+    """The usage_daily contribution (key columns + additive counters) of one row.
+
+    Shared by the live upsert and the one-off daily rebuild so both always
+    derive the same date bucket and counters.
+    """
     date = _usage_date(usage)
     client_source = usage.client_source or ""
     is_success = usage.status is None or usage.status < 400
@@ -303,12 +319,13 @@ def upsert_daily_aggregate(usage: Usage, db_path: str | None = None) -> None:
         else:
             status_unknown = 1
 
-    values = {
+    values: dict[str, Any] = {
         "date": date,
         "provider": usage.provider,
         "model": usage.model,
         "client_source": client_source,
         "user_id": usage.user_id,
+        "device_id": usage.device_id,
         "request_count": 1,
         "prompt_tokens": usage.prompt_tokens or 0,
         "completion_tokens": usage.completion_tokens or 0,
@@ -329,6 +346,13 @@ def upsert_daily_aggregate(usage: Usage, db_path: str | None = None) -> None:
         "status_5xx": status_5xx,
         "status_unknown": status_unknown,
     }
+    return values
+
+
+def upsert_daily_aggregate(usage: Usage, db_path: str | None = None) -> None:
+    """Incrementally update the daily aggregation table for a single usage row."""
+    _require_device_id(usage)
+    values = daily_values(usage)
 
     engine = get_engine(db_path)
     from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -338,7 +362,14 @@ def upsert_daily_aggregate(usage: Usage, db_path: str | None = None) -> None:
 
     statement = insert_fn(UsageDaily).values(**values)
     statement = statement.on_conflict_do_update(
-        index_elements=["date", "provider", "model", "client_source", "user_id"],
+        index_elements=[
+            "date",
+            "provider",
+            "model",
+            "client_source",
+            "user_id",
+            "device_id",
+        ],
         set_={
             "request_count": UsageDaily.request_count
             + statement.excluded.request_count,
@@ -718,6 +749,14 @@ def _finalize_usage_summary(
     return summary
 
 
+UNKNOWN_DEVICE = "unknown"
+
+
+def _device_filter(column: Any, device_id: str) -> Any:
+    """`unknown` selects rows with no device (historical, unattributed)."""
+    return column.is_(None) if device_id == UNKNOWN_DEVICE else column == device_id
+
+
 def _usage_filters(
     *,
     user_id: str | None = None,
@@ -732,6 +771,7 @@ def _usage_filters(
     status_429: bool = False,
     status_4xx: bool = False,
     status_5xx: bool = False,
+    device_id: str | None = None,
 ) -> list[Any]:
     filters: list[Any] = []
     # ponytail: None only for the all-users reprice (fetch_estimated_usage_rows);
@@ -744,6 +784,8 @@ def _usage_filters(
         filters.append(Usage.model == normalize_model_name(model))
     if client_source:
         filters.append(Usage.client_source == client_source)
+    if device_id:
+        filters.append(_device_filter(Usage.device_id, device_id))
     if session_id:
         filters.append(Usage.session_id == session_id)
     if tool_name is not None:
@@ -778,6 +820,7 @@ def _tool_duration_sum_by(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     db_path: str | None = None,
 ) -> dict[tuple[Any, ...], int]:
     """Tool-call duration sums grouped like a usage query.
@@ -794,6 +837,7 @@ def _tool_duration_sum_by(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         since=since,
         until=until,
     )
@@ -854,6 +898,7 @@ def _daily_usage_filters(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
 ) -> list[Any]:
     filters: list[Any] = [UsageDaily.user_id == user_id]
     if since:
@@ -867,6 +912,8 @@ def _daily_usage_filters(
         filters.append(UsageDaily.model == normalize_model_name(model))
     if client_source:
         filters.append(UsageDaily.client_source == client_source)
+    if device_id:
+        filters.append(_device_filter(UsageDaily.device_id, device_id))
     return filters
 
 
@@ -969,6 +1016,7 @@ def fetch_recent_usage(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     session_id: str | None = None,
     tool_name: str | None = None,
     since: str | None = None,
@@ -985,6 +1033,7 @@ def fetch_recent_usage(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         session_id=session_id,
         tool_name=tool_name,
         since=since,
@@ -1032,6 +1081,8 @@ def fetch_recent_usage(
             Usage.total_cost_usd,
             Usage.status,
             Usage.client_ip,
+            Usage.device_id,
+            Device.device_name.label("device_name"),
             Usage.base_url_id,
             Usage.price_snapshot_id,
             BaseUrl.base_url.label("base_url"),
@@ -1040,6 +1091,7 @@ def fetch_recent_usage(
         )
         .select_from(Usage)
         .outerjoin(BaseUrl, Usage.base_url_id == BaseUrl.id)
+        .outerjoin(Device, Usage.device_id == Device.id)
         .outerjoin(tool_agg, tool_agg.c.usage_id == Usage.id)
         .order_by(Usage.ts.desc())
         .limit(limit)
@@ -1164,6 +1216,7 @@ def count_usage(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     session_id: str | None = None,
     tool_name: str | None = None,
     since: str | None = None,
@@ -1186,6 +1239,7 @@ def count_usage(
             provider=provider,
             model=model,
             client_source=client_source,
+            device_id=device_id,
             session_id=session_id,
             tool_name=tool_name,
             since=since,
@@ -1205,6 +1259,7 @@ def count_usage(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
     query = select(func.sum(UsageDaily.request_count))
     if filters:
@@ -1229,6 +1284,7 @@ def summarize_usage_window(
     since: str | None = None,
     until: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     session_id: str | None = None,
     provider: str | None = None,
     model: str | None = None,
@@ -1240,6 +1296,7 @@ def summarize_usage_window(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         session_id=session_id,
         since=since,
         until=until,
@@ -1409,6 +1466,7 @@ def _summarize_usage_raw(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate raw usage table for sub-day ranges."""
@@ -1417,6 +1475,7 @@ def _summarize_usage_raw(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         since=since,
         until=until,
     )
@@ -1485,6 +1544,7 @@ def _summarize_usage_raw(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         db_path=db_path,
     )
     with get_engine(db_path).connect() as connection:
@@ -1502,6 +1562,7 @@ def summarize_tool_calls(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     only_failed: bool = False,
     status_429: bool = False,
     status_4xx: bool = False,
@@ -1518,6 +1579,7 @@ def summarize_tool_calls(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         since=since,
         until=until,
         only_failed=only_failed,
@@ -1553,6 +1615,7 @@ def summarize_usage_by_source(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate usage totals by client_source for dashboard source chart."""
@@ -1566,6 +1629,7 @@ def summarize_usage_by_source(
             provider=provider,
             model=model,
             client_source=client_source,
+            device_id=device_id,
             db_path=db_path,
         )
 
@@ -1576,6 +1640,7 @@ def summarize_usage_by_source(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
 
     query = (
@@ -1600,6 +1665,7 @@ def summarize_usage_by_source(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         db_path=db_path,
     )
     with get_engine(db_path).connect() as connection:
@@ -1617,6 +1683,7 @@ def summarize_usage_by_provider(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate usage totals by provider for dashboard provider chart."""
@@ -1630,6 +1697,7 @@ def summarize_usage_by_provider(
             provider=provider,
             model=model,
             client_source=client_source,
+            device_id=device_id,
             db_path=db_path,
         )
 
@@ -1640,6 +1708,7 @@ def summarize_usage_by_provider(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
 
     query = (
@@ -1665,6 +1734,7 @@ def summarize_usage_by_provider(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         db_path=db_path,
     )
     with get_engine(db_path).connect() as connection:
@@ -1680,6 +1750,7 @@ def summarize_usage_daily(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate usage totals by provider and model for dashboard summaries.
@@ -1696,6 +1767,7 @@ def summarize_usage_daily(
             provider=provider,
             model=model,
             client_source=client_source,
+            device_id=device_id,
             db_path=db_path,
         )
 
@@ -1706,6 +1778,7 @@ def summarize_usage_daily(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
 
     query = (
@@ -1733,6 +1806,7 @@ def summarize_usage_daily(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         db_path=db_path,
     )
     with get_engine(db_path).connect() as connection:
@@ -1812,6 +1886,7 @@ def aggregate_usage_by_period(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     granularity: str = "day",
     tz_offset: str = "+00:00",
 ) -> list[dict[str, Any]]:
@@ -1821,6 +1896,7 @@ def aggregate_usage_by_period(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         since=since,
         until=until,
     )
@@ -1872,6 +1948,7 @@ def aggregate_usage_by_period(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
 
     result = []
@@ -1908,6 +1985,7 @@ def aggregate_daily_by_period(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Read daily-bucketed usage from the pre-aggregated usage_daily table."""
@@ -1918,6 +1996,7 @@ def aggregate_daily_by_period(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
 
     query = (
@@ -1944,6 +2023,7 @@ def aggregate_daily_by_period(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
         db_path=db_path,
     )
     with get_engine(db_path).connect() as connection:
@@ -1960,9 +2040,10 @@ def aggregate_daily_by_dimension(
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
+    device_id: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Read daily-bucketed usage grouped by a dimension (model/provider/client_source)."""
+    """Read daily-bucketed usage grouped by a dimension (model/provider/client_source/device)."""
     filters = _daily_usage_filters(
         user_id=user_id,
         since=since,
@@ -1970,18 +2051,26 @@ def aggregate_daily_by_dimension(
         provider=provider,
         model=model,
         client_source=client_source,
+        device_id=device_id,
     )
 
+    dim_col: Any
+    name_cols: list[Any] = []
     if dimension == "provider":
         dim_col = UsageDaily.provider
     elif dimension == "client_source":
         dim_col = UsageDaily.client_source
+    elif dimension == "device":
+        dim_col = UsageDaily.device_id  # NULL = Unknown
+        name_cols = [Device.device_name.label("dimension_name")]
     else:
         dim_col = UsageDaily.model
+    group_cols: list[Any] = [dim_col, *name_cols, UsageDaily.date]
 
     query = (
         select(
             dim_col.label("dimension"),
+            *name_cols,
             UsageDaily.date.label("period"),
             func.sum(UsageDaily.request_count).label("requests"),
             func.sum(UsageDaily.prompt_tokens).label("prompt_tokens"),
@@ -1993,9 +2082,12 @@ def aggregate_daily_by_dimension(
             func.sum(UsageDaily.latency_sum_ms).label("latency_sum_ms"),
             *_daily_usage_status_columns(),
         )
-        .group_by(dim_col, UsageDaily.date)
+        .select_from(UsageDaily)
+        .group_by(*group_cols)
         .order_by(UsageDaily.date)
     )
+    if dimension == "device":
+        query = query.outerjoin(Device, UsageDaily.device_id == Device.id)
     if filters:
         query = query.where(and_(*filters))
     with get_engine(db_path).connect() as connection:

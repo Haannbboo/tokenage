@@ -50,6 +50,7 @@ def tenant_reads(api_module, fresh_db):
     ):
         for index, source in enumerate(("opencode", f"{name}-source")):
             usage = Usage(
+                device_id="test-device",
                 id=f"{name}-{index}",
                 user_id=user_ids.get(name),
                 ts=START_TS + (owner_index * 100 + index * 10) * 1_000_000,

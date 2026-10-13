@@ -7,6 +7,7 @@ from .database.models import metadata
 
 TENANT_TABLES = ("usage", "usage_daily", "sessions", "tool_calls", "evaluation_jobs")
 LEGACY_USAGE_DAILY_INDEXES = ("uq_usage_daily_local", "uq_usage_daily_user")
+DEVICE_ID_TABLES = ("usage", "usage_daily")
 
 
 def _require_no_null_user_ids(engine, insp) -> None:
@@ -56,10 +57,41 @@ def migrate_database(db_path: str | None = None) -> list[str]:
             f"SQLite tables {stale} have a nullable user_id; this schema has "
             "no upgrade path. Rebuild the database before migrating."
         )
+
+    # create_all does not add columns to tables that already exist.
+    missing_device_id = [
+        table
+        for table in DEVICE_ID_TABLES
+        if not any(c["name"] == "device_id" for c in insp.get_columns(table))
+    ]
+    if missing_device_id:
+        with engine.begin() as connection:
+            for name in missing_device_id:
+                connection.execute(
+                    text(
+                        f"ALTER TABLE {name} ADD COLUMN device_id VARCHAR "
+                        "REFERENCES devices (id) ON DELETE SET NULL"
+                    )
+                )
+                applied.append(f"{name}.device_id")
+        insp = inspect(engine)  # drop the cached pre-ALTER view
+
     existing = {
         table: {index["name"] for index in indexes}
         for (_, table), indexes in insp.get_multi_indexes().items()
     }
+
+    # The daily unique key gained device_id; drop the old-shaped index so the
+    # loop below recreates it from the model.
+    for reflected in insp.get_indexes("usage_daily"):
+        if (
+            reflected["name"] == "uq_usage_daily"
+            and "device_id" not in (reflected["column_names"])
+        ):
+            with engine.begin() as connection:
+                connection.execute(text("DROP INDEX uq_usage_daily"))
+            existing["usage_daily"].discard("uq_usage_daily")
+            applied.append("usage_daily.drop_uq_usage_daily_without_device")
 
     # create_all skips indexes of tables that already exist.
     for table in metadata.sorted_tables:

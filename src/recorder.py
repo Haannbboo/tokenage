@@ -34,6 +34,7 @@ def record_usage(
     provider: str,
     model: str,
     user_id: str,
+    device_id: str,
     client_source: str | None = None,
     session_id: str | None = None,
     endpoint: str,
@@ -82,6 +83,7 @@ def record_usage(
         session_id=session_id,
         client_ip=client_ip,
         user_id=user_id,
+        device_id=device_id,
         db_path=db_path,
     )
     if duplicate is not None:
@@ -113,6 +115,7 @@ def record_usage(
         provider=provider,
         model=model,
         user_id=user_id,
+        device_id=device_id,
         client_source=client_source,
         session_id=session_id,
         endpoint=endpoint,

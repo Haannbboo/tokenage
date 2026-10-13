@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -98,10 +99,14 @@ def post_report(report: UsageReport) -> None:
 
 
 def _retry_delay(response: httpx.Response) -> float:
+    value = response.headers.get("retry-after", "")
     try:
-        seconds = float(response.headers.get("retry-after", ""))
+        seconds = float(value)
     except ValueError:
-        seconds = 5.0
+        try:  # HTTP-date form
+            seconds = parsedate_to_datetime(value).timestamp() - time.time()
+        except (TypeError, ValueError):
+            seconds = 5.0
     return min(max(seconds, 1.0), MAX_RETRY_DELAY_SECONDS)
 
 

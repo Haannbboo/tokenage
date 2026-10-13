@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import time
 from pathlib import Path
 
 import httpx
@@ -483,6 +484,18 @@ def test_post_report_retries_429_after_retry_after(cfg, signed_in, monkeypatch, 
     proxy_report.post_report(reports[0])
     assert sleeps == [7.0, 7.0]
     assert "dropped" not in caplog.text
+
+
+def test_retry_delay_honors_http_date_and_falls_back_on_garbage():
+    from email.utils import formatdate
+
+    def delay(value):
+        resp = httpx.Response(429, headers={"retry-after": value})
+        return proxy_report._retry_delay(resp)
+
+    assert 15 <= delay(formatdate(time.time() + 20, usegmt=True)) <= 21
+    assert delay(formatdate(time.time() - 100, usegmt=True)) == 1.0  # past → floor
+    assert delay("not a date") == 5.0
 
 
 def test_post_report_gives_up_after_bounded_429_retries(

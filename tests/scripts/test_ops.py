@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import http.client
+import os
 import subprocess
+import urllib.error
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -162,6 +166,67 @@ def test_bootstrap_records_the_stamp_and_reports_display_urls(box, monkeypatch, 
     assert ctl(box, "restart", "tokenage-api")  # new frontend/dist is served
 
 
+@pytest.mark.parametrize(
+    "built,content_types,reachable,expected",
+    [
+        (False, [], True, 0),
+        (False, [], False, 1),
+        (True, ["", "application/json", "text/html; charset=utf-8"], True, 0),
+        (True, [""] * 10, True, 1),
+    ],
+)
+def test_bootstrap_dashboard_readiness(
+    box, monkeypatch, capsys, built, content_types, reachable, expected
+):
+    box.home.mkdir()
+    (box.home / "config.yaml").write_text(
+        (box.root / "config.example.yaml").read_text()
+    )
+    cli = box.root / "client" / "bin" / "tokenage"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("")
+    cli.chmod(0o755)
+    monkeypatch.setattr(ops, "_bin_dir", lambda: cli.parent)
+    if built:
+        (box.root / "frontend" / "dist").mkdir(parents=True)
+    monkeypatch.setattr(ops.shutil, "which", lambda name: None)
+    monkeypatch.setattr(ops, "start", lambda: 0)
+    monkeypatch.setattr(ops, "_wait_for_port", lambda *args: reachable)
+    content_type = Mock(side_effect=content_types)
+    monkeypatch.setattr(ops, "_content_type", content_type)
+
+    assert ops.bootstrap() == expected
+    assert content_type.call_count == len(content_types)
+    assert bool(ctl(box, "restart", "tokenage-api")) == built
+    out = capsys.readouterr().out
+    if not built:
+        assert "Dashboard unavailable" in out
+    elif expected:
+        assert "frontend not served" in out
+    else:
+        assert "✓ Dashboard:" in out
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("worker still starting"),
+        http.client.BadStatusLine("incomplete response"),
+        urllib.error.HTTPError(
+            "http://127.0.0.1:4001/",
+            503,
+            "not ready",
+            {"content-type": "text/html"},
+            None,
+        ),
+    ],
+)
+def test_content_type_rejects_http_and_protocol_failures(monkeypatch, error):
+    monkeypatch.setattr(ops.urllib.request, "urlopen", Mock(side_effect=error))
+
+    assert ops._content_type("http://127.0.0.1:4001/") == ""
+
+
 def test_socket_fallback_sees_an_occupied_port(monkeypatch):
     import socket
 
@@ -177,6 +242,11 @@ def test_socket_fallback_sees_an_occupied_port(monkeypatch):
 
 @pytest.fixture
 def clone(box, monkeypatch, tmp_path):
+    # Commit hooks export Git paths such as GIT_INDEX_FILE. Fixture repositories
+    # must not inherit them or their Git commands can alter the checkout's index.
+    for key in tuple(os.environ):
+        if key.startswith("GIT_"):
+            monkeypatch.delenv(key)
     real_run = subprocess.run
 
     def git(*args, cwd):
@@ -220,6 +290,16 @@ def test_update_fast_forwards_then_bootstraps_and_restarts(box, clone, capsys):
     assert names[1].endswith("-m src.cli restart")
     assert ops.update() == 0
     assert "Already up to date" in capsys.readouterr().out
+
+
+def test_clone_preserves_inherited_hook_index(monkeypatch, tmp_path, request):
+    index = tmp_path / "hook-index"
+    index.write_bytes(b"outer Git index")
+    monkeypatch.setenv("GIT_INDEX_FILE", str(index))
+
+    request.getfixturevalue("clone")
+
+    assert index.read_bytes() == b"outer Git index"
 
 
 def test_update_check_and_dry_run_change_nothing(box, clone):

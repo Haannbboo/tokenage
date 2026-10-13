@@ -67,7 +67,6 @@ def test_valid_report_is_recorded_priced_and_attributed(
     row = usage[0]
     assert row.user_id == user.id
     assert row.prompt_tokens == 1000 and row.endpoint == "/v1/messages"
-    assert row.client_ip is None
     assert row.total_cost_usd > 0  # server-priced
     assert row.ttft_ms == 120
     assert [(t.tool_use_id, t.tool_name, t.usage_id) for t in tools] == [

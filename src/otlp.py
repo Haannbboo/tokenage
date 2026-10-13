@@ -502,7 +502,6 @@ def _extract_claude_fields(
     record: dict,
     attrs: list,
     session_id: str,
-    client_ip: str | None = None,
     *,
     user_id: str,
 ) -> dict:
@@ -548,7 +547,6 @@ def _extract_claude_fields(
         "latency_ms": _attr(attrs, "duration_ms"),
         "ttft_ms": None,
         "status": status,
-        "client_ip": client_ip,
         "base_url": metadata.base_url,
         "base_url_provider": metadata.provider,
         "base_url_source": metadata.source,
@@ -561,7 +559,6 @@ def _extract_opencode_fields(
     attrs: list,
     session_id: str,
     client_source: str = "opencode",
-    client_ip: str | None = None,
     *,
     user_id: str,
 ) -> dict:
@@ -634,7 +631,6 @@ def _extract_opencode_fields(
         "latency_ms": int(duration_ms) if duration_ms is not None else None,
         "ttft_ms": int(ttft_ms) if ttft_ms is not None else None,
         "status": int(status) if status is not None else None,
-        "client_ip": client_ip,
         "base_url": metadata.base_url,
         "base_url_provider": metadata.provider,
         "base_url_source": metadata.source,
@@ -648,7 +644,6 @@ def _parse_opencode_record(
     attrs: list,
     session_id: str,
     client_source: str = "opencode",
-    client_ip: str | None = None,
     *,
     user_id: str,
     device_id: str,
@@ -658,7 +653,6 @@ def _parse_opencode_record(
         attrs,
         session_id,
         client_source=client_source,
-        client_ip=client_ip,
         user_id=user_id,
     )
     tool_calls = fields.pop("_tool_info", [])
@@ -736,7 +730,6 @@ def _extract_codex_fields(
     record: dict,
     attrs: list,
     service_name: str,
-    client_ip: str | None = None,
     *,
     user_id: str,
 ) -> dict | None:
@@ -824,7 +817,6 @@ def _extract_codex_fields(
         "ttft_ms": int(ttft_ms) if ttft_ms is not None else None,
         "cache_creation_tokens": None,
         "status": status,
-        "client_ip": client_ip,
         "base_url": metadata.base_url,
         "base_url_provider": metadata.provider,
         "base_url_source": metadata.source,
@@ -837,7 +829,6 @@ def _parse_log_record(
     record: dict,
     service_name: str,
     resource_session_id: str,
-    client_ip: str | None = None,
     *,
     user_id: str,
     device_id: str,
@@ -945,7 +936,7 @@ def _parse_log_record(
         event_name == CLAUDE_EVENT or event_name == "api_request"
     ) and service_name == "claude-code":
         fields: dict | None = _extract_claude_fields(
-            record, attrs, usage_session_id or "", client_ip, user_id=user_id
+            record, attrs, usage_session_id or "", user_id=user_id
         )
         if fields is not None:
             usage = record_usage(**fields, device_id=device_id)
@@ -974,9 +965,7 @@ def _parse_log_record(
     elif event_name == CODEX_EVENT and service_name in CODEX_SERVICE_NAMES:
         if _handle_codex_state_event(attrs, user_id=user_id):
             return
-        fields = _extract_codex_fields(
-            record, attrs, service_name, client_ip, user_id=user_id
-        )
+        fields = _extract_codex_fields(record, attrs, service_name, user_id=user_id)
         if fields is not None:
             tool_calls = fields.pop("_tool_info", [])
             usage = record_usage(**fields, device_id=device_id)
@@ -1003,7 +992,6 @@ def _parse_log_record(
             record,
             attrs,
             usage_session_id or "",
-            client_ip=client_ip,
             user_id=user_id,
             device_id=device_id,
         )
@@ -1013,7 +1001,6 @@ def _parse_log_record(
             attrs,
             usage_session_id or "",
             client_source="kilo",
-            client_ip=client_ip,
             user_id=user_id,
             device_id=device_id,
         )
@@ -1096,7 +1083,6 @@ def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
 @app.post("/v1/logs")
 async def receive_logs(request: Request):
     # Auth + rate limit + body cap — all before any record is parsed.
-    client_ip: str | None = request.client.host if request.client else None
     user_id, _, device_id = await _resolve_ingest_request(request)
 
     # Evict stale codex_state entries (older than 10 minutes)
@@ -1144,7 +1130,6 @@ async def receive_logs(request: Request):
             record,
             service_name,
             session_id,
-            client_ip,
             user_id=user_id,
             device_id=device_id,
         )

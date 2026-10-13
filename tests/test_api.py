@@ -326,7 +326,6 @@ def test_usage_endpoint_includes_cost_split_components(api_module, monkeypatch):
                 "output_cost_usd": 0.0,
                 "total_cost_usd": 0.0,
                 "status": 200,
-                "client_ip": None,
                 "base_url_id": None,
                 "base_url": None,
             }

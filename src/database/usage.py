@@ -137,7 +137,6 @@ def merge_duplicate_usage(
     cache_creation_tokens: int | None,
     ts: int,
     session_id: str | None,
-    client_ip: str | None,
     user_id: str,
     device_id: str,
     db_path: str | None = None,
@@ -150,7 +149,7 @@ def merge_duplicate_usage(
     vice versa) so a request captured by both never double-counts. The match
     includes the device: identical events from two machines never merge.
 
-    Only `session_id` and `client_ip` are merged onto the existing row. OTLP
+    Only `session_id` is merged onto the existing row. OTLP
     is treated as authoritative for session_id (it carries the agent's real
     session, while the proxy never has one): an incoming OTLP call can
     overwrite these fields, an incoming proxy call only fills them in if the
@@ -204,9 +203,8 @@ def merge_duplicate_usage(
             return None
 
         session_id_was_empty = not existing.session_id
-        for field, value in (("session_id", session_id), ("client_ip", client_ip)):
-            if value is not None and (is_otlp or getattr(existing, field) is None):
-                setattr(existing, field, value)
+        if session_id is not None and (is_otlp or existing.session_id is None):
+            existing.session_id = session_id
         session.commit()
 
     logger.info(
@@ -1080,7 +1078,6 @@ def fetch_recent_usage(
             Usage.output_cost_usd,
             Usage.total_cost_usd,
             Usage.status,
-            Usage.client_ip,
             Usage.device_id,
             Device.device_name.label("device_name"),
             Usage.base_url_id,
@@ -1327,7 +1324,6 @@ def summarize_usage_window(
             Usage.output_cost_usd,
             Usage.total_cost_usd,
             Usage.status,
-            Usage.client_ip,
         )
         .where(and_(*filters))
         .order_by(Usage.ts.asc())

@@ -95,14 +95,11 @@ def local_owner_allowed(request: Request) -> bool:
     return auth_provider() == "local" and is_direct_loopback(request)
 
 
-def _request_token(request: Request) -> str | None:
-    """Extract a session token from the Authorization header or session cookie."""
+def _bearer_token(request: Request) -> str | None:
     header = request.headers.get("authorization") or ""
     scheme, _, token = header.partition(" ")
     token = token.strip()
-    if scheme.lower() == "bearer" and token:
-        return token
-    return request.cookies.get(SESSION_COOKIE_NAME)
+    return token if scheme.lower() == "bearer" and token else None
 
 
 def _resolve_request_user(
@@ -110,10 +107,13 @@ def _resolve_request_user(
 ) -> tuple[User, AuthToken | None] | None:
     """Resolve the request to (user, auth_token), or None.
 
-    A valid bearer/cookie token wins. Otherwise a direct loopback request under
-    the local provider is the owner (auth_token None). Anything else is None.
+    A valid bearer/cookie token wins. A bearer token that doesn't resolve is
+    None (no owner fallback). Otherwise a direct loopback request under the
+    local provider is the owner (auth_token None); a stale cookie falls back
+    here so it can't lock the owner's browser out. Anything else is None.
     """
-    token = _request_token(request)
+    bearer = _bearer_token(request)
+    token = bearer or request.cookies.get(SESSION_COOKIE_NAME)
     if token:
         resolved = resolve_token(token)
         if resolved is not None and resolved[1].kind != "ingest":
@@ -121,6 +121,8 @@ def _resolve_request_user(
             request.state.user = user
             request.state.auth_token = auth_token
             return user, auth_token
+        if bearer:
+            return None
     if local_owner_allowed(request):
         user = get_local_owner()
         request.state.user = user

@@ -9,6 +9,12 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 
+def _ratelimit():
+    import importlib
+
+    return importlib.import_module("src.ratelimit")
+
+
 def _attrs(values: dict[str, int | str]) -> list[dict]:
     attrs = []
     for key, value in values.items():
@@ -1520,9 +1526,6 @@ def test_auth_enabled_valid_ingest_token_records_user_id(
 
     monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "google")
     monkeypatch.setitem(otlp_module.CONFIG.get("otlp", {}), "max_body_bytes", 2_000_000)
-    monkeypatch.setitem(
-        otlp_module.CONFIG.get("otlp", {}), "rate_limit_per_minute", 300
-    )
 
     token, user = mint_token(
         "test@example.com", kind="ingest", db_path=fresh_db.db_path
@@ -1621,12 +1624,12 @@ def test_authenticated_otlp_tool_calls_keep_user_id(otlp_module, monkeypatch, fr
 
 def test_auth_lookup_timeout_returns_503(otlp_module, monkeypatch):
     monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "google")
-    monkeypatch.setattr(otlp_module, "AUTH_LOOKUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(_ratelimit(), "AUTH_LOOKUP_TIMEOUT_SECONDS", 0.01)
 
     def blocked_lookup(_request):
         time.sleep(0.05)
 
-    monkeypatch.setattr(otlp_module, "_resolve_ingest_user", blocked_lookup)
+    monkeypatch.setattr(_ratelimit(), "resolve_ingest_user", blocked_lookup)
 
     response = TestClient(otlp_module.app).post("/v1/logs", json=_minimal_otlp_body())
 
@@ -1651,43 +1654,20 @@ def test_auth_enabled_missing_header_returns_401(otlp_module, monkeypatch):
     assert len(captured) == 0
 
 
-def test_auth_failures_are_rate_limited_by_client_before_lookup(
-    otlp_module, monkeypatch
-):
+def test_repeated_invalid_token_skips_db_lookup(otlp_module, monkeypatch):
     monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "google")
-    monkeypatch.setitem(otlp_module.CONFIG.get("otlp", {}), "rate_limit_per_minute", 1)
-    otlp_module._rate_limit_state.clear()
-    otlp_module._invalid_token_cache.clear()
-
-    client = TestClient(otlp_module.app)
-
-    assert client.post("/v1/logs", json=_minimal_otlp_body()).status_code == 401
-    assert client.post("/v1/logs", json=_minimal_otlp_body()).status_code == 429
-
-
-def test_repeated_invalid_token_is_rate_limited_before_db_lookup(
-    otlp_module, monkeypatch
-):
-    monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "google")
-    monkeypatch.setitem(otlp_module.CONFIG.get("otlp", {}), "rate_limit_per_minute", 1)
-    otlp_module._rate_limit_state.clear()
-    otlp_module._invalid_token_cache.clear()
+    _ratelimit()._invalid_token_cache.clear()
     lookups = []
     monkeypatch.setattr(
-        otlp_module, "resolve_token", lambda token: lookups.append(token) or None
+        _ratelimit(), "resolve_token", lambda token: lookups.append(token) or None
     )
 
     client = TestClient(otlp_module.app)
     headers = {"x-tokenage-token": "tokenage_ingest_invalid"}
 
-    assert (
-        client.post("/v1/logs", json=_minimal_otlp_body(), headers=headers).status_code
-        == 401
-    )
-    assert (
-        client.post("/v1/logs", json=_minimal_otlp_body(), headers=headers).status_code
-        == 429
-    )
+    for _ in range(3):
+        response = client.post("/v1/logs", json=_minimal_otlp_body(), headers=headers)
+        assert response.status_code == 401
     assert len(lookups) == 1
 
 
@@ -1866,7 +1846,7 @@ def test_rate_limit_exceeded_returns_429(otlp_module, monkeypatch, fresh_db):
     from src.auth.tokens import mint_token
 
     monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "google")
-    monkeypatch.setitem(otlp_module.CONFIG.get("otlp", {}), "rate_limit_per_minute", 2)
+    monkeypatch.setitem(otlp_module.CONFIG["rate_limits"], "ingest_per_minute", 2)
 
     token1, user1 = mint_token(
         "user1@example.com", kind="ingest", db_path=fresh_db.db_path

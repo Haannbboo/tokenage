@@ -328,6 +328,8 @@ TTFT is an operational signal, not a billing-grade metric. Each agent exposes di
 
 OpenCode and Kilo Code tracking is provided by local plugins (`plugins/opencode` and `plugins/kilo`) that emit one OTLP log record for each completed assistant message. `tokenage setup` registers each built plugin (when `opencode` or `kilo` is installed) with the local OTLP logs endpoint, using `client/agents/`.
 
+The OpenCode plugin serves both OpenCode 1 and OpenCode 2 from one build: the default export carries a v1 `server()` (message events) and a v2 `setup()` (the `session.step.*` and `session.tool.*` event stream). It is registered as the built directory (`plugins/opencode/dist`) under `plugin`, which both versions load; OpenCode 2 rejects a file path there. Re-running `tokenage setup` migrates an older `dist/index.js` entry.
+
 ## API
 
 Useful local endpoints:

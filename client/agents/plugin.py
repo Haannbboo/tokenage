@@ -58,6 +58,12 @@ def run_npm(
         return None
 
 
+def tracker_suffixes(name: str) -> tuple[str, str]:
+    """Both ways a tracker build is registered: the built directory, or its
+    ``index.js``. Older installs registered the file."""
+    return f"plugins/{name}/dist", f"plugins/{name}/dist/index.js"
+
+
 def _is_tracker_entry(entry: object, name: str) -> bool:
     entry_path = (
         entry
@@ -66,7 +72,8 @@ def _is_tracker_entry(entry: object, name: str) -> bool:
         if isinstance(entry, list) and entry
         else ""
     )
-    return str(entry_path).replace("\\", "/").endswith(f"plugins/{name}/dist/index.js")
+    normalized = str(entry_path).replace("\\", "/").rstrip("/")
+    return normalized.endswith(tracker_suffixes(name))
 
 
 def disable(name: str, label: str, config_path: Path, expected_endpoint: str | None):
@@ -138,9 +145,19 @@ def configure(
     project_root: str | Path,
     endpoint: str,
     token: str | None,
+    *,
+    register_directory: bool = False,
 ) -> int:
     try:
-        return _configure(name, label, config_path, project_root, endpoint, token)
+        return _configure(
+            name,
+            label,
+            config_path,
+            project_root,
+            endpoint,
+            token,
+            register_directory,
+        )
     except subprocess.TimeoutExpired:
         return warn_skip(label, "plugin build timed out", failed=True)
     except (OSError, UnicodeError, ValueError):
@@ -155,6 +172,7 @@ def _configure(
     project_root: str | Path,
     endpoint: str,
     token: str | None,
+    register_directory: bool,
 ) -> int:
     project_root = Path(project_root).expanduser().resolve()
     load_json(config_path, label)  # refuse a bad config before building
@@ -202,7 +220,10 @@ def _configure(
     # The agent loads every configured plugin. Keep one tracker build so stale
     # worktree entries cannot emit duplicate or unauthenticated telemetry.
     plugins = [entry for entry in plugins if not _is_tracker_entry(entry, name)]
-    plugins.append([str(dist_dir / "index.js"), plugin_options])
+    # OpenCode 2 only loads a directory (it rejects a file path); OpenCode 1
+    # accepts either. A directory is therefore the form both can share.
+    entry_path = dist_dir if register_directory else dist_dir / "index.js"
+    plugins.append([str(entry_path), plugin_options])
 
     config["plugin"] = plugins
     save_json(config_path, config)

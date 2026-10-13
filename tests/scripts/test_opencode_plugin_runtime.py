@@ -87,7 +87,7 @@ def test_opencode_plugin_emits_status_for_failed_assistant_messages(tmp_path):
           return { ok: true, status: 200 }
         }
 
-        const hooks = await plugin({
+        const hooks = await plugin.server({
           client: {
             session: {
               message: async () => undefined,
@@ -304,3 +304,147 @@ def test_opencode_plugin_otlp_emit_uses_abort_signal(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"emitted": False}
+
+
+@pytest.mark.slow
+def test_opencode_plugin_v2_tracks_usage_tools_and_failures(tmp_path):
+    if not shutil.which("npm") or not shutil.which("node"):
+        pytest.skip("node and npm are required for the OpenCode plugin runtime test")
+
+    plugin_dir = _copy_clean_plugin_workspace(tmp_path)
+    _npm_install(plugin_dir)
+    build = subprocess.run(
+        ["npm", "run", "build"],
+        cwd=plugin_dir,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert build.returncode == 0, build.stderr
+
+    # Event shapes are those OpenCode 2.0 publishes on ctx.event.subscribe().
+    harness = textwrap.dedent(
+        """
+        const { default: plugin, TokenagePlugin } = await import("./dist/index.js")
+
+        const payloads = []
+        globalThis.fetch = async (_url, options) => {
+          payloads.push({ headers: options.headers, body: JSON.parse(options.body) })
+          return { ok: true, status: 200 }
+        }
+
+        const sid = "ses_1"
+        const ev = (type, created, data) => ({ id: "evt_" + created, type, created, data: { sessionID: sid, ...data } })
+        const model = { id: "mock-1", providerID: " Mock ", variant: "default" }
+        const events = [
+          ev("session.inbox.enqueued", 900, { inboxID: "i1", item: { type: "user", payload: { text: "hello there", files: [] } } }),
+          ev("session.step.started", 1000, { assistantMessageID: "msg_a", agent: "build", model, started: 1000 }),
+          ev("session.text.started", 1400, { assistantMessageID: "msg_a", ordinal: 0 }),
+          ev("session.step.ended", 1900, { assistantMessageID: "msg_a", finish: "stop", cost: 0,
+            tokens: { input: 600, output: 5, reasoning: 2, cache: { read: 600, write: 3 } } }),
+          ev("session.step.ended", 1900, { assistantMessageID: "msg_a", finish: "stop", cost: 0, tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } } }),
+          ev("session.step.started", 2000, { assistantMessageID: "msg_b", agent: "build", model, started: 2000 }),
+          ev("session.tool.input.started", 2100, { assistantMessageID: "msg_b", id: "call_1", name: "read" }),
+          ev("session.tool.called", 2200, { assistantMessageID: "msg_b", id: "call_1", input: {}, executed: false }),
+          ev("session.tool.success", 2250, { assistantMessageID: "msg_b", id: "call_1", content: [], executed: false }),
+          ev("session.tool.input.started", 2260, { assistantMessageID: "msg_b", id: "call_2", name: "bash" }),
+          ev("session.tool.called", 2270, { assistantMessageID: "msg_b", id: "call_2", input: {}, executed: false }),
+          ev("session.tool.failed", 2280, { assistantMessageID: "msg_b", id: "call_2", error: { type: "tool.execution", message: "x" } }),
+          ev("session.step.ended", 2300, { assistantMessageID: "msg_b", finish: "tool-calls", cost: 0,
+            tokens: { input: 10, output: 20, reasoning: 0, cache: { read: 0, write: 0 } } }),
+          ev("session.step.started", 3000, { assistantMessageID: "msg_c", agent: "build", model, started: 3000 }),
+          ev("session.retry.scheduled", 3010, { assistantMessageID: "msg_c", attempt: 2, at: 3100, error: { type: "provider.rate-limit", message: "x", status: 429 } }),
+          ev("session.step.failed", 3500, { assistantMessageID: "msg_c", error: { type: "provider.rate-limit", message: "x", status: 429 } }),
+          ev("session.step.started", 4000, { assistantMessageID: "msg_d", agent: "build", model, started: 4000 }),
+          ev("session.step.failed", 4100, { assistantMessageID: "msg_d", error: { type: "provider.unknown", message: "x" } }),
+        ]
+
+        const stream = (async function* () { for (const e of events) yield e })()
+        let cleanup
+        // A context without an event stream (OpenCode 1.19 also calls setup)
+        // must not track: `server` already does.
+        const noStream = plugin.setup({ options: {} })
+        cleanup = plugin.setup({
+          options: { endpoint: "http://collector.example/v1/logs", token: "tk" },
+          event: { subscribe: () => stream },
+        })
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        cleanup()
+
+        const attrsFor = (payload) =>
+          Object.fromEntries(
+            payload.body.resourceLogs[0].scopeLogs[0].logRecords[0].attributes.map(
+              (attr) => [attr.key, Object.values(attr.value)[0]],
+            ),
+          )
+        console.log(JSON.stringify({
+          id: plugin.id,
+          noStream: noStream ?? null,
+          serverIsFunction: typeof plugin.server,
+          legacyExport: typeof TokenagePlugin,
+          headers: payloads.map((p) => p.headers["x-tokenage-token"]),
+          times: payloads.map((p) => p.body.resourceLogs[0].scopeLogs[0].logRecords[0].timeUnixNano),
+          attrs: payloads.map(attrsFor),
+        }))
+        """
+    )
+
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", harness],
+        cwd=plugin_dir,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+    output = json.loads(result.stdout)
+    assert output["id"] == "opencode-tokenage"
+    assert output["noStream"] is None
+    assert output["serverIsFunction"] == "function"
+    assert output["legacyExport"] == "function"
+    attrs = output["attrs"]
+    # msg_a (usage; duplicate step.ended ignored), read tool, msg_b usage,
+    # two failures. The failed bash tool is not recorded, like OpenCode 1.
+    assert [a.get("message.id") for a in attrs] == [
+        "msg_a",
+        "msg_b",
+        "msg_b",
+        "msg_c",
+        "msg_d",
+    ]
+    assert set(output["headers"]) == {"tk"}
+
+    usage = attrs[0]
+    assert usage["event.name"] == "opencode.message_completed"
+    assert usage["session.id"] == "ses_1"
+    assert usage["provider"] == "mock"
+    assert usage["model"] == "mock-1"
+    assert usage["input_token_count"] == 600
+    assert usage["output_token_count"] == 5
+    assert usage["reasoning_token_count"] == 2
+    assert usage["total_token_count"] == 607
+    assert usage["cached_token_count"] == 600
+    assert usage["cache_creation_token_count"] == 3
+    assert usage["prompt_length"] == len("hello there")
+    assert usage["duration_ms"] == 900
+    assert usage["ttft_ms"] == 400
+    assert "status_code" not in usage
+    assert output["times"][0] == "1900000000"
+
+    tool = attrs[1]
+    assert tool["event.name"] == "opencode.tool_decision"
+    assert tool["tool_name"] == "read"
+    assert tool["call_id"] == "call_1"
+    assert tool["duration_ms"] == "50"
+    assert output["times"][1] == "2250000000"
+
+    assert attrs[2]["event.name"] == "opencode.message_completed"
+    assert attrs[2]["duration_ms"] == 300
+    assert "ttft_ms" not in attrs[2]
+
+    assert attrs[3]["status_code"] == 429
+    assert attrs[3]["error.type"] == "provider.rate-limit"
+    assert attrs[3]["duration_ms"] == 500
+    assert attrs[4]["status_code"] == 500
+    assert attrs[4]["error.type"] == "provider.unknown"

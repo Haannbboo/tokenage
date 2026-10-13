@@ -13,6 +13,12 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENTS = {"opencode": opencode, "kilo": kilo}
 
 
+def _entry(dist_dir, agent):
+    """OpenCode registers the built directory (so v1 and v2 both load it); Kilo
+    registers ``index.js``."""
+    return str(dist_dir if agent == "opencode" else dist_dir / "index.js")
+
+
 @pytest.mark.parametrize("agent", ["opencode", "kilo"])
 def test_hosted_plugin_builds_from_source_with_npm(agent, tmp_path, monkeypatch):
     plugin_dir = tmp_path / "snapshot" / "plugins" / agent
@@ -59,7 +65,7 @@ def test_hosted_plugin_builds_from_source_with_npm(agent, tmp_path, monkeypatch)
     config = json.loads(config_path.read_text(encoding="utf-8"))
     assert config["plugin"] == [
         [
-            str(plugin_dir / "dist" / "index.js"),
+            _entry(plugin_dir / "dist", agent),
             {"endpoint": "https://example.test/v1/logs"},
         ]
     ]
@@ -98,7 +104,7 @@ def test_hosted_login_removes_old_server_plugin_and_token(agent, tmp_path, monke
     assert config["plugin"] == [
         "other-plugin",
         [
-            str(plugin_dir / "dist" / "index.js"),
+            _entry(plugin_dir / "dist", agent),
             {"endpoint": "https://new.test/v1/logs", "token": "new-secret"},
         ],
     ]

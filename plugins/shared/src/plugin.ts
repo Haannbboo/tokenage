@@ -1,5 +1,6 @@
 import { finiteNumber, statusCodeFromError, errorName } from "./helpers.js"
 import { makePromptState } from "./prompt.js"
+import { claim, release } from "./dedupe.js"
 import { buildOtlpPayload, buildToolEventPayload, emitOtlp } from "./otlp.js"
 
 const DEFAULT_ENDPOINT = "http://localhost:4005/v1/logs"
@@ -7,6 +8,17 @@ const DEFAULT_ENDPOINT = "http://localhost:4005/v1/logs"
 function getEndpoint(options?: Record<string, any>): string {
   if (options?.endpoint && typeof options.endpoint === "string") return options.endpoint
   return DEFAULT_ENDPOINT
+}
+
+export function resolveOptions(options?: Record<string, any>): {
+  endpoint: string
+  headers: Record<string, string> | undefined
+} {
+  const token = typeof options?.token === "string" ? options.token : undefined
+  return {
+    endpoint: getEndpoint(options),
+    headers: token ? { "x-tokenage-token": token } : undefined,
+  }
 }
 
 function normalizedProvider(value: unknown): string {
@@ -50,7 +62,10 @@ async function handleMessageUpdated(
   const { completedAt, statusCode } = getCompletedInfo(info)
   if (completedAt == null && statusCode == null) return
 
+  const claimKey = `message:${info.id}`
+  if (!claim(claimKey)) return
   pending.add(info.id)
+  let emitted = false
 
   try {
     const provider = normalizedProvider(info.providerID)
@@ -97,7 +112,7 @@ async function handleMessageUpdated(
       clientSource,
     )
 
-    const emitted = await emitOtlp(payload, endpoint, 10_000, headers)
+    emitted = await emitOtlp(payload, endpoint, 10_000, headers)
     if (!emitted) return
 
     processed.add(info.id)
@@ -109,6 +124,7 @@ async function handleMessageUpdated(
     }
     promptState.firstAssistantPartStart.delete(info.id)
   } finally {
+    if (!emitted) release(claimKey)
     pending.delete(info.id)
   }
 }
@@ -120,9 +136,7 @@ export function createPlugin(clientSource: string) {
   const emittedTools = new Set<string>()
 
   return async (input: any, options?: Record<string, any>) => {
-    const endpoint = getEndpoint(options) ?? DEFAULT_ENDPOINT
-    const token = typeof options?.token === "string" ? options.token : undefined
-    const headers = token ? { "x-tokenage-token": token } : undefined
+    const { endpoint, headers } = resolveOptions(options)
 
     return {
       event: async ({ event }: { event: { type: string; properties?: Record<string, any> } }) => {
@@ -138,7 +152,8 @@ export function createPlugin(clientSource: string) {
             part.state?.status === "completed" &&
             part.tool &&
             part.callID &&
-            !emittedTools.has(part.callID)
+            !emittedTools.has(part.callID) &&
+            claim(`tool:${part.callID}`)
           ) {
             emittedTools.add(part.callID)
             if (emittedTools.size > 10_000) {
@@ -164,7 +179,7 @@ export function createPlugin(clientSource: string) {
               },
               clientSource,
             )
-            await emitOtlp(toolPayload, endpoint, 10_000, headers)
+            if (!(await emitOtlp(toolPayload, endpoint, 10_000, headers))) release(`tool:${part.callID}`)
           }
           return
         }

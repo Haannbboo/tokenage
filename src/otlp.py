@@ -948,7 +948,7 @@ def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
 @app.post("/v1/logs")
 async def receive_logs(request: Request):
     # Auth + rate limit + body cap — all before any record is parsed.
-    user_id, _, device_id = await resolve_ingest_request_async(request)
+    user_id, device_id = await resolve_ingest_request_async(request)
 
     # Evict stale codex_state entries (older than 10 minutes)
     now = time.time_ns() // 1000

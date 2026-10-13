@@ -72,10 +72,11 @@ def post_report(report: UsageReport) -> None:
         if not server_url or not token:
             logger.warning("usage report dropped: not signed in")
             return
+        payload = report.model_dump(mode="json")
         for attempt in range(RATE_LIMIT_RETRIES + 1):
             response = httpx.post(
                 f"{server_url.rstrip('/')}/ingest/v1/usage",
-                json=report.model_dump(mode="json"),
+                json=payload,
                 headers={"x-tokenage-token": token},
                 timeout=REPORT_TIMEOUT_SECONDS,
             )

@@ -33,8 +33,11 @@ _auth_executor = concurrent.futures.ThreadPoolExecutor(
 )
 
 
-def check_rate_limit(key: str, limit_name: str) -> None:
-    """Raise HTTPException(429) when `key` exceeds `rate_limits.<limit_name>`."""
+def rate_limit_hit(key: str, limit_name: str) -> int | None:
+    """Count a hit on `key` against `rate_limits.<limit_name>`.
+
+    Returns None when allowed, else the seconds until a slot frees up.
+    """
     global _last_rate_limit_cleanup
 
     max_per_minute = CONFIG["rate_limits"][limit_name]
@@ -60,14 +63,21 @@ def check_rate_limit(key: str, limit_name: str) -> None:
             dq.popleft()
 
         if len(dq) >= max_per_minute:
-            retry_after = max(1, int((dq[0] if dq else now) + WINDOW_SECONDS - now) + 1)
-            raise HTTPException(
-                status_code=429,
-                detail="rate limit exceeded",
-                headers={"Retry-After": str(retry_after)},
-            )
+            return int((dq[0] if dq else now) + WINDOW_SECONDS - now) + 1
 
         dq.append(now)
+        return None
+
+
+def check_rate_limit(key: str, limit_name: str) -> None:
+    """Raise HTTPException(429) when `key` exceeds `rate_limits.<limit_name>`."""
+    retry_after = rate_limit_hit(key, limit_name)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
 
 
 def _reject_invalid_token() -> NoReturn:
@@ -77,16 +87,13 @@ def _reject_invalid_token() -> NoReturn:
 def _invalid_token_is_cached(token_id: str) -> bool:
     now = time.time()
     with _rate_limit_lock:
-        stale = [
-            key for key, expires_at in _invalid_token_cache.items() if expires_at <= now
-        ]
-        for key in stale:
-            del _invalid_token_cache[key]
-        expires_at = _invalid_token_cache.get(token_id)
-        if expires_at is None:
-            return False
-        _invalid_token_cache.move_to_end(token_id)
-        return expires_at > now
+        # TTL is fixed, so insertion order is expiry order: pop from the front.
+        while _invalid_token_cache:
+            oldest = next(iter(_invalid_token_cache))
+            if _invalid_token_cache[oldest] > now:
+                break
+            del _invalid_token_cache[oldest]
+        return token_id in _invalid_token_cache
 
 
 def _remember_invalid_token(token_id: str) -> None:
@@ -126,24 +133,22 @@ def resolve_ingest_user(request: Request) -> tuple[str, str, str]:
     return user.id, token_id, auth_token.device_id
 
 
-def resolve_ingest_request(request: Request) -> tuple[str, str, str]:
-    """Auth + rate limit; returns (user_id, token_id, device_id)."""
+def resolve_ingest_request(request: Request) -> tuple[str, str]:
+    """Auth + rate limit; returns (user_id, device_id)."""
     user_id, token_id, device_id = resolve_ingest_user(request)
     check_rate_limit(f"ingest:{token_id}", "ingest_per_minute")
-    return user_id, token_id, device_id
+    return user_id, device_id
 
 
-async def resolve_ingest_request_async(request: Request) -> tuple[str, str, str]:
+async def resolve_ingest_request_async(request: Request) -> tuple[str, str]:
     """`resolve_ingest_request` with the DB lookup bounded and off the loop."""
     try:
         loop = asyncio.get_running_loop()
-        user_id, token_id, device_id = await asyncio.wait_for(
-            loop.run_in_executor(_auth_executor, resolve_ingest_user, request),
+        return await asyncio.wait_for(
+            loop.run_in_executor(_auth_executor, resolve_ingest_request, request),
             timeout=AUTH_LOOKUP_TIMEOUT_SECONDS,
         )
     except TimeoutError as exc:
         raise HTTPException(
             status_code=503, detail="authentication unavailable"
         ) from exc
-    check_rate_limit(f"ingest:{token_id}", "ingest_per_minute")
-    return user_id, token_id, device_id

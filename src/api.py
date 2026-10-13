@@ -85,7 +85,7 @@ from .evaluation import (
 from .evaluation_worker import load_evaluation_worker_config, run_evaluation_worker
 from .pricing.costs import resolve_cost_match
 from .pricing.snapshots import enrich_rows
-from .ratelimit import check_rate_limit, resolve_ingest_request
+from .ratelimit import rate_limit_hit, resolve_ingest_request
 from .recorder import record_tool_call, record_usage
 from .utils import normalize_model_name
 
@@ -279,13 +279,12 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content=AUTH_GATE_LOGIN_REQUIRED)
         user, auth_token = resolved
         if auth_token is not None:  # the loopback owner (no token) is exempt
-            try:
-                check_rate_limit(f"api:{user.id}", "api_per_minute")
-            except HTTPException as exc:
+            retry_after = rate_limit_hit(f"api:{user.id}", "api_per_minute")
+            if retry_after is not None:
                 return JSONResponse(
-                    status_code=exc.status_code,
-                    content={"detail": exc.detail},
-                    headers=exc.headers,
+                    status_code=429,
+                    content={"detail": "rate limit exceeded"},
+                    headers={"Retry-After": str(retry_after)},
                 )
         return await call_next(request)
 
@@ -749,7 +748,7 @@ def ingest_usage(request: Request, report: UsageReport):
     """Record one client-proxy usage report. Ingest tokens only: no cookie,
     bearer or loopback-owner fallback. The server prices; the client sends
     metadata only."""
-    user_id, _, device_id = resolve_ingest_request(request)
+    user_id, device_id = resolve_ingest_request(request)
     fields = report.model_dump(exclude={"tool_calls", "base_url"})
     usage = record_usage(
         **fields,

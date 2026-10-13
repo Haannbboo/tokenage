@@ -102,11 +102,6 @@ def _bearer_token(request: Request) -> str | None:
     return token if scheme.lower() == "bearer" and token else None
 
 
-def _request_token(request: Request) -> str | None:
-    """Extract a session token from the Authorization header or session cookie."""
-    return _bearer_token(request) or request.cookies.get(SESSION_COOKIE_NAME)
-
-
 def _resolve_request_user(
     request: Request,
 ) -> tuple[User, AuthToken | None] | None:
@@ -117,7 +112,8 @@ def _resolve_request_user(
     local provider is the owner (auth_token None); a stale cookie falls back
     here so it can't lock the owner's browser out. Anything else is None.
     """
-    token = _request_token(request)
+    bearer = _bearer_token(request)
+    token = bearer or request.cookies.get(SESSION_COOKIE_NAME)
     if token:
         resolved = resolve_token(token)
         if resolved is not None and resolved[1].kind != "ingest":
@@ -125,7 +121,7 @@ def _resolve_request_user(
             request.state.user = user
             request.state.auth_token = auth_token
             return user, auth_token
-        if _bearer_token(request):
+        if bearer:
             return None
     if local_owner_allowed(request):
         user = get_local_owner()

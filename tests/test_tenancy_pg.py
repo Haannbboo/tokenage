@@ -149,12 +149,10 @@ def test_migrate_tightens_a_nullable_tenancy_schema(pg_db, pg_engine):
 
 
 def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
-    from src.database.usage import upsert_daily_aggregate
-
     _seed_users(pg_engine, "u0", "u1")
 
-    upsert_daily_aggregate(_make_usage(), db_path=pg_db)
-    upsert_daily_aggregate(
+    _upsert_daily(_make_usage(), db_path=pg_db)
+    _upsert_daily(
         _make_usage(prompt_tokens=20, completion_tokens=10, total_tokens=30),
         db_path=pg_db,
     )
@@ -165,10 +163,8 @@ def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
     assert rows[0].request_count == 2
     assert rows[0].prompt_tokens == 120
 
-    upsert_daily_aggregate(_make_usage(user_id="u1", prompt_tokens=7), db_path=pg_db)
-    upsert_daily_aggregate(
-        _make_usage(user_id="u1", prompt_tokens=1, status=429), db_path=pg_db
-    )
+    _upsert_daily(_make_usage(user_id="u1", prompt_tokens=7), db_path=pg_db)
+    _upsert_daily(_make_usage(user_id="u1", prompt_tokens=1, status=429), db_path=pg_db)
 
     rows = _daily_row(pg_db)
     assert len(rows) == 2
@@ -180,14 +176,12 @@ def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
 
 
 def test_upsert_daily_aggregate_concurrent_writes_sum(pg_db, pg_engine):
-    from src.database.usage import upsert_daily_aggregate
-
     _seed_users(pg_engine, "u0")
 
     thread_count = 8
 
     def worker():
-        upsert_daily_aggregate(
+        _upsert_daily(
             _make_usage(prompt_tokens=1, completion_tokens=0, total_tokens=1),
             db_path=pg_db,
         )
@@ -242,3 +236,14 @@ def test_session_upsert_isolates_tenants_and_fails_cleanly_on_collision(
             text("SELECT user_id FROM sessions WHERE session_id = 'sess-1'")
         ).one()
     assert row.user_id == "u1"
+
+
+def _upsert_daily(usage, db_path=None):
+    from sqlalchemy.orm import Session
+
+    from src.database import get_engine
+    from src.database.usage import upsert_daily_aggregate
+
+    with Session(get_engine(db_path)) as session:
+        upsert_daily_aggregate(session, usage)
+        session.commit()

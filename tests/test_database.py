@@ -3221,7 +3221,7 @@ def test_usage_daily_status_breakdown(database_module, isolated_home):
             prompt_length=0,
             user_id="test-user",
         )
-        database_module.upsert_daily_aggregate(usage, db_path=db_path)
+        _upsert_daily(usage, db_path=db_path)
 
     # Check aggregation
     summary = database_module.summarize_usage_daily(
@@ -5821,10 +5821,10 @@ def test_upsert_daily_aggregate_separates_user_rows(fresh_db):
             total_cost_usd=0.003,
         )
 
-    database_module.upsert_daily_aggregate(make_usage("u0"), db_path=db_path)
-    database_module.upsert_daily_aggregate(make_usage("u0"), db_path=db_path)
-    database_module.upsert_daily_aggregate(make_usage("u1"), db_path=db_path)
-    database_module.upsert_daily_aggregate(make_usage("u1"), db_path=db_path)
+    _upsert_daily(make_usage("u0"), db_path=db_path)
+    _upsert_daily(make_usage("u0"), db_path=db_path)
+    _upsert_daily(make_usage("u1"), db_path=db_path)
+    _upsert_daily(make_usage("u1"), db_path=db_path)
 
     with database_module.get_engine(db_path).connect() as conn:
         rows = list(
@@ -6165,3 +6165,44 @@ def test_sqlite_pragmas_enable_wal_and_busy_timeout(tmp_path):
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == SQLITE_BUSY_TIMEOUT_MS
     conn.close()
+
+
+def test_log_usage_rolls_back_row_when_daily_rollup_fails(fresh_db, monkeypatch):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    import src.database.usage as usage_module
+    from src.database import get_engine, log_usage
+    from src.database.models import Usage, UsageDaily
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(usage_module, "upsert_daily_aggregate", boom)
+    usage = Usage(
+        device_id="test-device",
+        ts=TS_2026_05_19_00,
+        provider="openai",
+        model="gpt-4.1",
+        client_source="opencode",
+        session_id="atomic-session",
+        endpoint="otlp",
+        user_id="test-user",
+    )
+    with pytest.raises(RuntimeError):
+        log_usage(usage, db_path=fresh_db.db_path)
+
+    with Session(get_engine(fresh_db.db_path)) as session:
+        assert session.scalars(select(Usage)).all() == []
+        assert session.scalars(select(UsageDaily)).all() == []
+
+
+def _upsert_daily(usage, db_path=None):
+    from sqlalchemy.orm import Session
+
+    from src.database import get_engine
+    from src.database.usage import upsert_daily_aggregate
+
+    with Session(get_engine(db_path)) as session:
+        upsert_daily_aggregate(session, usage)
+        session.commit()

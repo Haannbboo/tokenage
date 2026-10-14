@@ -135,7 +135,7 @@ def test_upsert_requires_device_id(fresh_db):
     db = fresh_db.database_module
     usage = _usage(db, "u1", None)
     with pytest.raises(ValueError, match="device_id"):
-        db.usage.upsert_daily_aggregate(usage, db_path=fresh_db.db_path)
+        _upsert_daily(usage, db_path=fresh_db.db_path)
     with pytest.raises(ValueError, match="device_id"):
         db.log_usage(usage, db_path=fresh_db.db_path)
     assert _daily(fresh_db) == []
@@ -332,3 +332,14 @@ def test_duplicate_merge_still_happens_on_same_device(fresh_db):
     second = _record(fresh_db, "d1", "otlp")
     assert second.id == first.id
     assert _usage_rows(fresh_db) == ["d1"]
+
+
+def _upsert_daily(usage, db_path=None):
+    from sqlalchemy.orm import Session
+
+    from src.database import get_engine
+    from src.database.usage import upsert_daily_aggregate
+
+    with Session(get_engine(db_path)) as session:
+        upsert_daily_aggregate(session, usage)
+        session.commit()

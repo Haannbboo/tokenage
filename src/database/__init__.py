@@ -18,6 +18,12 @@ from .evaluation_jobs import (
     record_evaluation_completed,
     record_evaluation_started,
 )
+from .model_prices import (
+    delete_model_price,
+    list_model_prices,
+    load_model_price_overrides,
+    upsert_model_price,
+)
 from .models import (
     VALID_OUTCOMES,
     VALID_SOURCES,
@@ -31,6 +37,7 @@ from .models import (
     Usage,
     UsageDaily,
     User,
+    UserModelPrice,
     metadata,
 )
 from .sessions import (
@@ -91,6 +98,7 @@ __all__ = [
     "Usage",
     "UsageDaily",
     "User",
+    "UserModelPrice",
     "VALID_OUTCOMES",
     "VALID_SOURCES",
     "aggregate_model_effectiveness",
@@ -100,6 +108,7 @@ __all__ = [
     "count_sessions",
     "count_usage",
     "daily_session_effectiveness_report",
+    "delete_model_price",
     "delete_session_evaluation",
     "distinct_client_sources",
     "distinct_tool_names",
@@ -117,6 +126,8 @@ __all__ = [
     "init_db",
     "list_active_evaluation_jobs",
     "list_session_evaluation_jobs",
+    "list_model_prices",
+    "load_model_price_overrides",
     "log_usage",
     "recalculate_usage_cost",
     "record_evaluation_completed",
@@ -136,6 +147,7 @@ __all__ = [
     "summarize_usage_window",
     "text",
     "upsert_daily_aggregate",
+    "upsert_model_price",
     "upsert_session_evaluation",
     "upsert_session_from_usage",
 ]

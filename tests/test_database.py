@@ -759,6 +759,7 @@ def test_reprice_estimated_rows_rebinds_and_updates_costs(
 
     model_costs = {"test-model": ModelCost(input=2.0, output=4.0, cache_read=0.5)}
     summary = database_module.reprice_estimated_rows(
+        user_id="test-user",
         model_costs=model_costs,
         model_cost_sources={},
         db_path=db_path,
@@ -774,6 +775,7 @@ def test_reprice_estimated_rows_rebinds_and_updates_costs(
 
     # Already bound: a second pass has nothing to do.
     again = database_module.reprice_estimated_rows(
+        user_id="test-user",
         model_costs=model_costs,
         model_cost_sources={},
         db_path=db_path,
@@ -812,6 +814,7 @@ def test_reprice_estimated_rows_respects_filters_and_skips_unresolvable(
 
     model_costs = {"m1": ModelCost(input=2.0, output=4.0, cache_read=0.5)}
     common = {
+        "user_id": "test-user",
         "model_costs": model_costs,
         "model_cost_sources": {},
         "db_path": db_path,
@@ -871,6 +874,7 @@ def test_reprice_limit_scans_past_unresolvable_rows(database_module, isolated_ho
         )
 
     summary = database_module.reprice_estimated_rows(
+        user_id="test-user",
         limit=1,
         model_costs={"m1": ModelCost(input=2.0, output=4.0, cache_read=0.5)},
         model_cost_sources={},
@@ -921,6 +925,7 @@ def test_reprice_counts_snapshot_failure_as_skipped(
     monkeypatch.setattr(snapshots, "ensure_price_snapshot", boom)
 
     summary = database_module.reprice_estimated_rows(
+        user_id="test-user",
         model_costs={"m1": ModelCost(input=2.0, output=4.0, cache_read=0.5)},
         model_cost_sources={},
         db_path=db_path,

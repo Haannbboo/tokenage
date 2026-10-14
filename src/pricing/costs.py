@@ -86,6 +86,7 @@ def resolve_pricing(
     ts_micros: int,
     model_costs: dict[str, ModelCost] | None = None,
     model_cost_sources: dict[str, str] | None = None,
+    overrides: dict[str, ModelCost] | None = None,
 ) -> ResolvedPricing:
     """Resolve a model to a time-resolved flat cost.
 
@@ -93,9 +94,16 @@ def resolve_pricing(
     use its output. The maps lock is held for the whole resolution so a
     concurrent config refresh (which swaps the maps under the same lock) is
     never observed half-applied.
+
+    ``overrides`` are the row owner's own prices; a match there (same exact
+    then last-segment matching) beats every shared source.
     """
-    with MAPS_LOCK:
-        match = resolve_cost_match(model, model_costs, model_cost_sources)
+    match = None
+    if overrides:
+        match = resolve_cost_match(model, overrides, dict.fromkeys(overrides, "user"))
+    if match is None:
+        with MAPS_LOCK:
+            match = resolve_cost_match(model, model_costs, model_cost_sources)
     if match is None:
         return ResolvedPricing(
             match=None,

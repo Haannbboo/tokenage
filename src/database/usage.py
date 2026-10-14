@@ -36,6 +36,7 @@ from ..utils import (
     secs_to_micros,
 )
 from .engine import get_engine
+from .model_prices import load_model_price_overrides
 from .models import BaseUrl, Device, ToolCall, Usage, UsageDaily
 
 logger = logging.getLogger(__name__)
@@ -474,6 +475,7 @@ def recalculate_usage_cost(
         get_session_record,
     )
 
+    overrides = load_model_price_overrides(user_id=user_id, db_path=db_path)
     engine = get_engine(db_path)
     with Session(engine) as session:
         query = select(Usage).where(Usage.id == usage_id, Usage.user_id == user_id)
@@ -482,7 +484,7 @@ def recalculate_usage_cost(
             return None
 
         resolved = resolve_pricing(
-            usage.model, usage.ts, model_costs, model_cost_sources
+            usage.model, usage.ts, model_costs, model_cost_sources, overrides
         )
         if resolved.match is None:
             return CostRecalcResult(skipped=True, reason="no pricing match for model")
@@ -615,24 +617,33 @@ def recalculate_usage_cost(
 
 def fetch_estimated_usage_rows(
     *,
+    user_id: str,
     provider: str | None = None,
     model: str | None = None,
     since: str | None = None,
     until: str | None = None,
     db_path: str | None = None,
-) -> list[tuple[str, str]]:
-    """(id, user_id) of usage rows not bound to a price snapshot (estimated)."""
-    filters = _usage_filters(provider=provider, model=model, since=since, until=until)
-    filters.append(Usage.price_snapshot_id.is_(None))
-    query = (
-        select(Usage.id, Usage.user_id).where(and_(*filters)).order_by(Usage.ts.asc())
+) -> list[str]:
+    """Ids of the user's usage rows not bound to a price snapshot (estimated).
+
+    ``model`` selects the rows a price keyed ``model`` would match: the full
+    name or its last ``/`` segment (exact then segment resolution).
+    """
+    filters = _usage_filters(
+        user_id=user_id, provider=provider, since=since, until=until
     )
+    filters.append(Usage.price_snapshot_id.is_(None))
+    if model:
+        name = normalize_model_name(model)
+        filters.append(Usage.model.in_({name, name.rsplit("/", maxsplit=1)[-1]}))
+    query = select(Usage.id).where(and_(*filters)).order_by(Usage.ts.asc())
     with get_engine(db_path).connect() as connection:
-        return [(row[0], row[1]) for row in connection.execute(query)]
+        return [row[0] for row in connection.execute(query)]
 
 
 def reprice_estimated_rows(
     *,
+    user_id: str,
     provider: str | None = None,
     model: str | None = None,
     since: str | None = None,
@@ -642,7 +653,8 @@ def reprice_estimated_rows(
     model_cost_sources: dict[str, str] | None = None,
     db_path: str | None = None,
 ) -> dict[str, int]:
-    """Rebind and recompute estimated (unbound) usage rows to current pricing.
+    """Rebind and recompute the user's estimated (unbound) rows to current
+    pricing, honoring the user's own price overrides.
 
     Only rows with ``price_snapshot_id IS NULL`` are touched. Each row goes
     through ``recalculate_usage_cost`` so stored costs, session/daily rollups,
@@ -656,6 +668,7 @@ def reprice_estimated_rows(
     so an early stuck row can't stop later ones from being repriced.
     """
     rows = fetch_estimated_usage_rows(
+        user_id=user_id,
         provider=provider,
         model=model,
         since=since,
@@ -663,7 +676,7 @@ def reprice_estimated_rows(
         db_path=db_path,
     )
     repriced = skipped = examined = 0
-    for usage_id, owner_id in rows:
+    for usage_id in rows:
         if limit is not None and repriced >= limit:
             break
         examined += 1
@@ -671,7 +684,7 @@ def reprice_estimated_rows(
             usage_id,
             model_costs=model_costs,
             model_cost_sources=model_cost_sources,
-            user_id=owner_id,
+            user_id=user_id,
             db_path=db_path,
         )
         # A snapshot failure leaves the row unbound, so don't report it as
@@ -787,7 +800,7 @@ def _device_filter(column: Any, device_id: str) -> Any:
 
 def _usage_filters(
     *,
-    user_id: str | None = None,
+    user_id: str,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
@@ -801,11 +814,7 @@ def _usage_filters(
     status_5xx: bool = False,
     device_id: str | None = None,
 ) -> list[Any]:
-    filters: list[Any] = []
-    # ponytail: None only for the all-users reprice (fetch_estimated_usage_rows);
-    # it goes away with the per-user reprice in pricing overrides.
-    if user_id is not None:
-        filters.append(Usage.user_id == user_id)
+    filters: list[Any] = [Usage.user_id == user_id]
     if provider:
         filters.append(Usage.provider == normalize_provider_name(provider))
     if model:

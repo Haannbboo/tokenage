@@ -24,14 +24,16 @@ def test_reprice_estimated_usage_endpoint_passes_filters(api_module, monkeypatch
 
     monkeypatch.setattr(api_module, "_resolve_live_cost_maps", fake_live_cost_maps)
     monkeypatch.setattr(api_module, "reprice_estimated_rows", fake_reprice)
+    monkeypatch.setattr(api_module, "_request_user_id", lambda _request: "u1")
 
     result = asyncio.run(
         api_module.reprice_estimated_usage(
-            provider="prov", model="mod", since=None, until=None, limit=10
+            None, provider="prov", model="mod", since=None, until=None, limit=10
         )
     )
 
     assert result == {"candidates": 2, "repriced": 1, "skipped": 1}
+    assert captured["user_id"] == "u1"
     assert captured["provider"] == "prov"
     assert captured["model"] == "mod"
     assert captured["limit"] == 10
@@ -1216,10 +1218,6 @@ def test_usage_count_passes_tool_name(api_module, monkeypatch):
 # (docs/design/specs/pr22-route-classification.md)
 # ---------------------------------------------------------------------------
 
-ADMIN_ONLY_ROUTES = [
-    ("PATCH", "/config"),
-]
-
 # Evaluation routes the server used to own. Evaluation runs on the client now;
 # these paths must never resolve to a handler again.
 REMOVED_EVALUATION_ROUTES = [
@@ -1249,21 +1247,6 @@ def _authenticated_client(api_module, fresh_db, monkeypatch):
     client = TestClient(api_module.app)
     client.headers["Authorization"] = f"Bearer {token}"
     return client
-
-
-@pytest.mark.parametrize("method,path", ADMIN_ONLY_ROUTES)
-def test_admin_routes_404_for_authenticated_user_under_google_provider(
-    api_module, fresh_db, monkeypatch, method, path
-):
-    client = _authenticated_client(api_module, fresh_db, monkeypatch)
-    response = client.request(method, path)
-    assert response.status_code == 404
-
-
-@pytest.mark.parametrize("method,path", ADMIN_ONLY_ROUTES)
-def test_admin_routes_unaffected_under_local_provider(api_module, method, path):
-    response = TestClient(api_module.app).request(method, path)
-    assert response.status_code != 404
 
 
 def _assert_route_removed(response):

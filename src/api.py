@@ -6,27 +6,21 @@ import re
 import shlex
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Annotated
 from urllib.parse import urlparse, urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from protocol import MAX_SUPPORTED_GENERATION, MIN_SUPPORTED_GENERATION
 from protocol.device_status import DeviceStatusReport
 from protocol.evaluation import EvaluationCompletedReport, EvaluationStartedReport
 from protocol.usage_report import UsageReport
-from src.config.app import (
-    CONFIG,
-    CONFIG_PATH,
-    _apply_patch,
-    _config_lock,
-    refresh_runtime_config,
-)
+from src.config.app import CONFIG, _config_lock
 from src.config.server_config import (
     resolve_otlp_host_port,
     resolve_server_urls,
@@ -34,7 +28,6 @@ from src.config.server_config import (
 
 from ._version import get_version
 from .auth import (
-    _require_local_owner,
     _resolve_request_user,
     get_current_user,
 )
@@ -51,6 +44,7 @@ from .database import (
     count_sessions,
     count_usage,
     daily_session_effectiveness_report,
+    delete_model_price,
     delete_session_evaluation,
     distinct_client_sources,
     distinct_tool_names,
@@ -63,7 +57,9 @@ from .database import (
     get_usage_high_watermark_ts,
     init_db,
     list_active_evaluation_jobs,
+    list_model_prices,
     list_session_evaluation_jobs,
+    load_model_price_overrides,
     recalculate_usage_cost,
     record_evaluation_completed,
     record_evaluation_started,
@@ -75,9 +71,11 @@ from .database import (
     summarize_usage_by_source,
     summarize_usage_daily,
     summarize_usage_window,
+    upsert_model_price,
     upsert_session_evaluation,
 )
 from .pricing.costs import resolve_cost_match
+from .pricing.models import ResolvedCost
 from .pricing.snapshots import enrich_rows
 from .ratelimit import rate_limit_hit, resolve_ingest_request
 from .recorder import record_usage
@@ -114,32 +112,8 @@ AUTH_GATE_PUBLIC_PATHS = ("/auth/me", "/version", "/install.sh")
 AUTH_GATE_EXTRA_GATED_PATHS = ("/docs", "/redoc", "/openapi.json")
 
 
-class ConfigPatch(BaseModel):
-    path: list[str]
-    op: Literal["set", "delete"]
-    value: float | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def require_numeric_value_for_set(cls, data):
-        if not isinstance(data, dict):
-            return data
-        if data.get("op") != "set":
-            return data
-        value = data.get("value")
-        if value is None:
-            raise ValueError("set patches require a numeric value")
-        if isinstance(value, bool) or not isinstance(value, int | float):
-            raise ValueError("set patches require a numeric value")
-        return data
-
-
 def _request_user_id(request: Request) -> str:
     return get_current_user(request).id
-
-
-class ConfigPatchUpdate(BaseModel):
-    patches: list[ConfigPatch]
 
 
 class SessionEvaluationUpdate(BaseModel):
@@ -872,47 +846,6 @@ async def get_session_tool_calls_summary(request: Request, session_id: str):
     return summary
 
 
-@app.patch("/config", dependencies=[Depends(_require_local_owner)])
-async def patch_config(update: ConfigPatchUpdate):
-    from ruamel.yaml import YAML
-    from ruamel.yaml.error import YAMLError as RuamelYAMLError
-
-    path = os.path.expanduser(CONFIG_PATH)
-    yaml_parser = YAML()
-    yaml_parser.preserve_quotes = True
-
-    try:
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                config = yaml_parser.load(f) or {}
-        else:
-            config = {}
-
-        if not isinstance(config, dict):
-            raise HTTPException(
-                status_code=400,
-                detail="Config root must be a YAML mapping",
-            )
-
-        for patch in update.patches:
-            _apply_patch(config, patch.path, patch.op, patch.value)
-
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            yaml_parser.dump(config, f)
-
-        await asyncio.to_thread(refresh_runtime_config, path)
-        return {"status": "success"}
-    except RuamelYAMLError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(e)}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 def _pricing_entry(resolved_cost) -> dict:
     cost = resolved_cost.cost
     return {
@@ -977,23 +910,78 @@ async def _resolve_live_cost_maps():
 
 
 @app.get("/pricing")
-async def get_pricing():
-    """Return all models with resolved pricing and source metadata."""
+async def get_pricing(request: Request):
+    """Return all models with resolved pricing and source metadata, with the
+    caller's own overrides on top (source "user")."""
+    overrides = load_model_price_overrides(user_id=_request_user_id(request))
     resolved, _costs, _sources = await _resolve_live_cost_maps()
-    return {key: _pricing_entry(rc) for key, rc in resolved.items()}
+    entries = {key: _pricing_entry(rc) for key, rc in resolved.items()}
+    for key, cost in overrides.items():
+        entries[key] = _pricing_entry(ResolvedCost(cost=cost, source="user"))
+    return entries
+
+
+Price = Annotated[float, Field(ge=0, allow_inf_nan=False, strict=True)]
+
+
+class ModelPriceUpdate(BaseModel):
+    input: Price
+    output: Price
+    cache_read: Price | None = None
+    cache_write: Price | None = None
+
+
+def _override_model(model: str) -> str:
+    model = normalize_model_name(model)
+    if not model:
+        raise HTTPException(status_code=422, detail="model must not be empty")
+    return model
+
+
+# Registered before /pricing/{model:path}, which would otherwise swallow it.
+@app.get("/pricing/overrides")
+async def get_pricing_overrides(request: Request):
+    return list_model_prices(user_id=_request_user_id(request))
+
+
+@app.put("/pricing/overrides/{model:path}")
+async def put_pricing_override(request: Request, model: str, body: ModelPriceUpdate):
+    return upsert_model_price(
+        user_id=_request_user_id(request),
+        model=_override_model(model),
+        **body.model_dump(),
+    )
+
+
+@app.delete("/pricing/overrides/{model:path}", status_code=204)
+async def delete_pricing_override(request: Request, model: str):
+    if not delete_model_price(
+        user_id=_request_user_id(request), model=_override_model(model)
+    ):
+        raise HTTPException(status_code=404, detail="override not found")
+    return Response(status_code=204)
 
 
 @app.get("/pricing/{model:path}")
-async def get_model_pricing(model: str):
+async def get_model_pricing(request: Request, model: str):
     """Return resolved pricing for a single model.
 
-    Follows the same resolution used at record time: config overrides first,
-    then the configured price sources (in priority order), with a
-    containing-name fallback when no exact match exists.
+    Follows the same resolution used at record time: the caller's overrides
+    first, then config overrides, then the configured price sources (in
+    priority order), with a containing-name fallback when no exact match exists.
     """
     model = normalize_model_name(model)
     if not model:
         raise HTTPException(status_code=422, detail="model must not be empty")
+
+    overrides = load_model_price_overrides(user_id=_request_user_id(request))
+    match = resolve_cost_match(model, overrides, dict.fromkeys(overrides, "user"))
+    if match is not None:
+        return {
+            "model": match.key,
+            "resolved": True,
+            **_pricing_entry(ResolvedCost(cost=match.cost, source="user")),
+        }
 
     resolved, model_costs, model_cost_sources = await _resolve_live_cost_maps()
     match = resolve_cost_match(model, model_costs, model_cost_sources)
@@ -1050,27 +1038,32 @@ async def recalculate_usage_cost_route(request: Request, usage_id: str):
     }
 
 
-@app.post("/usage/reprice", dependencies=[Depends(_require_local_owner)])
+@app.post("/usage/reprice")
 async def reprice_estimated_usage(
+    request: Request,
     provider: str | None = None,
     model: str | None = None,
     since: str | None = None,
     until: str | None = None,
     limit: int | None = None,
 ):
-    """Reprice estimated (unbound) usage rows against current pricing.
+    """Reprice the caller's estimated (unbound) usage rows against current
+    pricing, honoring the caller's overrides.
 
     Recomputes stored costs, session/daily rollups, and the snapshot binding for
     every row with no ``price_snapshot_id``, optionally filtered by
-    provider/model/date range and capped with ``limit``. Rows whose
+    provider/model/date range and capped with ``limit``. ``model`` selects the
+    rows a price keyed by that name would match (full name or last segment). Rows whose
     model no longer resolves are left untouched and reported as
     skipped. Bulk work runs in a worker thread; an unfiltered run over a large
     history can take a while.
     """
+    user_id = _request_user_id(request)
     _resolved, model_costs, model_cost_sources = await _resolve_live_cost_maps()
 
     return await asyncio.to_thread(
         reprice_estimated_rows,
+        user_id=user_id,
         provider=provider,
         model=model,
         since=since,

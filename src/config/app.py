@@ -76,33 +76,6 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     return config
 
 
-def _apply_patch(config: dict[str, Any], path: list[str], op: str, value: Any) -> None:
-    if not path:
-        raise ValueError("Patch path cannot be empty")
-
-    target = config
-    for key in path[:-1]:
-        if not isinstance(target, dict):
-            raise ValueError(f"Cannot traverse non-mapping key '{key}'")
-        if op == "delete" and key not in target:
-            return
-        next_target = target.setdefault(key, {}) if op == "set" else target[key]
-        if not isinstance(next_target, dict):
-            raise ValueError(f"Cannot traverse non-mapping key '{key}'")
-        target = next_target
-
-    if not isinstance(target, dict):
-        raise ValueError(f"Cannot apply patch at '{path[-1]}'")
-
-    if op == "set":
-        target[path[-1]] = value
-        return
-    if op == "delete":
-        target.pop(path[-1], None)
-        return
-    raise ValueError(f"Unsupported patch operation: {op}")
-
-
 _config_lock = threading.Lock()
 
 

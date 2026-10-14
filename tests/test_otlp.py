@@ -1903,6 +1903,23 @@ def test_health_routes_stay_unauthenticated(otlp_module, monkeypatch):
     assert client.post("/v1/traces", json={}).status_code == 200
 
 
+def test_logs_are_shed_when_too_many_batches_are_pending(
+    otlp_module, fresh_db, monkeypatch
+):
+    from src.auth.tokens import mint_token
+
+    token, _ = mint_token("busy@example.com", kind="ingest", db_path=fresh_db.db_path)
+    monkeypatch.setattr(otlp_module, "MAX_PENDING_BATCHES", 0)
+
+    response = TestClient(otlp_module.app).post(
+        "/v1/logs", json=_minimal_otlp_body(), headers={"x-tokenage-token": token}
+    )
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"
+    assert otlp_module._pending_batches == 0
+
+
 def test_logs_are_processed_off_the_event_loop(otlp_module, fresh_db, monkeypatch):
     """A record stuck in the database must not stop the collector answering."""
     import asyncio
@@ -1919,7 +1936,7 @@ def test_logs_are_processed_off_the_event_loop(otlp_module, fresh_db, monkeypatc
     def blocked_record(*_args, **_kwargs):
         threads.append(threading.current_thread())
         started.set()
-        release.wait(5)
+        release.wait(30)
 
     monkeypatch.setattr(otlp_module, "_parse_log_record", blocked_record)
     body = {
@@ -1939,10 +1956,12 @@ def test_logs_are_processed_off_the_event_loop(otlp_module, fresh_db, monkeypatc
             headers={"x-tokenage-token": token},
         ) as client:
             post = asyncio.create_task(client.post("/v1/logs", json=body))
-            await asyncio.get_running_loop().run_in_executor(None, started.wait, 5)
-            health = await asyncio.wait_for(client.get("/health"), timeout=2)
-            assert health.status_code == 200
-            release.set()
+            try:
+                await asyncio.get_running_loop().run_in_executor(None, started.wait, 5)
+                health = await asyncio.wait_for(client.get("/health"), timeout=2)
+                assert health.status_code == 200
+            finally:
+                release.set()
             assert (await post).status_code == 200
 
     asyncio.run(run())

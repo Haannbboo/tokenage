@@ -246,15 +246,12 @@ def log_usage(
     this usage; they join the same transaction and a tool_use_id that is
     already recorded is skipped, so a redelivered report cannot double count.
 
-    The row and its usage_daily increment land together or not at all (the
-    error propagates and the caller can retry). Separate commits used to leave
-    a stored row missing from usage_daily whenever a later step hit SQLite's
-    single-writer lock under concurrent ingest.
+    The row and its usage_daily increment land together or not at all: the
+    error propagates and the transaction rolls back. Callers must not assume a
+    retry (the proxy client drops the report on anything but 429).
 
-    The sessions rollup stays best-effort inside a SAVEPOINT: a failure there
-    is data-level and must not discard a valid usage row. Lock contention
-    cannot hit it, since the insert above already holds the write lock for the
-    rest of the transaction.
+    The sessions rollup stays best-effort inside a SAVEPOINT: a failure or a
+    lock timeout there must not discard a valid usage row.
     """
     from .sessions import _upsert_session_from_usage
 

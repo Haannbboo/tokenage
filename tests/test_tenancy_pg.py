@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import threading
 
-import pytest
 from sqlalchemy import inspect, text
 
 TS_2026_04_17_10 = 1776420000000000
@@ -201,7 +200,6 @@ def test_upsert_daily_aggregate_concurrent_writes_sum(pg_db, pg_engine):
 def test_session_upsert_isolates_tenants_and_fails_cleanly_on_collision(
     pg_db, pg_engine
 ):
-    from sqlalchemy.exc import IntegrityError
     from sqlalchemy.orm import Session as OrmSession
 
     from src.database.engine import get_engine
@@ -227,10 +225,9 @@ def test_session_upsert_isolates_tenants_and_fails_cleanly_on_collision(
         assert get_session_record(session, "sess-2", user_id="u2").user_id == "u2"
         assert get_session_record(session, "sess-1", user_id="u3") is None
 
-    # Tenant-poison guard: a second user writing the same session_id fails
-    # cleanly (bare session_id PK) instead of polluting the first user's row.
-    with pytest.raises(IntegrityError):
-        upsert_session_from_usage(_make_usage(user_id="u2"), db_path=pg_db)
+    # Tenant-poison guard: a second user writing the same session_id is
+    # skipped (bare session_id PK) instead of polluting the first user's row.
+    upsert_session_from_usage(_make_usage(user_id="u2"), db_path=pg_db)
     with engine.connect() as connection:
         row = connection.execute(
             text("SELECT user_id FROM sessions WHERE session_id = 'sess-1'")

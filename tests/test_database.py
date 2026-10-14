@@ -5926,6 +5926,37 @@ def test_upsert_session_from_usage_scopes_tenant(fresh_db):
     assert local_row.request_count == 1
 
 
+def test_log_usage_keeps_row_and_daily_when_session_rollup_fails(fresh_db, monkeypatch):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    import src.database.sessions as sessions_module
+    from src.database import get_engine, log_usage
+    from src.database.models import Usage, UsageDaily
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("session rollup failed")
+
+    monkeypatch.setattr(sessions_module, "_upsert_session_from_usage", boom)
+    log_usage(
+        Usage(
+            device_id="test-device",
+            ts=TS_2026_05_19_00,
+            provider="openai",
+            model="gpt-4.1",
+            client_source="opencode",
+            session_id="s1",
+            endpoint="otlp",
+            user_id="test-user",
+        ),
+        db_path=fresh_db.db_path,
+    )
+
+    with Session(get_engine(fresh_db.db_path)) as session:
+        assert len(session.scalars(select(Usage)).all()) == 1
+        assert len(session.scalars(select(UsageDaily)).all()) == 1
+
+
 def test_upsert_session_adds_to_row_created_by_a_concurrent_first_usage(
     fresh_db, monkeypatch
 ):

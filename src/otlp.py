@@ -955,6 +955,11 @@ def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
 # instead of on the event loop keeps /health, auth and body reads responsive
 # while a record waits on the database.
 _record_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tokenage-otlp")
+# Batches accepted but not finished (running + queued). If the database stalls
+# the worker stops draining, so bound the queue and shed with a retryable 503
+# instead of holding every request body in memory.
+MAX_PENDING_BATCHES = 64
+_pending_batches = 0
 
 
 def _evict_stale_state() -> None:
@@ -1018,10 +1023,27 @@ async def receive_logs(request: Request):
         )
         records = records[:max_records]
 
-    await asyncio.get_running_loop().run_in_executor(
+    global _pending_batches
+    if _pending_batches >= MAX_PENDING_BATCHES:
+        raise HTTPException(
+            status_code=503,
+            detail="collector is busy, retry later",
+            headers={"Retry-After": "5"},
+        )
+    _pending_batches += 1
+    future = asyncio.get_running_loop().run_in_executor(
         _record_executor,
         partial(_ingest_records, records, user_id=user_id, device_id=device_id),
     )
+
+    def _release_slot(_future: object) -> None:
+        global _pending_batches
+        _pending_batches -= 1
+
+    # On completion, not when this handler returns: a cancelled request leaves
+    # its batch queued, and it still occupies a slot until it has run.
+    future.add_done_callback(_release_slot)
+    await future
     if rejected:
         # OTLP partial success: still 200 so the exporter does not retry the same
         # oversized batch forever, but the dropped count is reported, not hidden.

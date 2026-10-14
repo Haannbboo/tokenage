@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,8 @@ from sqlalchemy.engine import Engine
 from src.config.app import CONFIG
 
 from .models import Base
+
+logger = logging.getLogger(__name__)
 
 DB_URL_ENV_VAR = "TOKENAGE_DB_URL"
 DB_CONNECT_TIMEOUT_SECONDS = 5
@@ -68,12 +72,17 @@ def _sqlite_pragmas(dbapi_conn: Any, _record: Any) -> None:
     cur = dbapi_conn.cursor()
     cur.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
     # WAL persists in the file, so only switch from the default; this also
-    # leaves a mode chosen on purpose (tests use MEMORY) alone.
-    mode = cur.execute("PRAGMA journal_mode").fetchone()[0]
-    if mode == "delete":
-        mode = cur.execute("PRAGMA journal_mode=WAL").fetchone()[0]
-    if mode == "wal":
-        cur.execute("PRAGMA synchronous=NORMAL")
+    # leaves a mode chosen on purpose (tests use MEMORY) alone. Switching
+    # needs the write lock and ignores busy_timeout; if another process holds
+    # it, stay in the current mode rather than fail the connection.
+    try:
+        mode = cur.execute("PRAGMA journal_mode").fetchone()[0]
+        if mode == "delete":
+            mode = cur.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        if mode == "wal":
+            cur.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.OperationalError:
+        logger.warning("Could not switch SQLite to WAL (database busy)")
     cur.close()
 
 

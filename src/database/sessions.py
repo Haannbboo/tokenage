@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -25,6 +26,8 @@ from .models import (
     ToolCall,
     Usage,
 )
+
+logger = logging.getLogger(__name__)
 
 # Sources that emit one usage row per assistant completion, so
 # single-request sessions can still be real user-visible sessions.
@@ -158,9 +161,15 @@ def _upsert_session_from_usage(session: Session, usage: Usage) -> None:
     total_cost = Decimal(str(usage.total_cost_usd))
     now = datetime.now(UTC).isoformat()
 
-    # Lock the row (PostgreSQL; SQLite ignores FOR UPDATE and serializes writes
-    # itself): the counters below are read-modify-write in Python, so without
-    # it two concurrent usages of one session overwrite each other's increment.
+    # Lock the row (PostgreSQL): the counters below are read-modify-write in
+    # Python, so without it two concurrent usages of one session overwrite each
+    # other's increment. SQLite ignores FOR UPDATE; there log_usage's earlier
+    # insert already holds the write lock. The standalone wrapper above does
+    # not, so concurrent calls to it can still lose an increment on SQLite.
+    # Bound the wait: a long maintenance transaction on this row must make the
+    # best-effort rollup skip, not stall the ingest worker behind it.
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(text("SET LOCAL lock_timeout = '2s'"))
     existing = get_session_record(
         session, usage.session_id, user_id=usage.user_id, with_for_update=True
     )
@@ -188,6 +197,13 @@ def _upsert_session_from_usage(session: Session, usage: Usage) -> None:
         existing = get_session_record(
             session, usage.session_id, user_id=usage.user_id, with_for_update=True
         )
+    if existing is None:
+        # The session_id primary key is global and belongs to another user.
+        logger.warning(
+            "Session rollup skipped: session_id %r is owned by another user",
+            usage.session_id,
+        )
+        return
     if existing:
         if usage.ts < existing.started:
             existing.started = usage.ts

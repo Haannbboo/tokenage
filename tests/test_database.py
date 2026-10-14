@@ -6153,3 +6153,15 @@ def test_migrate_database_creates_missing_model_indexes(fresh_db):
     assert {"sessions.ix_sessions_started_desc", "usage.ix_usage_session_id"} <= set(
         changes
     )
+
+
+def test_sqlite_pragmas_enable_wal_and_busy_timeout(tmp_path):
+    import sqlite3
+
+    from src.database.engine import SQLITE_BUSY_TIMEOUT_MS, _sqlite_pragmas
+
+    conn = sqlite3.connect(tmp_path / "wal.db")
+    _sqlite_pragmas(conn, None)
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == SQLITE_BUSY_TIMEOUT_MS
+    conn.close()

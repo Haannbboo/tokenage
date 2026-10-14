@@ -70,6 +70,10 @@ DB_URL="sqlite:///${DB_PATH}"
 
 if [[ -f "${MAIN_DB}" ]]; then
   cp "${MAIN_DB}" "${DB_PATH}"
+  # WAL mode keeps recent commits in the -wal file until a checkpoint.
+  for suffix in -wal -shm; do
+    [[ -f "${MAIN_DB}${suffix}" ]] && cp "${MAIN_DB}${suffix}" "${DB_PATH}${suffix}"
+  done
   echo "==> Copied ${MAIN_DB} -> ${DB_PATH}"
 else
   echo "==> No main DB found at ${MAIN_DB}, starting with empty database"

@@ -323,3 +323,31 @@ def test_enrich_rows_pricing_is_none_when_unpriceable(fresh_db):
         "price_snapshot_id": None,
     }
     assert snapshots.enrich_rows([row], db_path=fresh_db.db_path)[0]["pricing"] is None
+
+
+def test_ensure_price_snapshot_caches_ids_per_engine(fresh_db):
+    from sqlalchemy import event
+
+    from src.database import get_engine
+
+    snapshots = _snapshots_module()
+    engine = get_engine(fresh_db.db_path)
+    statements = []
+    event.listen(
+        engine, "before_cursor_execute", lambda *args: statements.append(args[2])
+    )
+    kwargs = dict(
+        date="2026-05-19",
+        model="test-model",
+        source="yaml",
+        db_path=fresh_db.db_path,
+    )
+
+    first = snapshots.ensure_price_snapshot(cost=COST, **kwargs)
+    issued = len(statements)
+    assert issued > 0
+    assert snapshots.ensure_price_snapshot(cost=COST, **kwargs) == first
+    assert len(statements) == issued  # second call is served from the cache
+
+    other = ModelCost(input=9.0, output=9.0, cache_read=9.0)
+    assert snapshots.ensure_price_snapshot(cost=other, **kwargs) != first

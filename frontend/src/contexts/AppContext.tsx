@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { toggleTheme, getTheme } from '../theme'
 import { useLang } from '../i18n/index.ts'
 import { getSavedTimezone, saveTimezone } from '../utils'
-import type { ActiveFilter, AuthUser, DateRangeOption, EvaluatorOption, EvaluatorType, PricingMap } from '../types.ts'
+import type { ActiveFilter, AuthUser, DateRangeOption, PricingMap } from '../types.ts'
 
 export type AuthState = {
   status: 'loading' | 'ready'
@@ -24,10 +24,6 @@ type AppContextType = {
 
   configStatus: 'idle' | 'saving' | 'saved' | 'error'
   setConfigStatus: (s: 'idle' | 'saving' | 'saved' | 'error') => void
-  evaluationEvaluator: EvaluatorType
-  setEvaluationEvaluator: (e: EvaluatorType) => void
-  evaluationEvaluators: EvaluatorOption[]
-  setEvaluationEvaluators: (e: EvaluatorOption[]) => void
 
   pricingData: PricingMap | null
   setPricingData: (p: PricingMap | null) => void
@@ -73,7 +69,8 @@ export function isApiPath(pathname: string): boolean {
     pathname.startsWith('/config/') ||
     pathname === '/pricing' ||
     pathname.startsWith('/pricing/') ||
-    pathname.startsWith('/local/') ||
+    pathname === '/evaluation-jobs' ||
+    pathname.startsWith('/evaluation-jobs/') ||
     pathname === '/version'
   )
 }
@@ -82,8 +79,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<'light' | 'dark'>(getTheme)
   const { lang, setLang } = useLang()
   const [auth, setAuth] = useState<AuthState>({ status: 'loading', provider: null, user: null })
-  const [evaluationEvaluator, setEvaluationEvaluator] = useState<EvaluatorType>('codex')
-  const [evaluationEvaluators, setEvaluationEvaluators] = useState<EvaluatorOption[]>([])
   const [configStatus, setConfigStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [pricingData, setPricingData] = useState<PricingMap | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -176,39 +171,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => { window.fetch = originalFetch }
   }, [markLoggedOut])
 
-  // Seed the global evaluator from the local evaluation metadata on mount.
-  // Settings owns pricing fetches because pricing scope depends on the
-  // selected provider.
-  useEffect(() => {
-    const controller = new AbortController()
-    async function fetchInitialData() {
-      try {
-        const response = await fetch('/local/evaluation-jobs/active', {
-          signal: controller.signal,
-        })
-        if (!response.ok) return
-        const data = await response.json()
-        if (typeof data.global_evaluator_type === 'string') {
-          setEvaluationEvaluator(data.global_evaluator_type as EvaluatorType)
-        }
-        if (Array.isArray(data.evaluators)) {
-          setEvaluationEvaluators(data.evaluators)
-        }
-      } catch (err) {
-        console.error('Failed to load initial data:', err)
-      }
-    }
-    void fetchInitialData()
-    return () => controller.abort()
-  }, [])
-
   return (
     <AppContext.Provider value={{
       theme, toggleThemeHandler,
       lang, setLang,
       auth, signOut,
       configStatus, setConfigStatus,
-      evaluationEvaluator, setEvaluationEvaluator, evaluationEvaluators, setEvaluationEvaluators,
       pricingData, setPricingData,
       showToast,
       error, setError,

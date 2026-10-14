@@ -821,14 +821,14 @@
   line-height: 1.5;
 }
 
-.evaluator-queue-panel {
+.evaluator-active-panel {
   border: 1px solid var(--border-color);
   border-radius: 8px;
   margin-bottom: 24px;
   overflow: hidden;
 }
 
-.evaluator-queue-header {
+.evaluator-active-header {
   align-items: flex-start;
   border-bottom: 1px solid var(--border-color);
   display: flex;
@@ -838,19 +838,19 @@
   padding: 12px 16px;
 }
 
-.evaluator-queue-title {
+.evaluator-active-title {
   color: var(--text-primary);
   font-size: 14px;
   font-weight: 800;
 }
 
-.evaluator-queue-subtitle {
+.evaluator-active-subtitle {
   color: var(--text-muted);
   font-size: 12px;
   margin-top: 3px;
 }
 
-.evaluator-queue-list {
+.evaluator-active-list {
   display: flex;
   flex-direction: column;
 }
@@ -899,56 +899,6 @@
   }
 }
 
-.evaluation-job-status-queued {
-  background: var(--surface-hover);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-}
-
-.evaluation-job-outcome {
-  align-items: center;
-  border-radius: 999px;
-  display: inline-flex;
-  font-size: 11px;
-  font-weight: 800;
-  justify-content: center;
-  min-height: 22px;
-  padding: 2px 8px;
-  white-space: nowrap;
-}
-
-.evaluation-job-outcome-solved {
-  background: var(--badge-success-bg);
-  color: var(--badge-success-text);
-}
-
-.evaluation-job-outcome-partial {
-  background: var(--icon-yellow-bg, #fef3c7);
-  color: #92400e;
-}
-
-.evaluation-job-outcome-failed {
-  background: var(--badge-error-bg);
-  color: var(--badge-error-text);
-}
-
-.evaluation-job-outcome-stuck {
-  background: var(--icon-purple-bg, #f3e8ff);
-  color: #7c3aed;
-}
-
-.evaluation-job-outcome-no_op {
-  background: var(--surface-hover);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-}
-
-.evaluation-job-outcome-unknown {
-  background: var(--surface-hover);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-}
-
 .evaluation-job-main {
   min-width: 0;
 }
@@ -963,7 +913,6 @@
   gap: 6px;
 }
 
-.evaluation-job-trigger,
 .evaluation-job-source {
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -977,17 +926,6 @@
   color: var(--text-muted);
   font-size: 11px;
   margin-top: 3px;
-}
-
-.evaluation-warning {
-  background: var(--badge-error-bg);
-  border: 1px solid color-mix(in srgb, var(--color-red) 40%, transparent);
-  border-radius: 6px;
-  color: var(--badge-error-text);
-  font-size: 12px;
-  font-weight: 700;
-  margin: 10px 16px;
-  padding: 8px 10px;
 }
 
 .sessions-empty-state {
@@ -1040,10 +978,6 @@
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.session-evaluator-picker {
-  margin: 8px 0;
 }
 
 .session-eval-btn {
@@ -1143,51 +1077,6 @@
   box-shadow: 0 4px 14px rgba(100, 116, 139, 0.35);
   transform: translateY(-1px);
   filter: none;
-}
-
-.session-eval-btn-primary {
-  margin-top: 12px;
-  padding: 8px 20px;
-  border: none;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
-  letter-spacing: 0.3px;
-}
-
-.session-eval-btn-primary:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
-  background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
-}
-
-.session-eval-btn-primary:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 1px 4px rgba(99, 102, 241, 0.3);
-}
-
-.session-eval-btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  transform: none;
-}
-
-.session-eval-btn-primary.running {
-  animation: eval-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes eval-pulse {
-  0%, 100% {
-    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
-  }
-  50% {
-    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.6);
-  }
 }
 
 .session-eval-section {
@@ -1578,8 +1467,7 @@
     transform: none;
   }
 
-  .evaluation-job-running-pulse,
-  .session-eval-btn-primary.running {
+  .evaluation-job-running-pulse {
     animation: none;
   }
 }

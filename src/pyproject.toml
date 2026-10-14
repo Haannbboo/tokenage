@@ -3,7 +3,7 @@
 # changed since the last `tokenage server bootstrap`.
 [project]
 name = "tokenage-server"
-description = "tokenage server: API, OTLP collector, proxy, evaluation worker"
+description = "tokenage server: API, OTLP collector, dashboard, usage and evaluation storage"
 requires-python = ">=3.12"
 dynamic = ["version"]
 dependencies = [

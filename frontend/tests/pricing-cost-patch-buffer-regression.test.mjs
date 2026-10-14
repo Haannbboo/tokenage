@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const here = join(dirname(fileURLToPath(import.meta.url)), '..')
-const settingsHook = readFileSync(join(here, 'src', 'hooks', 'useSettingsData.ts'), 'utf-8')
 const pricingHook = readFileSync(join(here, 'src', 'hooks', 'usePricingData.ts'), 'utf-8')
 
 function extractCallback(source, name) {
@@ -19,13 +18,6 @@ function extractCallback(source, name) {
 
 const costChangeSource = extractCallback(pricingHook, 'handleCostChange')
 const savePricingSource = extractCallback(pricingHook, 'handleSavePricing')
-
-test('settings hook no longer reads or writes YAML config', () => {
-  assert.doesNotMatch(settingsHook, /method: 'PUT'/)
-  assert.doesNotMatch(settingsHook, /configContent/)
-  assert.doesNotMatch(settingsHook, /yaml/)
-  assert.doesNotMatch(settingsHook, /costPatches/)
-})
 
 test('pricing cost edits keep keystroke path out of YAML serialization', () => {
   assert.doesNotMatch(costChangeSource, /yaml\.dump\(/)

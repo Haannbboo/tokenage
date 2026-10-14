@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const dashboard = readFileSync(join(root, 'src/pages/DashboardPage.tsx'), 'utf8')
+const dashboard = readFileSync(join(root, 'src/pages/SessionsTab.tsx'), 'utf8')
 const types = readFileSync(join(root, 'src/types.ts'), 'utf8')
 const css = readFileSync(join(root, 'src/App.css'), 'utf8')
 const zh = readFileSync(join(root, 'src/i18n/zh.ts'), 'utf8')

@@ -246,6 +246,13 @@ EXIT_NOT_SIGNED_IN = 3
 def run_setup(*, disable: bool) -> int:
     """``tokenage setup`` — wire, or un-wire, the agents found on this machine."""
     agents = installed_agents()
+    if not disable:
+        # Record which CLI evaluates local sessions, before any sign-in check:
+        # a machine with no evaluator CLI stays unset and re-detects at service
+        # startup.
+        from client.evaluation import ensure_evaluation_configured
+
+        ensure_evaluation_configured(available=agents)
     if not agents:
         print("No tracked agents detected; nothing to wire.")
         return 0

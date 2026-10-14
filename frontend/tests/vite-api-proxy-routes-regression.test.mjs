@@ -9,10 +9,11 @@ const proxiedRoutes = [
   '/usage/tools',
   '/devices/status',
   '/model-effectiveness?group_by=model',
-  '/local/poll/job-123',
-  '/local/evaluation-jobs/active',
-  '/local/evaluation-jobs/job-123',
-  '/local/sessions/session-123/evaluation-jobs',
+  '/evaluation-jobs/active',
+  '/evaluation-jobs/job-123',
+  '/evaluation-jobs/started',
+  '/sessions/session-123/evaluation',
+  '/sessions/session-123/evaluation-jobs',
   '/pricing',
   '/pricing/z-ai/glm-5.1-20260406',
   '/auth/devices',
@@ -27,7 +28,16 @@ for (const route of proxiedRoutes) {
   )
 }
 
-const frontendRoutes = ['/', '/assets/index.js', '/favicon.ico']
+// The /local/* evaluation routes were hard removed; requests must not be
+// proxied to the API anymore.
+const frontendRoutes = [
+  '/',
+  '/assets/index.js',
+  '/favicon.ico',
+  '/local/evaluation-jobs/active',
+  '/local/sessions/session-123/evaluation-jobs',
+  '/local/poll/job-123',
+]
 
 for (const route of frontendRoutes) {
   assert.equal(

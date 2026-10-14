@@ -102,5 +102,5 @@ def client_root() -> Path | None:
 
 
 def client_config_path() -> Path:
-    """The client's own config (``proxy:`` section); never the server's."""
+    """The client's proxy/evaluation config; never the server's."""
     return tracker_home() / "client.yaml"

@@ -295,6 +295,32 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:4000
 
 对于 streaming response，proxy 会把 TTFT 记录为第一个 upstream chunk 到达前的时间。
 
+## 自动评估会话
+
+客户端服务会在 Claude Code、Codex、OpenCode 或 Kilo 会话静默十分钟后评估其本地
+记录，按最后活动时间从旧到新处理。评估使用你本机评估器的账号和额度。安装配置时
+按 **Claude Code → Codex → OpenCode** 的顺序选择已安装的评估器；都未安装时不运行
+评估。更新不会覆盖你显式选择的评估器。
+
+配置写在 `~/.tokenage/client.yaml`，可与 `proxy:` 段并存：
+
+```yaml
+evaluation:
+  auto_enabled: true
+  evaluator: claude        # claude、codex 或 opencode
+  quiet_delay_seconds: 600
+```
+
+设为 `auto_enabled: false` 可关闭，修改后运行 `tokenage client restart`。会话恢复活动后，
+会在再次静默时重新评估。Dashboard 展示最新结果和运行历史，并保留手动标注；
+客户端结果不会覆盖手动标注。
+
+完整会话记录仅在本机交给你配置的评估器；tokenage 服务端只接收有长度限制、经过
+敏感信息清理的派生结果和运行元数据。客户端在 `$TOKENAGE_HOME/evaluations/` 下按会话
+保留一份最新结果及提交状态；提交失败时重试上传，不重复评估。服务端保存运行元数据
+历史和会话最新结果，不保存历次结果副本。
+永久拒绝（HTTP 400、404、409 或 422）会在本地记录 `submission_error`，不自动重试。
+
 ## Tracking 覆盖范围
 
 | 指标 | Claude Code | Codex | OpenCode / Kilo Code | Direct proxy |

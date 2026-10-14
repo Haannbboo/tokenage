@@ -42,9 +42,6 @@ server:
   api_port: 4001
 db:
   path: {db_path}
-evaluation:
-  auto_enabled: false
-  idle_sleep_cap_seconds: 1
 models:
   test-model:
     cost:
@@ -66,8 +63,6 @@ PROJECT_MODULES = [
     "src.auth",
     "src.cli",
     "src.database",
-    "src.evaluation",
-    "src.evaluation_worker",
     "src.pricing",
     "src.schema_migrations",
     "src.otlp",
@@ -165,16 +160,6 @@ def costs_module(load_module: Callable[[str], ModuleType]) -> ModuleType:
 @pytest.fixture
 def database_module(load_module: Callable[[str], ModuleType]) -> ModuleType:
     return load_module("src.database")
-
-
-@pytest.fixture
-def evaluation_module(load_module: Callable[[str], ModuleType]) -> ModuleType:
-    return load_module("src.evaluation")
-
-
-@pytest.fixture
-def evaluation_worker_module(load_module: Callable[[str], ModuleType]) -> ModuleType:
-    return load_module("src.evaluation_worker")
 
 
 @pytest.fixture

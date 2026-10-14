@@ -62,14 +62,6 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     rate_limits.setdefault("ingest_per_minute", 1000)  # per token: OTLP + usage
     rate_limits.setdefault("api_per_minute", 1200)  # per user: authenticated API
 
-    evaluation = config.setdefault("evaluation", {})
-    evaluation.setdefault("auto_enabled", True)
-    evaluation.setdefault("quiet_delay_seconds", 600)
-    evaluation.setdefault("max_concurrent_jobs", 1)
-    evaluation.setdefault("queue_buffer_multiplier", 2)
-    evaluation.setdefault("idle_sleep_cap_seconds", 30)
-    evaluation.setdefault("worker_tick_timeout_seconds", 120)
-
     if "url" not in db:
         db.setdefault("path", os.path.join(get_tracker_home(), "usage.db"))
         db["path"] = expand_path(db["path"])
@@ -136,28 +128,3 @@ def refresh_runtime_config(path: str | None = None) -> dict[str, Any]:
 
 CONFIG: dict[str, Any] = {}
 refresh_runtime_config(CONFIG_PATH)
-
-
-def _reload_config(path: str | None = None) -> None:
-    """Re-applies the config merge so CONFIG reflects the latest file values."""
-    updated_config = load_config(path)
-    with _config_lock:
-        _replace_contents(CONFIG, updated_config)
-
-
-def set_evaluation_evaluator(evaluator: str, path: str | None = None) -> None:
-    """Set the evaluator type in config.yaml and reload config."""
-    config_path = get_config_path(path)
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            config = yaml.safe_load(f) or {}
-    except FileNotFoundError:
-        config = {}
-    evaluation = config.setdefault("evaluation", {})
-    evaluation["evaluator"] = evaluator
-    config_parent = os.path.dirname(config_path)
-    if config_parent:
-        os.makedirs(config_parent, exist_ok=True)
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
-    _reload_config(path)

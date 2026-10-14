@@ -3,7 +3,6 @@ import { resolveApiUrl } from './vite-api-url.js'
 export function shouldProxyApiRequest(requestUrl) {
   const pathname = new URL(requestUrl, 'http://localhost').pathname
   return (
-    pathname === '/config' ||
     pathname.startsWith('/config/') ||
     pathname === '/pricing' ||
     pathname.startsWith('/pricing/') ||

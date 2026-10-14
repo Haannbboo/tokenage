@@ -1,16 +1,47 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
-import type { PricingEntry } from '../types.ts'
+import type { PricingEntry, PricingSource } from '../types.ts'
 
-type CostPatchOp = 'set' | 'delete'
-type CostPatch = { path: string[]; op: CostPatchOp; value?: number }
+export type PriceField = 'input' | 'output' | 'cacheRead' | 'cacheWrite'
+type PriceDraft = Record<PriceField, string>
+/** A listed row; source 'new' marks an unsaved model added by name. */
+export type Model = { name: string } & Omit<PricingEntry, 'source'> & { source: PricingSource | 'new' }
 
-/** Pricing source keys in resolution-priority order: manual first, then the
- *  sources seen in the pricing data. */
+/** The model's current effective flat rate as editable strings. */
+function draftFrom(model?: PricingEntry): PriceDraft {
+  if (!model) return { input: '', output: '', cacheRead: '', cacheWrite: '' }
+  return {
+    input: String(model.input),
+    output: String(model.output),
+    cacheRead: model.cache_read == null ? '' : String(model.cache_read),
+    cacheWrite: model.cache_write == null ? '' : String(model.cache_write),
+  }
+}
+
+/** Parse a draft into the override body; returns a field name when invalid. */
+export function overrideBody(draft: PriceDraft): Record<string, any> | string {
+  const body: Record<string, any> = {}
+  const keys: Record<PriceField, string> = { input: 'input', output: 'output', cacheRead: 'cache_read', cacheWrite: 'cache_write' }
+  for (const field of ['input', 'output', 'cacheRead', 'cacheWrite'] as PriceField[]) {
+    const raw = draft[field].trim()
+    if (raw === '') {
+      if (field === 'input' || field === 'output') return field
+      body[keys[field]] = null
+      continue
+    }
+    const value = Number(raw)
+    if (!Number.isFinite(value) || value < 0) return field
+    body[keys[field]] = value
+  }
+  return body
+}
+
+/** Pricing source keys in resolution-priority order: the caller's own
+ *  overrides, then server config, then the sources seen in the pricing data. */
 export function pricingSourceOrder(seenSources?: string[]): string[] {
   const seen = new Set(seenSources ?? [])
-  const order = ['yaml']
+  const order = ['user', 'yaml']
   for (const name of ['openrouter', 'litellm']) {
     if (seen.size === 0 || seen.has(name)) order.push(name)
   }
@@ -18,10 +49,6 @@ export function pricingSourceOrder(seenSources?: string[]): string[] {
     if (!order.includes(name)) order.push(name)
   }
   return order
-}
-
-function costPathPrefix(model: string): string[] {
-  return ['models', model, 'cost']
 }
 
 export function usePricingData() {
@@ -34,7 +61,8 @@ export function usePricingData() {
   } = useApp()
 
   const [pricingSearch, setPricingSearch] = useState('')
-  const [costPatches, setCostPatches] = useState<CostPatch[]>([])
+  const [drafts, setDrafts] = useState<Record<string, PriceDraft>>({})
+  const [repricePast, setRepricePast] = useState(true)
   // Monotonic id: only the latest pricing response may update state, so a
   // slow earlier fetch (or the save refetch) can't overwrite newer data.
   const pricingSeqRef = useRef(0)
@@ -66,12 +94,12 @@ export function usePricingData() {
   const filteredPricingModels = useMemo(() => {
     if (!pricingData) return []
     const search = pricingSearch.toLowerCase()
-    const models: Array<{ name: string } & PricingEntry> = []
+    const models: Model[] = []
     for (const [name, data] of Object.entries(pricingData)) {
       if (search && !name.toLowerCase().includes(search)) continue
       models.push({ name, ...data })
     }
-    // Manual overrides first, then sources in resolution priority order.
+    // Custom overrides first, then server config, then sources in resolution priority order.
     const order = pricingSourceOrder(models.map((m) => m.source))
     const rank = (source: string) => {
       const i = order.indexOf(source)
@@ -81,91 +109,148 @@ export function usePricingData() {
     return models
   }, [pricingData, pricingSearch])
 
-  const handleCostChange = useCallback((model: string, field: string, val: string) => {
-    const numValue = val === '' ? undefined : Number(val)
-    if (numValue !== undefined && !Number.isFinite(numValue)) return
-    const op: CostPatchOp = val === '' ? 'delete' : 'set'
-    const path = costPathPrefix(model).concat(field)
-    const nextPatch: CostPatch = numValue === undefined ? { path, op } : { path, op, value: numValue }
-    setCostPatches((patches) => {
-      const existingIndex = patches.findIndex(patch => patch.path.join('\0') === path.join('\0'))
-      if (existingIndex === -1) return [...patches, nextPatch]
-      const next = [...patches]
-      next[existingIndex] = nextPatch
+  /** Draft-only rows: models added by name that no source prices yet. */
+  const newModels = useMemo(
+    () => Object.keys(drafts)
+      .filter((name) => !pricingData?.[name])
+      .map((name): Model => ({ name, input: 0, output: 0, cache_read: 0, cache_write: null, source: 'new' })),
+    [drafts, pricingData],
+  )
+
+  const handleCostChange = useCallback((model: Model, field: PriceField, val: string) => {
+    setDrafts((prev) => {
+      // The first edit prefills the model's effective prices so the user
+      // edits the full flat rate, not one field of it.
+      const draft = prev[model.name] ?? draftFrom(pricingData?.[model.name])
+      return { ...prev, [model.name]: { ...draft, [field]: val } }
+    })
+  }, [pricingData])
+
+  const dropDraft = useCallback((model: string) => {
+    setDrafts((prev) => {
+      const next = { ...prev }
+      delete next[model]
       return next
     })
   }, [])
 
-  /** Cost fields currently in effect for a model: a manual override resolved
-   *  from the pricing data, with unsaved edits applied on top. */
-  const activeCost = useCallback((model: { name: string } & PricingEntry) => {
-    const active: Record<string, number> = {}
-    if (model.source === 'yaml') {
-      active.input = model.input
-      active.output = model.output
-      active.cacheRead = model.cache_read
-      if (typeof model.cache_write === 'number') active.cacheWrite = model.cache_write
+  /** Start a draft for a model by name. Returns false when the model is
+   *  already listed (the search is narrowed to it instead). */
+  const addModel = useCallback((name: string) => {
+    const model = name.trim()
+    if (!model) return true
+    if (pricingData?.[model]) {
+      setPricingSearch(model)
+      return false
     }
-    const prefix = costPathPrefix(model.name)
-    const prefixKey = prefix.join('\0')
-    for (const patch of costPatches) {
-      if (patch.path.length !== prefix.length + 1) continue
-      if (patch.path.slice(0, prefix.length).join('\0') !== prefixKey) continue
-      const field = patch.path[prefix.length]
-      if (patch.op === 'delete') delete active[field]
-      else if (patch.value !== undefined) active[field] = patch.value
+    setDrafts((prev) => (prev[model] ? prev : { ...prev, [model]: draftFrom() }))
+    return true
+  }, [pricingData])
+
+  const refetchPricing = useCallback(async () => {
+    try {
+      const seq = ++pricingSeqRef.current
+      const pricingResp = await fetch('/pricing')
+      if (pricingResp.ok && seq === pricingSeqRef.current) {
+        setPricingData(await pricingResp.json())
+      }
+    } catch {
+      /* non-critical */
     }
-    return active
-  }, [costPatches])
+  }, [setPricingData])
 
   const handleSavePricing = useCallback(async () => {
-    if (costPatches.length === 0) return
-    setConfigStatus('saving')
-    try {
-      const response = await fetch('/config', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patches: costPatches }),
-      })
-      if (!response.ok) {
-        const error = await response.json()
-        setError(error.detail || t('Failed to save config'))
+    const entries = Object.entries(drafts)
+    if (entries.length === 0) return
+    const bodies: Array<[string, Record<string, any>]> = []
+    for (const [model, draft] of entries) {
+      const body = overrideBody(draft)
+      if (typeof body === 'string') {
+        setError(`${t('Invalid price')}: ${model} (${body})`)
         setConfigStatus('error')
         return
       }
-      setCostPatches([])
-      try {
-        const seq = ++pricingSeqRef.current
-        const pricingResp = await fetch('/pricing')
-        if (pricingResp.ok && seq === pricingSeqRef.current) {
-          setPricingData(await pricingResp.json())
+      bodies.push([model, body])
+    }
+    setConfigStatus('saving')
+    let repriced = 0
+    try {
+      for (const [model, body] of bodies) {
+        const path = encodeURIComponent(model)
+        const response = await fetch(`/pricing/overrides/${path}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}))
+          setError(`${model}: ${typeof error.detail === 'string' ? error.detail : t('Failed to save pricing')}`)
+          setConfigStatus('error')
+          return
         }
-      } catch {
-        /* non-critical */
+        dropDraft(model)
+        if (repricePast) {
+          const repriceResp = await fetch(`/usage/reprice?model=${path}`, { method: 'POST' })
+          if (!repriceResp.ok) {
+            setError(`${model}: ${t('Failed to reprice past usage')}`)
+            setConfigStatus('error')
+            return
+          }
+          repriced += (await repriceResp.json()).repriced ?? 0
+        }
       }
       setConfigStatus('saved')
-      showToast(t('Configuration saved successfully'))
+      showToast(repricePast
+        ? `${t('Pricing saved; repriced usage rows:')} ${repriced}`
+        : t('Pricing saved'))
       setTimeout(() => setConfigStatus('idle'), 3000)
     } catch {
-      setError(t('Connection error while saving config'))
+      setError(t('Connection error while saving pricing'))
       setConfigStatus('error')
+    } finally {
+      // Saved models resolve to their override now, even after a failure.
+      await refetchPricing()
     }
   }, [
-    costPatches,
+    drafts,
+    dropDraft,
+    repricePast,
+    refetchPricing,
     setConfigStatus,
     setError,
-    setPricingData,
     showToast,
   ])
+
+  const handleResetPricing = useCallback(async (model: string) => {
+    try {
+      const response = await fetch(`/pricing/overrides/${encodeURIComponent(model)}`, { method: 'DELETE' })
+      if (!response.ok && response.status !== 404) {
+        const error = await response.json().catch(() => ({}))
+        setError(`${model}: ${typeof error.detail === 'string' ? error.detail : t('Failed to reset pricing')}`)
+        return
+      }
+      dropDraft(model)
+      showToast(t('Custom pricing removed'))
+    } catch {
+      setError(t('Connection error while resetting pricing'))
+      return
+    }
+    await refetchPricing()
+  }, [dropDraft, refetchPricing, setError, showToast])
 
   return {
     pricingSearch,
     setPricingSearch,
     filteredPricingModels,
-    costPatches,
-    hasPricingEdits: costPatches.length > 0,
-    activeCost,
+    newModels,
+    drafts,
+    hasPricingEdits: Object.keys(drafts).length > 0,
+    repricePast,
+    setRepricePast,
+    addModel,
+    dropDraft,
     handleCostChange,
     handleSavePricing,
+    handleResetPricing,
   }
 }

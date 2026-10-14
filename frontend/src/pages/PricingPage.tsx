@@ -2,13 +2,15 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent } from
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 import { formatNumber, getModelIcon } from '../utils'
-import { usePricingData, pricingSourceOrder } from '../hooks/usePricingData'
+import { usePricingData, pricingSourceOrder, type Model, type PriceField } from '../hooks/usePricingData'
 import type { PricingEntry } from '../types'
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 const SOURCE_STYLES: Record<string, { bg: string; color: string; label: string }> = {
-  yaml: { bg: 'var(--icon-yellow-bg)', color: '#b8860b', label: 'Manual' },
+  user: { bg: 'rgba(22, 163, 74, 0.15)', color: '#16a34a', label: 'Custom' },
+  yaml: { bg: 'var(--icon-yellow-bg)', color: '#b8860b', label: 'Server' },
+  new: { bg: 'var(--surface-hover)', color: 'var(--text-primary)', label: 'New' },
   litellm: { bg: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', label: 'LiteLLM' },
   openrouter: { bg: 'rgba(147, 51, 234, 0.15)', color: '#9333ea', label: 'OpenRouter' },
 }
@@ -32,8 +34,6 @@ function formatDays(days: number[] | null): string {
   return days.map((day) => DAY_LABELS[day] ?? String(day)).join(', ')
 }
 
-type Model = { name: string } & PricingEntry
-
 const PAGE_SIZE = 200
 
 export function PricingPage() {
@@ -42,13 +42,20 @@ export function PricingPage() {
     pricingSearch,
     setPricingSearch,
     filteredPricingModels,
+    newModels,
+    drafts,
     hasPricingEdits,
-    activeCost,
+    repricePast,
+    setRepricePast,
+    addModel,
+    dropDraft,
     handleCostChange,
     handleSavePricing,
+    handleResetPricing,
   } = usePricingData()
 
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'yaml' | 'litellm' | 'openrouter'>('yaml')
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'user' | 'yaml' | 'litellm' | 'openrouter'>('user')
+  const [newModelName, setNewModelName] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
@@ -56,11 +63,12 @@ export function PricingPage() {
     setVisibleCount(PAGE_SIZE)
   }, [sourceFilter, pricingSearch])
 
+  // Unsaved models added by name stay on top whatever the filter.
   const models = useMemo(
-    () => (sourceFilter === 'all'
+    () => [...newModels, ...(sourceFilter === 'all'
       ? filteredPricingModels
-      : filteredPricingModels.filter((m) => m.source === sourceFilter)),
-    [filteredPricingModels, sourceFilter],
+      : filteredPricingModels.filter((m) => m.source === sourceFilter))],
+    [newModels, filteredPricingModels, sourceFilter],
   )
 
   const visibleModels = models.slice(0, visibleCount)
@@ -82,14 +90,14 @@ export function PricingPage() {
   }, [visibleCount, models.length])
 
   const counts = useMemo(() => {
-    const bySource: Record<string, number> = { yaml: 0, litellm: 0, openrouter: 0 }
+    const bySource: Record<string, number> = { user: 0, yaml: 0, litellm: 0, openrouter: 0 }
     for (const m of filteredPricingModels) bySource[m.source] = (bySource[m.source] ?? 0) + 1
     return bySource
   }, [filteredPricingModels])
 
   const formatPrice = (v: number | null | undefined) => (typeof v === 'number' ? v.toFixed(3) : '—')
 
-  const modelPrice = (model: Model, field: string) => {
+  const modelPrice = (model: Model, field: PriceField) => {
     if (field === 'cacheRead') return model.cache_read
     if (field === 'cacheWrite') return model.cache_write
     return model[field as keyof PricingEntry] as number | null | undefined
@@ -97,27 +105,32 @@ export function PricingPage() {
 
   const saving = configStatus === 'saving'
 
-  const inputProps = (model: Model, field: string) => {
+  const inputProps = (model: Model, field: PriceField) => {
     const price = modelPrice(model, field)
-    const active = activeCost(model)
+    const draft = drafts[model.name]
+    // Only drafts and the caller's own overrides show active values; other
+    // sources show their price as a placeholder.
+    const value = draft
+      ? draft[field]
+      : model.source === 'user' && price !== undefined && price !== null ? String(price) : ''
+    const active = value !== ''
     return {
       type: 'number' as const,
       step: '0.001',
+      min: '0',
       disabled: saving,
-      value: active[field] !== undefined ? active[field] : '',
-      placeholder: active[field] !== undefined
-        ? String(active[field])
-        : price !== undefined && price !== null ? String(price) : '—',
-      onChange: (e: ChangeEvent<HTMLInputElement>) => handleCostChange(model.name, field, e.target.value),
+      value,
+      placeholder: model.source !== 'new' && price !== undefined && price !== null ? String(price) : '—',
+      onChange: (e: ChangeEvent<HTMLInputElement>) => handleCostChange(model, field, e.target.value),
       style: {
         width: '100%',
         padding: '6px 8px',
         borderRadius: '4px',
         border: '1px solid transparent',
         borderBottom: '1px solid var(--border-color)',
-        background: active[field] !== undefined ? 'var(--input-bg)' : 'transparent',
+        background: active ? 'var(--input-bg)' : 'transparent',
         fontSize: '13px',
-        color: active[field] !== undefined ? 'var(--text-primary)' : 'var(--text-muted)',
+        color: active ? 'var(--text-primary)' : 'var(--text-muted)',
         outline: 'none',
         textAlign: 'left' as const,
       },
@@ -167,7 +180,7 @@ export function PricingPage() {
     </div>
   )
 
-  const toggleSourceFilter = (source: 'yaml' | 'litellm' | 'openrouter') => {
+  const toggleSourceFilter = (source: 'user' | 'yaml' | 'litellm' | 'openrouter') => {
     setSourceFilter((prev) => (prev === source ? 'all' : source))
   }
 
@@ -182,6 +195,15 @@ export function PricingPage() {
         <div className="panel-tabs" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div className="tab active"><span>💎</span> {t('Model Pricing')}</div>
           <div style={{ paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
+              <input
+                type="checkbox"
+                checked={repricePast}
+                disabled={saving}
+                onChange={(e) => setRepricePast(e.target.checked)}
+              />
+              {t('Reprice past usage')}
+            </label>
             <button
               type="button"
               className="nav-item"
@@ -202,14 +224,14 @@ export function PricingPage() {
         </div>
         <div className="panel-body" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            {t('Precedence: Manual config overrides win; otherwise the configured price sources are checked in order (earlier wins), then a containing-name fallback.')}
+            {t('Precedence: your Custom prices win, then Server config; otherwise the configured price sources are checked in order (earlier wins), then a containing-name fallback.')}
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
             {sourceOrder.map((key, index) => {
-              if (key !== 'yaml' && key !== 'litellm' && key !== 'openrouter') return null
+              if (key !== 'user' && key !== 'yaml' && key !== 'litellm' && key !== 'openrouter') return null
               const style = sourceStyle(key)
-              const filter = key as 'yaml' | 'litellm' | 'openrouter'
-              return statCard(key === 'yaml' ? t('Manual') : style.label, counts[key] ?? 0, style.color, { key, active: sourceFilter === filter, onClick: () => toggleSourceFilter(filter), rank: index + 1 })
+              const filter = key as 'user' | 'yaml' | 'litellm' | 'openrouter'
+              return statCard(t(style.label), counts[key] ?? 0, style.color, { key, active: sourceFilter === filter, onClick: () => toggleSourceFilter(filter), rank: index + 1 })
             })}
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -229,6 +251,39 @@ export function PricingPage() {
                 outline: 'none',
               }}
             />
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (!addModel(newModelName)) setSourceFilter('all')
+                setNewModelName('')
+              }}
+              style={{ display: 'flex', gap: '6px', flex: '1 1 240px' }}
+            >
+              <input
+                type="text"
+                placeholder={t('Model name to price...')}
+                value={newModelName}
+                onChange={(e) => setNewModelName(e.target.value)}
+                style={{
+                  flex: 1,
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  fontSize: '13px',
+                  background: 'var(--input-bg)',
+                  color: 'var(--text-primary)',
+                  outline: 'none',
+                }}
+              />
+              <button
+                type="submit"
+                className="nav-item"
+                disabled={!newModelName.trim()}
+                style={{ fontSize: '12px', fontWeight: 600, padding: '6px 14px', borderRadius: '6px' }}
+              >
+                {t('Add model')}
+              </button>
+            </form>
           </div>
         </div>
       </div>
@@ -245,6 +300,7 @@ export function PricingPage() {
                 <th>{t('Cache Read (per 1M)')}</th>
                 <th>{t('Cache Write (per 1M)')}</th>
                 <th style={{ width: '80px' }}>{t('Details')}</th>
+                <th style={{ width: '80px' }} />
               </tr>
             </thead>
             <tbody>
@@ -273,7 +329,7 @@ export function PricingPage() {
                             color: style.color,
                           }}
                         >
-                          {style.label}
+                          {t(style.label)}
                         </span>
                       </td>
                       <td>
@@ -300,10 +356,34 @@ export function PricingPage() {
                           </button>
                         )}
                       </td>
+                      <td>
+                        {drafts[model.name] ? (
+                          <button
+                            type="button"
+                            className="nav-item"
+                            disabled={saving}
+                            onClick={() => dropDraft(model.name)}
+                            style={{ fontSize: '12px', padding: '4px 8px' }}
+                          >
+                            {t('Discard')}
+                          </button>
+                        ) : model.source === 'user' && (
+                          <button
+                            type="button"
+                            className="nav-item"
+                            disabled={saving}
+                            title={t('Remove your custom price for this model')}
+                            onClick={() => handleResetPricing(model.name)}
+                            style={{ fontSize: '12px', padding: '4px 8px' }}
+                          >
+                            {t('Reset')}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                     {showDetails && (hasTiers || hasWindows) && (
                       <tr>
-                        <td colSpan={7} style={{ background: 'var(--surface-hover)', padding: '12px 16px' }}>
+                        <td colSpan={8} style={{ background: 'var(--surface-hover)', padding: '12px 16px' }}>
                           {hasTiers && (
                             <div style={{ marginBottom: hasWindows ? '12px' : 0 }}>
                               <div style={{ fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>{t('Token tiers')}</div>
@@ -367,7 +447,7 @@ export function PricingPage() {
                 )
               }) : (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
+                  <td colSpan={8} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
                     {pricingSearch
                       ? t('No models match your search.')
                       : sourceFilter !== 'all'
@@ -378,7 +458,7 @@ export function PricingPage() {
               )}
               {visibleCount < models.length && (
                 <tr>
-                  <td colSpan={7} style={{ padding: '0', border: 'none' }}>
+                  <td colSpan={8} style={{ padding: '0', border: 'none' }}>
                     <div ref={sentinelRef} style={{ height: '1px' }} />
                   </td>
                 </tr>

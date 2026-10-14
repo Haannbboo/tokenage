@@ -247,7 +247,7 @@ export type OnboardingCopiedCommand = {
   command: string
 }
 
-export type PricingSource = 'yaml' | 'litellm' | 'openrouter'
+export type PricingSource = 'user' | 'yaml' | 'litellm' | 'openrouter'
 
 export type PricingTier = {
   min_tokens: number

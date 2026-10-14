@@ -43,5 +43,18 @@ test('pricing page renders tiers and time-of-day windows', () => {
 })
 
 test('pricing empty state spans all pricing columns', () => {
-  assert.match(pageSource, /colSpan=\{7\}/)
+  assert.match(pageSource, /colSpan=\{8\}/)
+})
+
+test('pricing page lists Custom overrides first and defaults to them', () => {
+  assert.match(pageSource, /user: \{[^}]*label: 'Custom' \}/)
+  assert.match(pageSource, /yaml: \{[^}]*label: 'Server' \}/)
+  assert.match(pageSource, /useState<'all' \| 'user' \| 'yaml' \| 'litellm' \| 'openrouter'>\('user'\)/)
+})
+
+test('pricing page offers reprice, add model and reset for custom rows', () => {
+  assert.match(pageSource, /checked=\{repricePast\}/)
+  assert.match(pageSource, /addModel\(newModelName\)/)
+  assert.match(pageSource, /model\.source === 'user' && \(/)
+  assert.match(pageSource, /handleResetPricing\(model\.name\)/)
 })

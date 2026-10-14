@@ -18,35 +18,40 @@ function extractCallback(source, name) {
 
 const costChangeSource = extractCallback(pricingHook, 'handleCostChange')
 const savePricingSource = extractCallback(pricingHook, 'handleSavePricing')
+const resetPricingSource = extractCallback(pricingHook, 'handleResetPricing')
 
-test('pricing cost edits keep keystroke path out of YAML serialization', () => {
-  assert.doesNotMatch(costChangeSource, /yaml\.dump\(/)
-  assert.doesNotMatch(costChangeSource, /configParsed/)
-  assert.match(costChangeSource, /setCostPatches\(/)
+test('pricing source order ranks custom overrides before server config', () => {
+  assert.match(pricingHook, /const order = \['user', 'yaml'\]/)
 })
 
-test('pricing cost edit patch buffer records set and delete operations', () => {
-  assert.match(pricingHook, /type CostPatchOp = 'set' \| 'delete'/)
-  assert.match(pricingHook, /type CostPatch = \{ path: string\[\]; op: CostPatchOp; value\?: number \}/)
-  assert.match(costChangeSource, /const op: CostPatchOp = val === '' \? 'delete' : 'set'/)
-  assert.match(costChangeSource, /Number\(val\)/)
-  assert.match(costChangeSource, /Number\.isFinite\(numValue\)/)
-  assert.match(costChangeSource, /costPathPrefix\(model\)/)
-  assert.match(pricingHook, /\['models', model, 'cost'\]/)
+test('pricing cost edits prefill the full effective flat rate on first edit', () => {
+  assert.doesNotMatch(pricingHook, /costPatches|CostPatch/)
+  assert.match(costChangeSource, /prev\[model\.name\] \?\? draftFrom\(pricingData\?\.\[model\.name\]\)/)
 })
 
-test('pricing save routes to PATCH config endpoint', () => {
-  assert.match(savePricingSource, /method: 'PATCH'/)
-  assert.match(savePricingSource, /body: JSON\.stringify\(\{ patches: costPatches \}\)/)
+test('pricing override body requires input/output and nulls blank cache fields', () => {
+  assert.match(pricingHook, /if \(field === 'input' \|\| field === 'output'\) return field/)
+  assert.match(pricingHook, /body\[keys\[field\]\] = null/)
+  assert.match(pricingHook, /!Number\.isFinite\(value\) \|\| value < 0/)
 })
 
-test('pricing save clears the buffer after a successful save and refetches pricing', () => {
-  assert.doesNotMatch(savePricingSource, /const configResp = await fetch\('\/config'\)/)
+test('pricing save PUTs per-model overrides instead of PATCHing config', () => {
+  assert.doesNotMatch(pricingHook, /'\/config'/)
+  assert.match(savePricingSource, /fetch\(`\/pricing\/overrides\/\$\{path\}`, \{\s*method: 'PUT'/)
+  assert.match(savePricingSource, /const path = encodeURIComponent\(model\)/)
+})
 
-  const clearIndex = savePricingSource.indexOf('setCostPatches([])')
-  const refetchIndex = savePricingSource.indexOf("fetch('/pricing')")
-  assert.ok(clearIndex !== -1 && refetchIndex !== -1)
-  assert.ok(clearIndex < refetchIndex, 'patch buffer should clear before refetching pricing')
+test('pricing save optionally reprices past usage after each successful PUT', () => {
+  const putIndex = savePricingSource.indexOf("method: 'PUT'")
+  const repriceIndex = savePricingSource.indexOf('fetch(`/usage/reprice?model=${path}`')
+  assert.ok(putIndex !== -1 && repriceIndex > putIndex)
+  assert.match(savePricingSource, /if \(repricePast\)/)
+  assert.match(savePricingSource, /repriced \+= /)
+  assert.match(savePricingSource, /await refetchPricing\(\)/)
+})
 
-  assert.match(savePricingSource, /setPricingData\(await pricingResp\.json\(\)\)/)
+test('pricing reset deletes the override without repricing and refetches', () => {
+  assert.match(resetPricingSource, /method: 'DELETE'/)
+  assert.doesNotMatch(resetPricingSource, /\/usage\/reprice/)
+  assert.match(resetPricingSource, /await refetchPricing\(\)/)
 })

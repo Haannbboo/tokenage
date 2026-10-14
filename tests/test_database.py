@@ -5848,10 +5848,8 @@ def test_upsert_session_from_usage_scopes_tenant(fresh_db):
     returns only the (user_id, session_id) match.
 
     The tenant guard (bare session_id PK): a second user writing the same
-    session_id fails cleanly with IntegrityError instead of polluting the
-    first user's row.
+    session_id is skipped instead of polluting the first user's row.
     """
-    from sqlalchemy.exc import IntegrityError
     from sqlalchemy.orm import Session as OrmSession
 
     from src.database.sessions import get_session_record
@@ -5914,11 +5912,10 @@ def test_upsert_session_from_usage_scopes_tenant(fresh_db):
         assert get_session_record(session, "tenant-session", user_id="u3") is None
         assert get_session_record(session, "local-session", user_id="u1") is None
 
-    # Cross-tenant session_id collision: clean IntegrityError, no pollution.
-    with pytest.raises(IntegrityError):
-        database_module.upsert_session_from_usage(
-            make_usage("local-session", "u1"), db_path=db_path
-        )
+    # Cross-tenant session_id collision: skipped, no pollution.
+    database_module.upsert_session_from_usage(
+        make_usage("local-session", "u1"), db_path=db_path
+    )
     with database_module.get_engine(db_path).connect() as conn:
         local_row = conn.execute(
             database_module.text(
@@ -5927,6 +5924,57 @@ def test_upsert_session_from_usage_scopes_tenant(fresh_db):
         ).one()
     assert local_row.user_id == "u0"
     assert local_row.request_count == 1
+
+
+def test_upsert_session_adds_to_row_created_by_a_concurrent_first_usage(
+    fresh_db, monkeypatch
+):
+    """Two first usages of a session can both see no row; the one whose insert
+    loses must add to the winner's row, not fail or drop its increment."""
+    import src.database.sessions as sessions_module
+
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+
+    def make_usage(ts):
+        return database_module.Usage(
+            device_id="test-device",
+            ts=ts,
+            provider="openai",
+            model="gpt-4.1",
+            client_source="codex",
+            user_id="u1",
+            session_id="racy",
+            endpoint="otlp",
+            total_tokens=15,
+            status=200,
+            total_cost_usd=0.003,
+        )
+
+    database_module.upsert_session_from_usage(
+        make_usage(TS_2026_04_17_10), db_path=db_path
+    )
+
+    real = sessions_module.get_session_record
+    calls = []
+
+    def blind_first_lookup(*args, **kwargs):
+        calls.append(1)
+        return None if len(calls) == 1 else real(*args, **kwargs)
+
+    monkeypatch.setattr(sessions_module, "get_session_record", blind_first_lookup)
+    database_module.upsert_session_from_usage(
+        make_usage(TS_2026_04_17_11), db_path=db_path
+    )
+
+    with database_module.get_engine(db_path).connect() as conn:
+        row = conn.execute(
+            database_module.text(
+                "SELECT request_count, total_tokens FROM sessions "
+                "WHERE session_id = 'racy'"
+            )
+        ).one()
+    assert (row.request_count, row.total_tokens) == (2, 30)
 
 
 def test_rebuild_sessions_from_usage_stamps_user_id(fresh_db):

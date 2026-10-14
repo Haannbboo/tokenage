@@ -251,11 +251,10 @@ def log_usage(
     a stored row missing from usage_daily whenever a later step hit SQLite's
     single-writer lock under concurrent ingest.
 
-    The sessions rollup stays best-effort inside a SAVEPOINT: its failures are
-    data-level (e.g. sessions.session_id is a global primary key, so another
-    user's identical session id collides) and must not discard a valid usage
-    row. Lock contention cannot hit it, since the insert above already holds
-    the write lock for the rest of the transaction.
+    The sessions rollup stays best-effort inside a SAVEPOINT: a failure there
+    is data-level and must not discard a valid usage row. Lock contention
+    cannot hit it, since the insert above already holds the write lock for the
+    rest of the transaction.
     """
     from .sessions import _upsert_session_from_usage
 

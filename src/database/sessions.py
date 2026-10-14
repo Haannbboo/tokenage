@@ -12,6 +12,8 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import and_, case, func, or_, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from ..utils import secs_to_micros
@@ -156,7 +158,36 @@ def _upsert_session_from_usage(session: Session, usage: Usage) -> None:
     total_cost = Decimal(str(usage.total_cost_usd))
     now = datetime.now(UTC).isoformat()
 
-    existing = get_session_record(session, usage.session_id, user_id=usage.user_id)
+    # Lock the row (PostgreSQL; SQLite ignores FOR UPDATE and serializes writes
+    # itself): the counters below are read-modify-write in Python, so without
+    # it two concurrent usages of one session overwrite each other's increment.
+    existing = get_session_record(
+        session, usage.session_id, user_id=usage.user_id, with_for_update=True
+    )
+    if existing is None:
+        # Two first usages can both find no row; the loser of this insert must
+        # fall through and add to the winner's row instead of failing.
+        insert_fn = (
+            pg_insert
+            if session.get_bind().dialect.name == "postgresql"
+            else sqlite_insert
+        )
+        created = session.execute(
+            insert_fn(SessionRecord)
+            .values(
+                **_session_record_kwargs(
+                    usage.session_id, [usage], now=now, missing_ttft_as_zero=True
+                )
+            )
+            .on_conflict_do_nothing(index_elements=["session_id"])
+            # rowcount is -1 for this statement on psycopg; RETURNING is exact.
+            .returning(SessionRecord.session_id)
+        )
+        if created.first() is not None:
+            return
+        existing = get_session_record(
+            session, usage.session_id, user_id=usage.user_id, with_for_update=True
+        )
     if existing:
         if usage.ts < existing.started:
             existing.started = usage.ts
@@ -195,17 +226,6 @@ def _upsert_session_from_usage(session: Session, usage: Usage) -> None:
 
         existing.last_usage_id = usage.id
         existing.updated_at = now
-    else:
-        session.add(
-            SessionRecord(
-                **_session_record_kwargs(
-                    usage.session_id,
-                    [usage],
-                    now=now,
-                    missing_ttft_as_zero=True,
-                )
-            )
-        )
 
 
 def _load_tool_calls_json(raw: str | None) -> dict[str, int]:

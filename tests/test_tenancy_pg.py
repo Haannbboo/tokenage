@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import threading
 
-import pytest
 from sqlalchemy import inspect, text
 
 TS_2026_04_17_10 = 1776420000000000
@@ -149,12 +148,10 @@ def test_migrate_tightens_a_nullable_tenancy_schema(pg_db, pg_engine):
 
 
 def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
-    from src.database.usage import upsert_daily_aggregate
-
     _seed_users(pg_engine, "u0", "u1")
 
-    upsert_daily_aggregate(_make_usage(), db_path=pg_db)
-    upsert_daily_aggregate(
+    _upsert_daily(_make_usage(), db_path=pg_db)
+    _upsert_daily(
         _make_usage(prompt_tokens=20, completion_tokens=10, total_tokens=30),
         db_path=pg_db,
     )
@@ -165,10 +162,8 @@ def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
     assert rows[0].request_count == 2
     assert rows[0].prompt_tokens == 120
 
-    upsert_daily_aggregate(_make_usage(user_id="u1", prompt_tokens=7), db_path=pg_db)
-    upsert_daily_aggregate(
-        _make_usage(user_id="u1", prompt_tokens=1, status=429), db_path=pg_db
-    )
+    _upsert_daily(_make_usage(user_id="u1", prompt_tokens=7), db_path=pg_db)
+    _upsert_daily(_make_usage(user_id="u1", prompt_tokens=1, status=429), db_path=pg_db)
 
     rows = _daily_row(pg_db)
     assert len(rows) == 2
@@ -180,14 +175,12 @@ def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
 
 
 def test_upsert_daily_aggregate_concurrent_writes_sum(pg_db, pg_engine):
-    from src.database.usage import upsert_daily_aggregate
-
     _seed_users(pg_engine, "u0")
 
     thread_count = 8
 
     def worker():
-        upsert_daily_aggregate(
+        _upsert_daily(
             _make_usage(prompt_tokens=1, completion_tokens=0, total_tokens=1),
             db_path=pg_db,
         )
@@ -207,7 +200,6 @@ def test_upsert_daily_aggregate_concurrent_writes_sum(pg_db, pg_engine):
 def test_session_upsert_isolates_tenants_and_fails_cleanly_on_collision(
     pg_db, pg_engine
 ):
-    from sqlalchemy.exc import IntegrityError
     from sqlalchemy.orm import Session as OrmSession
 
     from src.database.engine import get_engine
@@ -233,12 +225,22 @@ def test_session_upsert_isolates_tenants_and_fails_cleanly_on_collision(
         assert get_session_record(session, "sess-2", user_id="u2").user_id == "u2"
         assert get_session_record(session, "sess-1", user_id="u3") is None
 
-    # Tenant-poison guard: a second user writing the same session_id fails
-    # cleanly (bare session_id PK) instead of polluting the first user's row.
-    with pytest.raises(IntegrityError):
-        upsert_session_from_usage(_make_usage(user_id="u2"), db_path=pg_db)
+    # Tenant-poison guard: a second user writing the same session_id is
+    # skipped (bare session_id PK) instead of polluting the first user's row.
+    upsert_session_from_usage(_make_usage(user_id="u2"), db_path=pg_db)
     with engine.connect() as connection:
         row = connection.execute(
             text("SELECT user_id FROM sessions WHERE session_id = 'sess-1'")
         ).one()
     assert row.user_id == "u1"
+
+
+def _upsert_daily(usage, db_path=None):
+    from sqlalchemy.orm import Session
+
+    from src.database import get_engine
+    from src.database.usage import upsert_daily_aggregate
+
+    with Session(get_engine(db_path)) as session:
+        upsert_daily_aggregate(session, usage)
+        session.commit()

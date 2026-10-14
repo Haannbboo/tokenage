@@ -8,7 +8,7 @@ from __future__ import annotations
 import calendar
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -235,32 +235,64 @@ def merge_duplicate_usage(
     return existing
 
 
-def log_usage(usage: Usage, db_path: str | None = None) -> None:
-    """Persist a single usage row and update the daily aggregation table."""
+def log_usage(
+    usage: Usage,
+    db_path: str | None = None,
+    tool_calls: Sequence[dict[str, Any]] = (),
+) -> None:
+    """Persist a single usage row and its rollups in one transaction.
+
+    *tool_calls* are ``tool_calls`` rows (without ``usage_id``) reported with
+    this usage; they join the same transaction and a tool_use_id that is
+    already recorded is skipped, so a redelivered report cannot double count.
+
+    The row and its usage_daily increment land together or not at all: the
+    error propagates and the transaction rolls back. Callers must not assume a
+    retry (the proxy client drops the report on anything but 429).
+
+    The sessions rollup stays best-effort inside a SAVEPOINT: a failure or a
+    lock timeout there must not discard a valid usage row.
+    """
+    from .sessions import _upsert_session_from_usage
+
     _require_device_id(usage)
     usage.provider = normalize_provider_name(usage.provider)
     usage.model = normalize_model_name(usage.model)
     with Session(get_engine(db_path), expire_on_commit=False) as session:
         session.add(usage)
+        # Flush so usage.id exists for the session rollup. The insert also
+        # takes SQLite's write lock up front, so the later reads in this
+        # transaction never need a lock upgrade (which fails without waiting).
+        session.flush()
+        if tool_calls:
+            _insert_tool_calls(session, usage.id, tool_calls)
+        upsert_daily_aggregate(session, usage)
+        try:
+            with session.begin_nested():
+                _upsert_session_from_usage(session, usage)
+        except Exception:
+            logger.warning(
+                "Failed to update session record for usage ts=%s",
+                usage.ts,
+                exc_info=True,
+            )
         session.commit()
-    try:
-        upsert_daily_aggregate(usage, db_path=db_path)
-    except Exception:
-        import logging
 
-        logging.getLogger(__name__).warning(
-            "Failed to update daily aggregate for usage ts=%s", usage.ts
-        )
-    try:
-        from .sessions import upsert_session_from_usage
 
-        upsert_session_from_usage(usage, db_path=db_path)
-    except Exception:
-        import logging
+def _insert_tool_calls(
+    session: Session, usage_id: str, tool_calls: Sequence[dict[str, Any]]
+) -> None:
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-        logging.getLogger(__name__).warning(
-            "Failed to update session record for usage ts=%s", usage.ts
-        )
+    insert_fn = (
+        pg_insert if session.get_bind().dialect.name == "postgresql" else sqlite_insert
+    )
+    session.execute(
+        insert_fn(ToolCall)
+        .values([{**tc, "usage_id": usage_id} for tc in tool_calls])
+        .on_conflict_do_nothing(index_elements=["tool_use_id"])
+    )
 
 
 def _require_device_id(usage: Usage) -> None:
@@ -347,12 +379,12 @@ def daily_values(usage: Usage) -> dict[str, Any]:
     return values
 
 
-def upsert_daily_aggregate(usage: Usage, db_path: str | None = None) -> None:
-    """Incrementally update the daily aggregation table for a single usage row."""
+def upsert_daily_aggregate(session: Session, usage: Usage) -> None:
+    """Add *usage* to usage_daily on *session*; the caller owns the commit."""
     _require_device_id(usage)
     values = daily_values(usage)
 
-    engine = get_engine(db_path)
+    engine = session.get_bind()
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -405,9 +437,7 @@ def upsert_daily_aggregate(usage: Usage, db_path: str | None = None) -> None:
         },
     )
 
-    with Session(engine) as session:
-        session.execute(statement)
-        session.commit()
+    session.execute(statement)
 
 
 @dataclass(frozen=True)

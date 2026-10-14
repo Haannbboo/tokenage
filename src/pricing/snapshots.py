@@ -13,11 +13,13 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import weakref
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select, tuple_
 from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.engine import Engine
 
 from ..database import PriceSnapshot, get_engine
 from ..utils import micros_to_secs, normalize_model_name
@@ -33,6 +35,12 @@ COST_SPLIT_KEYS = (
     "cache_read_cost_usd",
     "cache_write_cost_usd",
 )
+
+
+# engine -> {(date, model, source, rates_hash): snapshot id}
+_SNAPSHOT_IDS: weakref.WeakKeyDictionary[
+    Engine, dict[tuple[str, str, str, str], int]
+] = weakref.WeakKeyDictionary()
 
 
 def serialize_rates(cost: ModelCost) -> str:
@@ -107,11 +115,20 @@ def ensure_price_snapshot(
     Idempotent and race-safe (content-addressed ``ON CONFLICT DO NOTHING``),
     called from the hot record path. ``cost`` must already be time-of-day
     resolved (see ``resolve_effective_cost``).
+
+    Snapshots are never updated or deleted, so a resolved id is cached per
+    engine: the same rate set costs one insert+select per process instead of
+    one per recorded row. Keying on the engine means a different database
+    never sees another database's ids.
     """
     model = normalize_model_name(model)
     engine = get_engine(db_path)
     payload = serialize_rates(cost)
     digest = rates_hash(payload)
+    cache = _SNAPSHOT_IDS.setdefault(engine, {})
+    cache_key = (date, model, source, digest)
+    if cache_key in cache:
+        return cache[cache_key]
     values = {
         "date": date,
         "model": model,
@@ -140,6 +157,7 @@ def ensure_price_snapshot(
         ).scalar()
     if row_id is None:  # pragma: no cover - insert guarantees a row
         raise RuntimeError("price snapshot insert did not return a row id")
+    cache[cache_key] = int(row_id)
     return int(row_id)
 
 

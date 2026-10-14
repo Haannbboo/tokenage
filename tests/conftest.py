@@ -287,6 +287,10 @@ def fresh_db(_session_db: str, monkeypatch: pytest.MonkeyPatch):
     with engine.begin() as conn:
         for table in _TRUNCATE_TABLES:
             conn.execute(db.text(f"DELETE FROM {table}"))
+    # The engine is shared across tests; ids it cached point at deleted rows.
+    from src.pricing.snapshots import _SNAPSHOT_IDS
+
+    _SNAPSHOT_IDS.pop(engine, None)
 
     return SimpleNamespace(
         db_path=db_path,

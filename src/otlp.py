@@ -1,12 +1,15 @@
+import asyncio
 import json
 import logging
 import os
 import time
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 
 from fastapi import FastAPI, HTTPException, Request
 
@@ -945,11 +948,21 @@ def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
                 yield record, service_name, session_id
 
 
-@app.post("/v1/logs")
-async def receive_logs(request: Request):
-    # Auth + rate limit + body cap — all before any record is parsed.
-    user_id, device_id = await resolve_ingest_request_async(request)
+# Every request's records are processed on this one thread, in arrival order.
+# The buffers above correlate events that arrive in separate requests and are
+# plain dicts mutated with check-then-act sequences, so they rely on a single
+# thread touching them: keep max_workers=1. Running the blocking DB writes here
+# instead of on the event loop keeps /health, auth and body reads responsive
+# while a record waits on the database.
+_record_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tokenage-otlp")
+# Batches accepted but not finished (running + queued). If the database stalls
+# the worker stops draining, so bound the queue and shed with a retryable 503
+# instead of holding every request body in memory.
+MAX_PENDING_BATCHES = 64
+_pending_batches = 0
 
+
+def _evict_stale_state() -> None:
     # Evict stale codex_state entries (older than 10 minutes)
     now = time.time_ns() // 1000
     stale_keys = [
@@ -976,6 +989,26 @@ async def receive_logs(request: Request):
 
     PROMPT_LENGTH_TRACKER.evict_stale()
 
+
+def _ingest_records(
+    records: list[tuple[dict, str, str]], *, user_id: str, device_id: str
+) -> None:
+    _evict_stale_state()
+    for record, service_name, session_id in records:
+        _parse_log_record(
+            record,
+            service_name,
+            session_id,
+            user_id=user_id,
+            device_id=device_id,
+        )
+
+
+@app.post("/v1/logs")
+async def receive_logs(request: Request):
+    # Auth + rate limit + body cap — all before any record is parsed.
+    user_id, device_id = await resolve_ingest_request_async(request)
+
     body = await _read_capped_json(request)
 
     max_records = CONFIG.get("otlp", {}).get("max_records_per_request", 1_000)
@@ -990,14 +1023,27 @@ async def receive_logs(request: Request):
         )
         records = records[:max_records]
 
-    for record, service_name, session_id in records:
-        _parse_log_record(
-            record,
-            service_name,
-            session_id,
-            user_id=user_id,
-            device_id=device_id,
+    global _pending_batches
+    if _pending_batches >= MAX_PENDING_BATCHES:
+        raise HTTPException(
+            status_code=503,
+            detail="collector is busy, retry later",
+            headers={"Retry-After": "5"},
         )
+    _pending_batches += 1
+    future = asyncio.get_running_loop().run_in_executor(
+        _record_executor,
+        partial(_ingest_records, records, user_id=user_id, device_id=device_id),
+    )
+
+    def _release_slot(_future: object) -> None:
+        global _pending_batches
+        _pending_batches -= 1
+
+    # On completion, not when this handler returns: a cancelled request leaves
+    # its batch queued, and it still occupies a slot until it has run.
+    future.add_done_callback(_release_slot)
+    await future
     if rejected:
         # OTLP partial success: still 200 so the exporter does not retry the same
         # oversized batch forever, but the dropped count is reported, not hidden.

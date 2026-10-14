@@ -71,7 +71,7 @@ def tenant_reads(api_module, fresh_db):
                 session.commit()
                 session.refresh(usage)
                 session.expunge(usage)
-            db.upsert_daily_aggregate(usage)
+            _upsert_daily(usage)
             db.upsert_session_from_usage(usage)
             tool = ToolCall(
                 tool_use_id=f"{name}-tool-{index}",
@@ -428,3 +428,14 @@ def test_cost_recalculation_rejects_invalid_and_revoked_tokens(
             client.post("/usage/a-0/recalculate-cost", headers=headers).status_code
             == 401
         )
+
+
+def _upsert_daily(usage, db_path=None):
+    from sqlalchemy.orm import Session
+
+    from src.database import get_engine
+    from src.database.usage import upsert_daily_aggregate
+
+    with Session(get_engine(db_path)) as session:
+        upsert_daily_aggregate(session, usage)
+        session.commit()

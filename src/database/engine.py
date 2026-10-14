@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 
 from src.config.app import CONFIG
 
 from .models import Base
 
+logger = logging.getLogger(__name__)
+
 DB_URL_ENV_VAR = "TOKENAGE_DB_URL"
 DB_CONNECT_TIMEOUT_SECONDS = 5
+SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 _engine_cache: dict[str, Engine] = {}
 
@@ -48,13 +53,37 @@ def get_engine(db_path: str | None = None) -> Engine:
         if db_url.startswith("sqlite:///"):
             sqlite_path = db_url[10:]
             Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
-        _engine_cache[db_url] = create_engine(
+        engine = create_engine(
             db_url,
             future=True,
             pool_pre_ping=True,
             connect_args=_connect_args(db_url),
         )
+        if db_url.startswith("sqlite:///"):
+            event.listen(engine, "connect", _sqlite_pragmas)
+        _engine_cache[db_url] = engine
     return _engine_cache[db_url]
+
+
+def _sqlite_pragmas(dbapi_conn: Any, _record: Any) -> None:
+    """WAL lets readers and the single writer run concurrently; the busy
+    timeout makes concurrent writers queue instead of raising "database is
+    locked" straight away."""
+    cur = dbapi_conn.cursor()
+    cur.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    # WAL persists in the file, so only switch from the default; this also
+    # leaves a mode chosen on purpose (tests use MEMORY) alone. Switching
+    # needs the write lock and ignores busy_timeout; if another process holds
+    # it, stay in the current mode rather than fail the connection.
+    try:
+        mode = cur.execute("PRAGMA journal_mode").fetchone()[0]
+        if mode == "delete":
+            mode = cur.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        if mode == "wal":
+            cur.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.OperationalError:
+        logger.warning("Could not switch SQLite to WAL (database busy)")
+    cur.close()
 
 
 def init_db(db_path: str | None = None) -> None:

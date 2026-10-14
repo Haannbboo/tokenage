@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import calendar
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import and_, case, func, or_, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from ..utils import secs_to_micros
@@ -23,6 +26,8 @@ from .models import (
     ToolCall,
     Usage,
 )
+
+logger = logging.getLogger(__name__)
 
 # Sources that emit one usage row per assistant completion, so
 # single-request sessions can still be real user-visible sessions.
@@ -140,6 +145,15 @@ def upsert_session_from_usage(usage: Usage, db_path: str | None = None) -> None:
     """Incrementally update the sessions table for a single usage row."""
     if not usage.session_id:
         return
+    with Session(get_engine(db_path)) as session:
+        _upsert_session_from_usage(session, usage)
+        session.commit()
+
+
+def _upsert_session_from_usage(session: Session, usage: Usage) -> None:
+    """Add *usage* to its session record on *session*; the caller commits."""
+    if not usage.session_id:
+        return
 
     is_success = usage.status is None or usage.status < 400
     latency = usage.latency_ms or 0
@@ -147,61 +161,87 @@ def upsert_session_from_usage(usage: Usage, db_path: str | None = None) -> None:
     total_cost = Decimal(str(usage.total_cost_usd))
     now = datetime.now(UTC).isoformat()
 
-    engine = get_engine(db_path)
-    with Session(engine) as session:
-        existing = get_session_record(session, usage.session_id, user_id=usage.user_id)
-        if existing:
-            if usage.ts < existing.started:
-                existing.started = usage.ts
-            if usage.ts > existing.ended:
-                existing.ended = usage.ts
-
-            existing.request_count += 1
-            existing.prompt_tokens += usage.prompt_tokens or 0
-            existing.completion_tokens += usage.completion_tokens or 0
-            existing.cached_tokens += usage.cached_tokens or 0
-            existing.cache_creation_tokens += usage.cache_creation_tokens or 0
-            existing.total_tokens += usage.total_tokens or 0
-            existing.total_cost_usd += total_cost
-            existing.latency_sum_ms += latency
-            existing.successful_requests += 1 if is_success else 0
-            existing.failed_requests += 0 if is_success else 1
-
-            existing.avg_latency_ms = existing.latency_sum_ms / existing.request_count
-            old_n = existing.request_count - 1
-            old_avg_ttft = float(existing.avg_ttft_ms or 0)
-            existing.avg_ttft_ms = (
-                old_avg_ttft * old_n + ttft
-            ) / existing.request_count
-
-            models_costs = _load_cost_map(existing.models_json)
-            providers_costs = _load_cost_map(existing.providers_json)
-            _add_usage_to_cost_maps(
-                usage,
-                total_cost=total_cost,
-                models_costs=models_costs,
-                providers_costs=providers_costs,
-            )
-
-            existing.models_json = json.dumps(models_costs)
-            existing.providers_json = json.dumps(providers_costs)
-            existing.primary_model = _primary_by_cost(models_costs)
-            existing.primary_provider = _primary_by_cost(providers_costs)
-
-            existing.last_usage_id = usage.id
-            existing.updated_at = now
-        else:
-            session.add(
-                SessionRecord(
-                    **_session_record_kwargs(
-                        usage.session_id,
-                        [usage],
-                        now=now,
-                        missing_ttft_as_zero=True,
-                    )
+    # Lock the row (PostgreSQL): the counters below are read-modify-write in
+    # Python, so without it two concurrent usages of one session overwrite each
+    # other's increment. SQLite ignores FOR UPDATE; there log_usage's earlier
+    # insert already holds the write lock. The standalone wrapper above does
+    # not, so concurrent calls to it can still lose an increment on SQLite.
+    # Bound the wait: a long maintenance transaction on this row must make the
+    # best-effort rollup skip, not stall the ingest worker behind it.
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(text("SET LOCAL lock_timeout = '2s'"))
+    existing = get_session_record(
+        session, usage.session_id, user_id=usage.user_id, with_for_update=True
+    )
+    if existing is None:
+        # Two first usages can both find no row; the loser of this insert must
+        # fall through and add to the winner's row instead of failing.
+        insert_fn = (
+            pg_insert
+            if session.get_bind().dialect.name == "postgresql"
+            else sqlite_insert
+        )
+        created = session.execute(
+            insert_fn(SessionRecord)
+            .values(
+                **_session_record_kwargs(
+                    usage.session_id, [usage], now=now, missing_ttft_as_zero=True
                 )
             )
-        session.commit()
+            .on_conflict_do_nothing(index_elements=["session_id"])
+            # rowcount is -1 for this statement on psycopg; RETURNING is exact.
+            .returning(SessionRecord.session_id)
+        )
+        if created.first() is not None:
+            return
+        existing = get_session_record(
+            session, usage.session_id, user_id=usage.user_id, with_for_update=True
+        )
+    if existing is None:
+        # The session_id primary key is global and belongs to another user.
+        logger.warning(
+            "Session rollup skipped: session_id %r is owned by another user",
+            usage.session_id,
+        )
+        return
+    if existing:
+        if usage.ts < existing.started:
+            existing.started = usage.ts
+        if usage.ts > existing.ended:
+            existing.ended = usage.ts
+
+        existing.request_count += 1
+        existing.prompt_tokens += usage.prompt_tokens or 0
+        existing.completion_tokens += usage.completion_tokens or 0
+        existing.cached_tokens += usage.cached_tokens or 0
+        existing.cache_creation_tokens += usage.cache_creation_tokens or 0
+        existing.total_tokens += usage.total_tokens or 0
+        existing.total_cost_usd += total_cost
+        existing.latency_sum_ms += latency
+        existing.successful_requests += 1 if is_success else 0
+        existing.failed_requests += 0 if is_success else 1
+
+        existing.avg_latency_ms = existing.latency_sum_ms / existing.request_count
+        old_n = existing.request_count - 1
+        old_avg_ttft = float(existing.avg_ttft_ms or 0)
+        existing.avg_ttft_ms = (old_avg_ttft * old_n + ttft) / existing.request_count
+
+        models_costs = _load_cost_map(existing.models_json)
+        providers_costs = _load_cost_map(existing.providers_json)
+        _add_usage_to_cost_maps(
+            usage,
+            total_cost=total_cost,
+            models_costs=models_costs,
+            providers_costs=providers_costs,
+        )
+
+        existing.models_json = json.dumps(models_costs)
+        existing.providers_json = json.dumps(providers_costs)
+        existing.primary_model = _primary_by_cost(models_costs)
+        existing.primary_provider = _primary_by_cost(providers_costs)
+
+        existing.last_usage_id = usage.id
+        existing.updated_at = now
 
 
 def _load_tool_calls_json(raw: str | None) -> dict[str, int]:

@@ -3221,7 +3221,7 @@ def test_usage_daily_status_breakdown(database_module, isolated_home):
             prompt_length=0,
             user_id="test-user",
         )
-        database_module.upsert_daily_aggregate(usage, db_path=db_path)
+        _upsert_daily(usage, db_path=db_path)
 
     # Check aggregation
     summary = database_module.summarize_usage_daily(
@@ -5821,10 +5821,10 @@ def test_upsert_daily_aggregate_separates_user_rows(fresh_db):
             total_cost_usd=0.003,
         )
 
-    database_module.upsert_daily_aggregate(make_usage("u0"), db_path=db_path)
-    database_module.upsert_daily_aggregate(make_usage("u0"), db_path=db_path)
-    database_module.upsert_daily_aggregate(make_usage("u1"), db_path=db_path)
-    database_module.upsert_daily_aggregate(make_usage("u1"), db_path=db_path)
+    _upsert_daily(make_usage("u0"), db_path=db_path)
+    _upsert_daily(make_usage("u0"), db_path=db_path)
+    _upsert_daily(make_usage("u1"), db_path=db_path)
+    _upsert_daily(make_usage("u1"), db_path=db_path)
 
     with database_module.get_engine(db_path).connect() as conn:
         rows = list(
@@ -5848,10 +5848,8 @@ def test_upsert_session_from_usage_scopes_tenant(fresh_db):
     returns only the (user_id, session_id) match.
 
     The tenant guard (bare session_id PK): a second user writing the same
-    session_id fails cleanly with IntegrityError instead of polluting the
-    first user's row.
+    session_id is skipped instead of polluting the first user's row.
     """
-    from sqlalchemy.exc import IntegrityError
     from sqlalchemy.orm import Session as OrmSession
 
     from src.database.sessions import get_session_record
@@ -5914,11 +5912,10 @@ def test_upsert_session_from_usage_scopes_tenant(fresh_db):
         assert get_session_record(session, "tenant-session", user_id="u3") is None
         assert get_session_record(session, "local-session", user_id="u1") is None
 
-    # Cross-tenant session_id collision: clean IntegrityError, no pollution.
-    with pytest.raises(IntegrityError):
-        database_module.upsert_session_from_usage(
-            make_usage("local-session", "u1"), db_path=db_path
-        )
+    # Cross-tenant session_id collision: skipped, no pollution.
+    database_module.upsert_session_from_usage(
+        make_usage("local-session", "u1"), db_path=db_path
+    )
     with database_module.get_engine(db_path).connect() as conn:
         local_row = conn.execute(
             database_module.text(
@@ -5927,6 +5924,88 @@ def test_upsert_session_from_usage_scopes_tenant(fresh_db):
         ).one()
     assert local_row.user_id == "u0"
     assert local_row.request_count == 1
+
+
+def test_log_usage_keeps_row_and_daily_when_session_rollup_fails(fresh_db, monkeypatch):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    import src.database.sessions as sessions_module
+    from src.database import get_engine, log_usage
+    from src.database.models import Usage, UsageDaily
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("session rollup failed")
+
+    monkeypatch.setattr(sessions_module, "_upsert_session_from_usage", boom)
+    log_usage(
+        Usage(
+            device_id="test-device",
+            ts=TS_2026_05_19_00,
+            provider="openai",
+            model="gpt-4.1",
+            client_source="opencode",
+            session_id="s1",
+            endpoint="otlp",
+            user_id="test-user",
+        ),
+        db_path=fresh_db.db_path,
+    )
+
+    with Session(get_engine(fresh_db.db_path)) as session:
+        assert len(session.scalars(select(Usage)).all()) == 1
+        assert len(session.scalars(select(UsageDaily)).all()) == 1
+
+
+def test_upsert_session_adds_to_row_created_by_a_concurrent_first_usage(
+    fresh_db, monkeypatch
+):
+    """Two first usages of a session can both see no row; the one whose insert
+    loses must add to the winner's row, not fail or drop its increment."""
+    import src.database.sessions as sessions_module
+
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+
+    def make_usage(ts):
+        return database_module.Usage(
+            device_id="test-device",
+            ts=ts,
+            provider="openai",
+            model="gpt-4.1",
+            client_source="codex",
+            user_id="u1",
+            session_id="racy",
+            endpoint="otlp",
+            total_tokens=15,
+            status=200,
+            total_cost_usd=0.003,
+        )
+
+    database_module.upsert_session_from_usage(
+        make_usage(TS_2026_04_17_10), db_path=db_path
+    )
+
+    real = sessions_module.get_session_record
+    calls = []
+
+    def blind_first_lookup(*args, **kwargs):
+        calls.append(1)
+        return None if len(calls) == 1 else real(*args, **kwargs)
+
+    monkeypatch.setattr(sessions_module, "get_session_record", blind_first_lookup)
+    database_module.upsert_session_from_usage(
+        make_usage(TS_2026_04_17_11), db_path=db_path
+    )
+
+    with database_module.get_engine(db_path).connect() as conn:
+        row = conn.execute(
+            database_module.text(
+                "SELECT request_count, total_tokens FROM sessions "
+                "WHERE session_id = 'racy'"
+            )
+        ).one()
+    assert (row.request_count, row.total_tokens) == (2, 30)
 
 
 def test_rebuild_sessions_from_usage_stamps_user_id(fresh_db):
@@ -6153,3 +6232,68 @@ def test_migrate_database_creates_missing_model_indexes(fresh_db):
     assert {"sessions.ix_sessions_started_desc", "usage.ix_usage_session_id"} <= set(
         changes
     )
+
+
+def test_sqlite_pragmas_enable_wal_and_busy_timeout(tmp_path):
+    import sqlite3
+
+    from src.database.engine import SQLITE_BUSY_TIMEOUT_MS, _sqlite_pragmas
+
+    conn = sqlite3.connect(tmp_path / "wal.db")
+    _sqlite_pragmas(conn, None)
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == SQLITE_BUSY_TIMEOUT_MS
+    conn.close()
+
+
+def test_log_usage_rolls_back_row_when_daily_rollup_fails(fresh_db, monkeypatch):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    import src.database.usage as usage_module
+    from src.database import get_engine, log_usage
+    from src.database.models import ToolCall, Usage, UsageDaily
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(usage_module, "upsert_daily_aggregate", boom)
+    usage = Usage(
+        device_id="test-device",
+        ts=TS_2026_05_19_00,
+        provider="openai",
+        model="gpt-4.1",
+        client_source="opencode",
+        session_id="atomic-session",
+        endpoint="otlp",
+        user_id="test-user",
+    )
+    with pytest.raises(RuntimeError):
+        log_usage(
+            usage,
+            db_path=fresh_db.db_path,
+            tool_calls=[
+                {
+                    "tool_use_id": "toolu_1",
+                    "user_id": "test-user",
+                    "tool_name": "bash",
+                    "ts": 1,
+                }
+            ],
+        )
+
+    with Session(get_engine(fresh_db.db_path)) as session:
+        assert session.scalars(select(Usage)).all() == []
+        assert session.scalars(select(UsageDaily)).all() == []
+        assert session.scalars(select(ToolCall)).all() == []
+
+
+def _upsert_daily(usage, db_path=None):
+    from sqlalchemy.orm import Session
+
+    from src.database import get_engine
+    from src.database.usage import upsert_daily_aggregate
+
+    with Session(get_engine(db_path)) as session:
+        upsert_daily_aggregate(session, usage)
+        session.commit()

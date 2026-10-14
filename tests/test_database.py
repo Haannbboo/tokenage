@@ -6173,7 +6173,7 @@ def test_log_usage_rolls_back_row_when_daily_rollup_fails(fresh_db, monkeypatch)
 
     import src.database.usage as usage_module
     from src.database import get_engine, log_usage
-    from src.database.models import Usage, UsageDaily
+    from src.database.models import ToolCall, Usage, UsageDaily
 
     def boom(*_args, **_kwargs):
         raise RuntimeError("database is locked")
@@ -6190,11 +6190,23 @@ def test_log_usage_rolls_back_row_when_daily_rollup_fails(fresh_db, monkeypatch)
         user_id="test-user",
     )
     with pytest.raises(RuntimeError):
-        log_usage(usage, db_path=fresh_db.db_path)
+        log_usage(
+            usage,
+            db_path=fresh_db.db_path,
+            tool_calls=[
+                {
+                    "tool_use_id": "toolu_1",
+                    "user_id": "test-user",
+                    "tool_name": "bash",
+                    "ts": 1,
+                }
+            ],
+        )
 
     with Session(get_engine(fresh_db.db_path)) as session:
         assert session.scalars(select(Usage)).all() == []
         assert session.scalars(select(UsageDaily)).all() == []
+        assert session.scalars(select(ToolCall)).all() == []
 
 
 def _upsert_daily(usage, db_path=None):

@@ -142,3 +142,18 @@ def test_usage_ingest_is_rate_limited_per_token(api_module, fresh_db, monkeypatc
     assert limited.status_code == 429
     assert int(limited.headers["Retry-After"]) >= 1
     assert post(token2).status_code == 204  # other tokens unaffected
+
+
+def test_redelivered_report_does_not_double_count_tool_calls(api_module, fresh_db):
+    token, _ = _token(fresh_db)
+    client = TestClient(api_module.app)
+    report = _report(tool_calls=[{"tool_use_id": "toolu_dup", "tool_name": "Bash"}])
+    for _ in range(2):
+        r = client.post(
+            "/ingest/v1/usage", json=report, headers={"x-tokenage-token": token}
+        )
+        assert r.status_code == 204
+    usage, tools = _rows(fresh_db, None)
+    assert len(usage) == 2  # the report itself is not deduplicated
+    assert [t.tool_use_id for t in tools] == ["toolu_dup"]
+    assert tools[0].usage_id in {u.id for u in usage}

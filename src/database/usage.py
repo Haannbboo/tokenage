@@ -8,7 +8,7 @@ from __future__ import annotations
 import calendar
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -235,8 +235,16 @@ def merge_duplicate_usage(
     return existing
 
 
-def log_usage(usage: Usage, db_path: str | None = None) -> None:
+def log_usage(
+    usage: Usage,
+    db_path: str | None = None,
+    tool_calls: Sequence[dict[str, Any]] = (),
+) -> None:
     """Persist a single usage row and its rollups in one transaction.
+
+    *tool_calls* are ``tool_calls`` rows (without ``usage_id``) reported with
+    this usage; they join the same transaction and a tool_use_id that is
+    already recorded is skipped, so a redelivered report cannot double count.
 
     The row and its usage_daily increment land together or not at all (the
     error propagates and the caller can retry). Separate commits used to leave
@@ -260,6 +268,8 @@ def log_usage(usage: Usage, db_path: str | None = None) -> None:
         # takes SQLite's write lock up front, so the later reads in this
         # transaction never need a lock upgrade (which fails without waiting).
         session.flush()
+        if tool_calls:
+            _insert_tool_calls(session, usage.id, tool_calls)
         upsert_daily_aggregate(session, usage)
         try:
             with session.begin_nested():
@@ -271,6 +281,22 @@ def log_usage(usage: Usage, db_path: str | None = None) -> None:
                 exc_info=True,
             )
         session.commit()
+
+
+def _insert_tool_calls(
+    session: Session, usage_id: str, tool_calls: Sequence[dict[str, Any]]
+) -> None:
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    insert_fn = (
+        pg_insert if session.get_bind().dialect.name == "postgresql" else sqlite_insert
+    )
+    session.execute(
+        insert_fn(ToolCall)
+        .values([{**tc, "usage_id": usage_id} for tc in tool_calls])
+        .on_conflict_do_nothing(index_elements=["tool_use_id"])
+    )
 
 
 def _require_device_id(usage: Usage) -> None:

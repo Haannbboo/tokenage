@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import update
@@ -52,9 +53,15 @@ def record_usage(
     base_url: str | None = None,
     base_url_provider: str | None = None,
     base_url_source: str | None = None,
+    tool_calls: Sequence[tuple[str, str]] = (),
     db_path: str | None = None,
 ) -> Usage | None:
-    """Record a single LLM usage event. Returns the Usage object, or None if skipped."""
+    """Record a single LLM usage event. Returns the Usage object, or None if skipped.
+
+    *tool_calls* are ``(tool_use_id, tool_name)`` pairs reported with the usage
+    itself (the proxy path); they are stored with the row in one transaction.
+    Callers that learn about tool calls later use ``record_tool_call``.
+    """
     # Skip if successful and no token counts are available (None or zero).
     if status == 200 and not (
         prompt_tokens or completion_tokens or cached_tokens or total_tokens
@@ -85,6 +92,16 @@ def record_usage(
         db_path=db_path,
     )
     if duplicate is not None:
+        for tool_use_id, tool_name in tool_calls:
+            record_tool_call(
+                tool_use_id=tool_use_id,
+                usage_id=duplicate.id,
+                tool_name=tool_name,
+                user_id=user_id,
+                client_source=client_source,
+                ts=duplicate.ts // 1000,  # ToolCall.ts is milliseconds
+                db_path=db_path,
+            )
         return duplicate
 
     resolved = resolve_pricing(model, usage_ts)
@@ -132,7 +149,20 @@ def record_usage(
         price_snapshot_id=snapshot_id,
         **costs,
     )
-    log_usage(usage, db_path=db_path)
+    log_usage(
+        usage,
+        db_path=db_path,
+        tool_calls=[
+            {
+                "tool_use_id": tool_use_id,
+                "user_id": user_id,
+                "tool_name": normalize_tool_name(tool_name),
+                "client_source": client_source,
+                "ts": usage_ts // 1000,  # ToolCall.ts is milliseconds
+            }
+            for tool_use_id, tool_name in tool_calls
+        ],
+    )
     return usage
 
 

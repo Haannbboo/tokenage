@@ -86,7 +86,7 @@ from .evaluation_worker import load_evaluation_worker_config, run_evaluation_wor
 from .pricing.costs import resolve_cost_match
 from .pricing.snapshots import enrich_rows
 from .ratelimit import rate_limit_hit, resolve_ingest_request
-from .recorder import record_tool_call, record_usage
+from .recorder import record_usage
 from .utils import normalize_model_name
 
 logger = logging.getLogger(__name__)
@@ -750,24 +750,15 @@ def ingest_usage(request: Request, report: UsageReport):
     metadata only."""
     user_id, device_id = resolve_ingest_request(request)
     fields = report.model_dump(exclude={"tool_calls", "base_url"})
-    usage = record_usage(
+    record_usage(
         **fields,
         user_id=user_id,
         device_id=device_id,
         base_url=report.base_url,
         base_url_provider=report.provider,
         base_url_source="proxy_config",
+        tool_calls=[(tc.tool_use_id, tc.tool_name) for tc in report.tool_calls],
     )
-    if usage is not None:
-        for tc in report.tool_calls:
-            record_tool_call(
-                tool_use_id=tc.tool_use_id,
-                usage_id=usage.id,
-                tool_name=tc.tool_name,
-                user_id=user_id,
-                client_source=report.client_source,
-                ts=usage.ts // 1000,  # ToolCall.ts is milliseconds
-            )
     return Response(status_code=204)
 
 

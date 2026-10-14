@@ -1901,3 +1901,49 @@ def test_health_routes_stay_unauthenticated(otlp_module, monkeypatch):
     assert client.get("/").status_code == 200
     assert client.post("/v1/metrics", json={}).status_code == 200
     assert client.post("/v1/traces", json={}).status_code == 200
+
+
+def test_logs_are_processed_off_the_event_loop(otlp_module, fresh_db, monkeypatch):
+    """A record stuck in the database must not stop the collector answering."""
+    import asyncio
+    import threading
+
+    import httpx
+
+    from src.auth.tokens import mint_token
+
+    token, _ = mint_token("loop@example.com", kind="ingest", db_path=fresh_db.db_path)
+    started, release = threading.Event(), threading.Event()
+    threads = []
+
+    def blocked_record(*_args, **_kwargs):
+        threads.append(threading.current_thread())
+        started.set()
+        release.wait(5)
+
+    monkeypatch.setattr(otlp_module, "_parse_log_record", blocked_record)
+    body = {
+        "resourceLogs": [
+            {
+                "resource": {"attributes": _attrs({"service.name": "claude-code"})},
+                "scopeLogs": [{"logRecords": [{"attributes": []}]}],
+            }
+        ]
+    }
+
+    async def run():
+        transport = httpx.ASGITransport(app=otlp_module.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://collector",
+            headers={"x-tokenage-token": token},
+        ) as client:
+            post = asyncio.create_task(client.post("/v1/logs", json=body))
+            await asyncio.get_running_loop().run_in_executor(None, started.wait, 5)
+            health = await asyncio.wait_for(client.get("/health"), timeout=2)
+            assert health.status_code == 200
+            release.set()
+            assert (await post).status_code == 200
+
+    asyncio.run(run())
+    assert threads and threads[0] is not threading.main_thread()

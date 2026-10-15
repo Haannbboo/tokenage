@@ -164,6 +164,7 @@ export function usePricingData() {
   const handleSavePricing = useCallback(async () => {
     const entries = Object.entries(drafts)
     if (entries.length === 0) return
+    setError(null)
     const bodies: Array<[string, Record<string, any>]> = []
     for (const [model, draft] of entries) {
       const body = overrideBody(draft)
@@ -225,6 +226,7 @@ export function usePricingData() {
   ])
 
   const handleResetPricing = useCallback(async (model: string) => {
+    setError(null)
     try {
       const response = await fetch(`/pricing/overrides/${encodeURIComponent(model)}`, { method: 'DELETE' })
       if (!response.ok && response.status !== 404) {

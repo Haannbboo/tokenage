@@ -37,7 +37,7 @@ function formatDays(days: number[] | null): string {
 const PAGE_SIZE = 200
 
 export function PricingPage() {
-  const { configStatus } = useApp()
+  const { configStatus, error } = useApp()
   const {
     pricingSearch,
     setPricingSearch,
@@ -195,6 +195,7 @@ export function PricingPage() {
         <div className="panel-tabs" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div className="tab active"><span>💎</span> {t('Model Pricing')}</div>
           <div style={{ paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {error && <span role="alert" style={{ fontSize: '12px', color: 'var(--color-red)' }}>{error}</span>}
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
               <input
                 type="checkbox"

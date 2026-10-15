@@ -147,7 +147,4 @@ def test_setup_health_recognises_directory_and_file_entries(
     dist = root / "plugins" / name / "dist"
     entry = str(dist if as_directory else dist / "index.js")
     config = {"plugin": [[entry, {"endpoint": ENDPOINT}]]}
-    assert (
-        setup._plugin_endpoint(config, setup.PLUGIN_SUFFIX[name], "http://default")
-        == ENDPOINT
-    )
+    assert setup._plugin_endpoint(config, setup.PLUGIN_SUFFIX[name]) == ENDPOINT

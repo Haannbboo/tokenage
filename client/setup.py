@@ -99,9 +99,13 @@ def _read_toml(path: Path) -> dict[str, Any]:
 
 
 def _plugin_endpoint(
-    config: dict[str, Any], suffix: str | tuple[str, ...], default: str
+    config: dict[str, Any], suffix: str | tuple[str, ...]
 ) -> str | None:
-    """First tracker plugin entry wins, matching the server's setup-health check."""
+    """First tracker plugin entry wins, matching the server's setup-health check.
+
+    An entry with no ``endpoint`` option has no collector (the plugin stays
+    inert), so it reports as not configured.
+    """
     entries = config.get("plugin")
     if not isinstance(entries, list):
         return None
@@ -115,8 +119,9 @@ def _plugin_endpoint(
         if not entry_path.replace("\\", "/").rstrip("/").endswith(suffix):
             continue
         if isinstance(entry, list) and len(entry) >= 2 and isinstance(entry[1], dict):
-            return str(entry[1].get("endpoint") or default)
-        return default
+            endpoint = entry[1].get("endpoint")
+            return endpoint if isinstance(endpoint, str) and endpoint else None
+        return None
     return None
 
 
@@ -168,8 +173,6 @@ def read_agent_states(expected_endpoint: str | None) -> dict[str, dict[str, Any]
         codex_otel.get("enabled") is False or codex_http.get("enabled") is False
     ) and isinstance(codex_endpoint, str)
 
-    # Match the plugin runtime default for legacy entries with no options.
-    fallback = "http://localhost:4005/v1/logs"
     states = {
         "claude": _health(
             claude_configured,
@@ -183,7 +186,7 @@ def read_agent_states(expected_endpoint: str | None) -> dict[str, dict[str, Any]
         ),
     }
     for name, path in plugin_configs().items():
-        endpoint = _plugin_endpoint(_read_json(path), PLUGIN_SUFFIX[name], fallback)
+        endpoint = _plugin_endpoint(_read_json(path), PLUGIN_SUFFIX[name])
         states[name] = _health(endpoint is not None, endpoint, expected_endpoint)
     return states
 

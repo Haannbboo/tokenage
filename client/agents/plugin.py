@@ -116,7 +116,7 @@ def _disable(
                 and isinstance(entry[1], dict)
                 else {}
             )
-            endpoint = options.get("endpoint") or "http://localhost:4005/v1/logs"
+            endpoint = options.get("endpoint")
             if endpoint != expected_endpoint:
                 kept.append(entry)
                 _info(

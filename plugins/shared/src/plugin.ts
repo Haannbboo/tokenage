@@ -3,15 +3,14 @@ import { makePromptState } from "./prompt.js"
 import { claim, release } from "./dedupe.js"
 import { buildOtlpPayload, buildToolEventPayload, emitOtlp } from "./otlp.js"
 
-const DEFAULT_ENDPOINT = "http://localhost:4005/v1/logs"
-
-function getEndpoint(options?: Record<string, any>): string {
-  if (options?.endpoint && typeof options.endpoint === "string") return options.endpoint
-  return DEFAULT_ENDPOINT
+// No default collector: an entry without an `endpoint` is not configured and
+// the plugin stays inert rather than posting to a guessed address.
+function getEndpoint(options?: Record<string, any>): string | undefined {
+  return options?.endpoint && typeof options.endpoint === "string" ? options.endpoint : undefined
 }
 
 export function resolveOptions(options?: Record<string, any>): {
-  endpoint: string
+  endpoint: string | undefined
   headers: Record<string, string> | undefined
 } {
   const token = typeof options?.token === "string" ? options.token : undefined
@@ -137,6 +136,7 @@ export function createPlugin(clientSource: string) {
 
   return async (input: any, options?: Record<string, any>) => {
     const { endpoint, headers } = resolveOptions(options)
+    if (!endpoint) return {}
 
     return {
       event: async ({ event }: { event: { type: string; properties?: Record<string, any> } }) => {

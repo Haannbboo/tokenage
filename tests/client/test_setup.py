@@ -310,15 +310,15 @@ def test_setup_can_wire_again_after_disable(machine):
     assert setup.read_agent_states(ENDPOINT)["codex"]["status"] == "ready"
 
 
-def test_bare_plugin_entry_reports_its_actual_runtime_default(machine):
+def test_bare_plugin_entry_reports_not_configured(machine):
     path = machine / ".config" / "opencode" / "opencode.json"
     path.parent.mkdir(parents=True)
     path.write_text(
         json.dumps({"plugin": ["/old/tracker/plugins/opencode/dist/index.js"]})
     )
     state = setup.read_agent_states("http://localhost:4001/otlp/v1/logs")["opencode"]
-    assert state["configured_endpoint"] == "http://localhost:4005/v1/logs"
-    assert state["status"] == "wrong_endpoint"
+    assert state["configured_endpoint"] is None
+    assert state["status"] == "missing_config"
 
 
 @pytest.mark.parametrize("legacy_login", [False, True])

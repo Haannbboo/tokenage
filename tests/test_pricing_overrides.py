@@ -14,6 +14,7 @@ SHARED = {"shared-model": ModelCost(input=1.0, output=2.0, cache_read=0.1)}
 @pytest.fixture
 def users(fresh_db):
     from src.auth.tokens import mint_token
+    from src.database.models import Device
 
     tokens, ids = {}, {}
     for name in ("a", "b"):
@@ -21,6 +22,18 @@ def users(fresh_db):
             f"{name}@example.com", kind="cli", db_path=fresh_db.db_path
         )
         tokens[name], ids[name] = token, row.id
+    # The rows below use device "test-device"; Postgres enforces the FK.
+    with Session(fresh_db.database_module.get_engine(fresh_db.db_path)) as session:
+        session.add(
+            Device(
+                id="test-device",
+                user_id=ids["a"],
+                installation_hash="test",
+                device_name="test",
+                created_at=0,
+            )
+        )
+        session.commit()
     return tokens, ids
 
 

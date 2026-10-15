@@ -353,7 +353,7 @@ export function PricingPage() {
                           >
                             {t('Discard')}
                           </button>
-                        ) : model.source === 'user' && (
+                        ) : model.source === 'user' && model.override === model.name && (
                           <button
                             type="button"
                             className="nav-item"

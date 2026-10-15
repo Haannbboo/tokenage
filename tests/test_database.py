@@ -993,12 +993,36 @@ _BATCH_ROWS = (
 )
 
 
+def _batch_user(database_module, db_path, user_id):
+    """Real users and devices rows (device id ``<user>-device``), so the
+    usage/session foreign keys hold on Postgres."""
+    from sqlalchemy.orm import Session
+
+    from src.database.models import Device, User
+
+    with Session(database_module.get_engine(db_path)) as session:
+        if session.get(User, user_id) is None:
+            session.add(User(id=user_id, email=f"{user_id}@example.com", created_at=0))
+            session.flush()
+            session.add(
+                Device(
+                    id=f"{user_id}-device",
+                    user_id=user_id,
+                    installation_hash=user_id,
+                    device_name=user_id,
+                    created_at=0,
+                )
+            )
+            session.commit()
+
+
 def _log_batch_rows(database_module, db_path, user_id):
+    _batch_user(database_module, db_path, user_id)
     for i, (ts, model, session, prompt) in enumerate(_BATCH_ROWS):
         database_module.log_usage(
             database_module.Usage(
                 id=f"{user_id}-{i}",
-                device_id="test-device",
+                device_id=f"{user_id}-device",
                 ts=ts,
                 provider="p-" + model,
                 model=model,
@@ -1154,11 +1178,12 @@ def test_reprice_limit_spans_chunks(fresh_db, monkeypatch):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
     models = ("m-missing", "m-flat", "m-flat", "m-missing", "m-flat", "m-flat")
+    _batch_user(database_module, db_path, "test-user")
     for i, model in enumerate(models):
         database_module.log_usage(
             database_module.Usage(
                 id=f"row-{i}",
-                device_id="test-device",
+                device_id="test-user-device",
                 ts=TS_2026_05_05_10 + i,
                 provider="p",
                 model=model,
@@ -5843,3 +5868,128 @@ def _upsert_daily(usage, db_path=None):
     with Session(get_engine(db_path)) as session:
         upsert_daily_aggregate(session, usage)
         session.commit()
+
+
+def test_reprice_batch_rounds_like_per_row_updates(fresh_db, monkeypatch):
+    """Sub-cent-scale costs: each row's change is rounded to the columns'
+    8 decimals before grouping, so the daily and session totals equal the sum
+    of the stored rows whatever the chunk size."""
+    from decimal import Decimal
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from src.database import usage as usage_module
+    from src.database.models import SessionRecord, UsageDaily
+    from src.pricing.models import ModelCost
+
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+    # One input token at $0.006/M costs 0.000000006: stored as 0.00000001.
+    prices = {"m-tiny": ModelCost(input=0.006, output=0.0, cache_read=0.0)}
+    for user_id, chunk in (("tiny-row", 1), ("tiny-chunk", 500)):
+        _batch_user(database_module, db_path, user_id)
+        for i in range(3):
+            database_module.log_usage(
+                database_module.Usage(
+                    id=f"{user_id}-{i}",
+                    device_id=f"{user_id}-device",
+                    ts=TS_2026_05_05_10 + i,
+                    provider="p",
+                    model="m-tiny",
+                    client_source="codex",
+                    session_id=f"{user_id}-s",
+                    endpoint="otlp",
+                    prompt_tokens=1,
+                    completion_tokens=0,
+                    cached_tokens=0,
+                    total_tokens=1,
+                    status=200,
+                    user_id=user_id,
+                ),
+                db_path=db_path,
+            )
+        monkeypatch.setattr(usage_module, "_REPRICE_CHUNK", chunk)
+        database_module.reprice_estimated_rows(
+            user_id=user_id, model_costs=prices, model_cost_sources={}, db_path=db_path
+        )
+        with Session(database_module.get_engine(db_path)) as session:
+            rows = sum(
+                Decimal(str(u.total_cost_usd))
+                for u in session.scalars(
+                    select(database_module.Usage).where(
+                        database_module.Usage.user_id == user_id
+                    )
+                )
+            )
+            daily = session.scalar(
+                select(UsageDaily.total_cost_usd).where(UsageDaily.user_id == user_id)
+            )
+            total = session.scalar(
+                select(SessionRecord.total_cost_usd).where(
+                    SessionRecord.user_id == user_id
+                )
+            )
+        assert rows == Decimal("0.00000003")
+        assert Decimal(str(daily)) == rows
+        assert Decimal(str(total)) == rows
+
+
+def test_reprice_statement_count_does_not_grow_per_row(fresh_db, monkeypatch):
+    """Batched: the statement count depends on chunks and rollup keys, not on
+    how many rows a chunk reprices (no per-row reloads after commit)."""
+    from sqlalchemy import event
+
+    from src.database import usage as usage_module
+    from src.pricing.models import ModelCost
+
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+    prices = {"m-flat": ModelCost(input=1.0, output=1.0, cache_read=0.0)}
+    monkeypatch.setattr(usage_module, "_REPRICE_CHUNK", 500)
+    engine = database_module.get_engine(db_path)
+    counts = {}
+    for user_id, n in (("few", 5), ("many", 60)):
+        _batch_user(database_module, db_path, user_id)
+        for i in range(n):
+            database_module.log_usage(
+                database_module.Usage(
+                    id=f"{user_id}-{i}",
+                    device_id=f"{user_id}-device",
+                    ts=TS_2026_05_05_10 + i,
+                    provider="p",
+                    model="m-flat",
+                    client_source="codex",
+                    session_id=f"{user_id}-s",
+                    endpoint="otlp",
+                    prompt_tokens=100,
+                    completion_tokens=10,
+                    cached_tokens=0,
+                    total_tokens=110,
+                    status=200,
+                    user_id=user_id,
+                ),
+                db_path=db_path,
+            )
+        statements = []
+
+        def count(*args, **kwargs):
+            statements.append(1)
+
+        event.listen(engine, "before_cursor_execute", count)
+        try:
+            summary = database_module.reprice_estimated_rows(
+                user_id=user_id,
+                model_costs=prices,
+                model_cost_sources={},
+                db_path=db_path,
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", count)
+        assert summary["repriced"] == n
+        counts[user_id] = len(statements)
+    # 12x the rows: a per-row reload would add ~55 statements. Small
+    # differences come from the first run creating the shared snapshot.
+    assert counts["many"] - counts["few"] < 10, counts

@@ -63,3 +63,9 @@ test('adding a listed model matches its existing key case-insensitively', () => 
   assert.match(pricingHook, /m\.name\.toLowerCase\(\) === model/)
   assert.match(pricingHook, /setPricingSearch\(existing\.name\)/)
 })
+
+test('pricing list ignores stale bodies and stops paging after a failure', () => {
+  assert.match(pricingHook, /const data = await response\.json\(\)\s*\/\/[^\n]*\n\s*if \(seq !== seqRef\.current\) return/)
+  assert.match(pricingHook, /const hasMore = !listFailed && models\.length < total/)
+  assert.match(pricingHook, /draft\.isNew && !models\.some\(\(m\) => m\.name === name\)/)
+})

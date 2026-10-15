@@ -351,6 +351,9 @@ def test_get_pricing_overlays_segment_matched_overrides(client):
     assert entries["shared-model"]["source"] == "user"
     assert entries["shared-model"]["input"] == 6
     assert entries["proxy/zen/shared-model"]["source"] == "user"
+    # Reset must target the stored override, not the row priced through it.
+    assert entries["shared-model"]["override"] == "proxy/zen/shared-model"
+    assert entries["proxy/zen/shared-model"]["override"] == "proxy/zen/shared-model"
     assert _pricing(client("b"))["shared-model"]["source"] == "server"
 
 

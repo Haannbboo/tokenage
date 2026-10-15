@@ -274,6 +274,8 @@ export type PricingEntry = {
   cache_read: number
   cache_write: number | null
   source: PricingSource
+  /** The stored override that priced this row (Custom rows only). */
+  override?: string | null
   tiers?: PricingTier[]
   time_rates?: PricingTimeRate[]
 }

@@ -11,7 +11,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -464,6 +464,8 @@ class _RowReprice:
 
 # Rows per transaction in reprice_estimated_rows.
 _REPRICE_CHUNK = 500
+# Scale of the cost columns (Numeric(18, 8)).
+_COST_SCALE = Decimal("0.00000001")
 
 
 def _reprice_usage_rows(
@@ -552,7 +554,15 @@ def _reprice_usage_rows(
             continue
         usage = row.usage
         assert row.old_costs is not None and row.new_costs is not None
-        deltas = {f: row.new_costs[f] - row.old_costs[f] for f in row.old_costs}
+        # Rounded to the columns' NUMERIC(18, 8) scale per row: a per-row
+        # `col + delta` UPDATE rounds each step, so summing unrounded deltas
+        # would make the totals depend on how rows are grouped.
+        deltas = {
+            f: (row.new_costs[f] - row.old_costs[f]).quantize(
+                _COST_SCALE, ROUND_HALF_UP
+            )
+            for f in row.old_costs
+        }
         date = _usage_date(usage)
         daily_key = (
             date,
@@ -798,18 +808,22 @@ def reprice_estimated_rows(
                 db_path=db_path,
                 limit=None if limit is None else limit - repriced,
             )
-            session.commit()
-            # A snapshot failure leaves the row unbound, so don't report it as
+            # Counted before commit: commit expires the ORM rows, and reading
+            # them afterwards would reload each one with its own SELECT. A
+            # snapshot failure leaves the row unbound, so don't report it as
             # repriced; it stays eligible for a later run.
-            repriced += sum(
+            bound = sum(
                 1
                 for r in results
                 if r.resolved is not None and r.usage.price_snapshot_id is not None
             )
-            if limit is not None and repriced >= limit:
+            last_id = results[-1].usage.id if results else None
+            session.commit()
+            repriced += bound
+            if limit is not None and repriced >= limit and last_id is not None:
                 # Stopped at the row that reached the limit; later ids in
                 # this chunk were not examined.
-                examined += chunk.index(results[-1].usage.id) + 1
+                examined += chunk.index(last_id) + 1
             else:
                 examined += len(chunk)
     return {

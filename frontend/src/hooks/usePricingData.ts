@@ -75,6 +75,9 @@ export function usePricingData() {
   const [total, setTotal] = useState(0)
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(false)
+  // A failed page stops automatic loading until the view changes, so a
+  // visible sentinel can't re-request a broken page in a loop.
+  const [listFailed, setListFailed] = useState(false)
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
   const [repricePast, setRepricePast] = useState(true)
   const [repricing, setRepricing] = useState<string | null>(null)
@@ -90,38 +93,45 @@ export function usePricingData() {
   /** Fetch one page of the current view; offset 0 replaces the list. */
   const fetchPage = useCallback(async (offset: number) => {
     const seq = offset === 0 ? ++seqRef.current : seqRef.current
+    if (offset === 0) setListFailed(false)
     setLoading(true)
     try {
       const response = await fetch(pricingUrl(sources, query, offset))
-      if (!response.ok || seq !== seqRef.current) return
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const data = await response.json()
+      // Checked after the body: a slow older body must not land in a newer view.
+      if (seq !== seqRef.current) return
       setModels((prev) => (offset === 0 ? data.models : [...prev, ...data.models]))
       setTotal(data.total)
       setCounts(data.counts)
     } catch (err) {
+      if (seq !== seqRef.current) return
       console.error('Failed to load pricing:', err)
+      setError(t('Failed to load pricing'))
+      setListFailed(true)
     } finally {
       if (seq === seqRef.current) setLoading(false)
     }
-  }, [sources, query])
+  }, [sources, query, setError])
 
   useEffect(() => {
     void fetchPage(0)
   }, [fetchPage])
 
-  const hasMore = models.length < total
+  const hasMore = !listFailed && models.length < total
   const loadMore = useCallback(() => {
     if (!loading && hasMore) void fetchPage(models.length)
   }, [fetchPage, hasMore, loading, models.length])
 
   const refetchPricing = useCallback(() => fetchPage(0), [fetchPage])
 
-  /** Draft-only rows: models added by name that no source prices yet. */
+  /** Draft-only rows: models added by name that no source prices yet. A
+   *  saved model whose reprice failed keeps its draft but is listed already. */
   const newModels = useMemo(
     () => Object.entries(drafts)
-      .filter(([, draft]) => draft.isNew)
+      .filter(([name, draft]) => draft.isNew && !models.some((m) => m.name === name))
       .map(([name]): Model => ({ name, input: 0, output: 0, cache_read: 0, cache_write: null, source: 'new' })),
-    [drafts],
+    [drafts, models],
   )
 
   const handleCostChange = useCallback((model: Model, field: PriceField, val: string) => {

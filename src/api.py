@@ -923,14 +923,16 @@ async def get_pricing(
     offset: int = Query(0, ge=0),
 ):
     """One page of models with resolved pricing, the caller's own overrides on
-    top (source "user"). ``counts`` covers every source matching ``q``;
-    ``total`` is the match count for ``source`` + ``q``."""
+    top (source "user"; ``override`` names the stored override that priced
+    the row, which a Reset must delete). ``counts`` covers every source
+    matching ``q``; ``total`` is the match count for ``source`` + ``q``."""
     overrides = await asyncio.to_thread(
         load_model_price_overrides, user_id=_request_user_id(request)
     )
     resolved, _costs, _sources = await _resolve_live_cost_maps()
     override_sources = dict.fromkeys(overrides, "user")
     entries: dict[str, ResolvedCost] = {}
+    override_of: dict[str, str] = {}
     for key, rc in resolved.items():
         # Same segment matching as record time, so e.g. an override for
         # "proxy/zen/gpt-4o" shows on "gpt-4o" too.
@@ -939,11 +941,14 @@ async def get_pricing(
         match = (
             resolve_cost_match(key, overrides, override_sources) if overrides else None
         )
-        entries[key] = (
-            rc if match is None else ResolvedCost(cost=match.cost, source="user")
-        )
+        if match is None:
+            entries[key] = rc
+        else:
+            entries[key] = ResolvedCost(cost=match.cost, source="user")
+            override_of[key] = match.key
     for key, cost in overrides.items():
         entries[key] = ResolvedCost(cost=cost, source="user")
+        override_of[key] = key
 
     needle = q.strip().lower()
     wanted = {s for s in source.split(",") if s}
@@ -961,7 +966,7 @@ async def get_pricing(
     )
     return {
         "models": [
-            {"name": key, **_pricing_entry(rc)}
+            {"name": key, **_pricing_entry(rc), "override": override_of.get(key)}
             for key, rc in matched[offset : offset + limit]
         ],
         "total": len(matched),

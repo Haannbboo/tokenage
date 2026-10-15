@@ -454,6 +454,7 @@ export const zh: Record<string, string> = {
   'Remove your custom price for this model': '移除该模型的自定义价格',
   'Invalid price': '价格无效',
   'Failed to save pricing': '保存定价失败',
+  'Failed to load pricing': '加载定价失败',
   'Failed to reprice unpriced usage': '重新计算未定价用量费用失败',
   'Pricing saved': '定价已保存',
   'Pricing saved; repriced usage rows:': '定价已保存；已重新计算的用量记录数：',

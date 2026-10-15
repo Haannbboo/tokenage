@@ -58,6 +58,6 @@ test('pricing page offers reprice, add model and reset for custom rows', () => {
   assert.match(pageSource, /t\('Reprice unpriced usage'\)/)
   assert.match(pageSource, /addModel\(searchTerm\)/)
   assert.match(pageSource, /handleRepriceModel\(model\.name\)/)
-  assert.match(pageSource, /model\.source === 'user' && \(/)
+  assert.match(pageSource, /model\.source === 'user' && model\.override === model\.name && \(/)
   assert.match(pageSource, /handleResetPricing\(model\.name\)/)
 })

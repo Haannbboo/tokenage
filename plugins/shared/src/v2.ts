@@ -44,8 +44,11 @@ function trim<K, V>(map: Map<K, V>): void {
   }
 }
 
-function createV2Tracker(clientSource: string, options?: Record<string, any>) {
-  const { endpoint, headers } = resolveOptions(options)
+function createV2Tracker(
+  clientSource: string,
+  endpoint: string,
+  headers: Record<string, string> | undefined,
+) {
   const steps = new Map<string, StepState>()
   const tools = new Map<string, ToolState>()
   const promptLengths = new Map<string, number>()
@@ -195,7 +198,9 @@ export function createPluginV2(clientSource: string) {
       // OpenCode 1.19+ also calls `setup` with a context that has no event
       // stream; `server` already tracks there.
       if (typeof ctx?.event?.subscribe !== "function") return
-      const handle = createV2Tracker(clientSource, ctx.options)
+      const { endpoint, headers } = resolveOptions(ctx.options)
+      if (!endpoint) return
+      const handle = createV2Tracker(clientSource, endpoint, headers)
       const controller = new AbortController()
       void (async () => {
         try {

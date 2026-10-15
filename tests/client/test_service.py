@@ -290,7 +290,7 @@ def test_health_opencode_wrong_endpoint(device_home: Path) -> None:
     assert agent["endpoint_matches"] is False
 
 
-def test_health_opencode_bare_plugin_uses_plugin_default_endpoint(
+def test_health_opencode_bare_plugin_is_not_configured(
     device_home: Path,
 ) -> None:
     expected = "http://localhost:4102/v1/logs"
@@ -303,10 +303,9 @@ def test_health_opencode_bare_plugin_uses_plugin_default_endpoint(
 
     agent = service.health_payload()["agents"]["opencode"]
 
-    assert agent["status"] == "wrong_endpoint"
-    assert agent["configured"] is True
-    assert agent["endpoint_matches"] is False
-    assert agent["configured_endpoint"] == "http://localhost:4005/v1/logs"
+    assert agent["status"] == "missing_config"
+    assert agent["configured"] is False
+    assert agent["configured_endpoint"] is None
     assert agent["expected_endpoint"] == expected
 
 

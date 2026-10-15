@@ -373,8 +373,7 @@ def test_plugin_disable_preserves_foreign_collector_and_user_plugins(tmp_path, n
 
 
 @pytest.mark.parametrize("name", ["opencode", "kilo"])
-@pytest.mark.parametrize("matching", [False, True])
-def test_plugin_disable_checks_runtime_default_for_bare_entry(tmp_path, name, matching):
+def test_plugin_disable_leaves_bare_entry_without_endpoint(tmp_path, name):
     project_root = _make_built_plugin_root(tmp_path, name)
     config = tmp_path / ".config" / name / "opencode.json"
     config.parent.mkdir(parents=True)
@@ -384,19 +383,15 @@ def test_plugin_disable_checks_runtime_default_for_bare_entry(tmp_path, name, ma
         )
     )
     before = config.read_bytes()
-    endpoint = "http://localhost:4005/v1/logs" if matching else ENDPOINT
 
     result = _run(
         name,
-        [str(project_root), "--disable", endpoint],
+        [str(project_root), "--disable", ENDPOINT],
         tmp_path,
     )
 
-    assert result.returncode == (0 if matching else 2), result.stderr
-    if matching:
-        assert "plugin" not in json.loads(config.read_text())
-    else:
-        assert config.read_bytes() == before
+    assert result.returncode == 2, result.stderr
+    assert config.read_bytes() == before
 
 
 def test_codex_disable_preserves_other_telemetry_and_uses_actual_endpoint(tmp_path):

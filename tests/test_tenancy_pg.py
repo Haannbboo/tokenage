@@ -156,7 +156,7 @@ def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
         db_path=pg_db,
     )
 
-    rows = _daily_row(pg_db)
+    rows = _daily_row(pg_engine)
     assert len(rows) == 1
     assert rows[0].user_id == "u0"
     assert rows[0].request_count == 2
@@ -165,7 +165,7 @@ def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
     _upsert_daily(_make_usage(user_id="u1", prompt_tokens=7), db_path=pg_db)
     _upsert_daily(_make_usage(user_id="u1", prompt_tokens=1, status=429), db_path=pg_db)
 
-    rows = _daily_row(pg_db)
+    rows = _daily_row(pg_engine)
     assert len(rows) == 2
     by_user = {row.user_id: row for row in rows}
     assert by_user["u0"].request_count == 2
@@ -191,7 +191,7 @@ def test_upsert_daily_aggregate_concurrent_writes_sum(pg_db, pg_engine):
     for thread in threads:
         thread.join()
 
-    rows = _daily_row(pg_db)
+    rows = _daily_row(pg_engine)
     assert len(rows) == 1
     assert rows[0].request_count == thread_count
     assert rows[0].prompt_tokens == thread_count

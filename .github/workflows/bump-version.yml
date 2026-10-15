@@ -29,7 +29,7 @@ jobs:
           # syntax that would otherwise be substituted into the script itself.
           BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch origin "$BASE_REF" --depth=1
+          git fetch origin "$BASE_REF"
           BUMP_SERVER=false
           BUMP_CLIENT=false
           # Capture before looping: a process substitution hides git diff's exit

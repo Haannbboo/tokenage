@@ -332,6 +332,10 @@ results and run history and lets you annotate outcomes manually. A resumed
 session is evaluated again after it becomes quiet. Manual annotations take
 precedence over reported results.
 
+If the server rejects a start report with HTTP 404, the client skips evaluation
+and saves a local rejection marker. That revision stays covered until the local
+transcript changes, avoiding evaluator charges for sessions the server cannot store.
+
 Full transcripts stay on the machine and are passed to your configured evaluator;
 tokenage receives only bounded, secret-scrubbed derived results and run metadata.
 The client retains one latest result per session under

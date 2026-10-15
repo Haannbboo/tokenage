@@ -1111,7 +1111,22 @@ def evaluate_candidate(
     status = _post_report(identity, "started", started.model_dump(mode="json"))
     if status in {401, 403}:
         # An explicit identity rejection pauses paid work until sign-in is fixed;
-        # a missing/unreachable server still never blocks local evaluation.
+        # an unreachable server still never blocks local evaluation.
+        return
+    if status == 404:
+        # This session cannot be reported; cover its revision without paid work.
+        _write_result(
+            {
+                "session_id": candidate.session_id,
+                "client_source": candidate.client_source,
+                "revision": candidate.revision,
+                "server_url": identity.server_url,
+                "user_id": identity.user_id,
+                "completed": None,
+                "submitted": False,
+                "submission_error": 404,
+            }
+        )
         return
 
     try:
@@ -1152,10 +1167,19 @@ def evaluate_candidate(
     _submit_result(identity, record)
 
 
-def _local_result_covers(candidate: LocalSessionCandidate) -> bool:
+def _local_result_covers(
+    candidate: LocalSessionCandidate, identity: EvaluationIdentity
+) -> bool:
     record = _read_result(candidate.session_id)
-    if record is None or record.get("completed") is None:
+    if record is None:
         return False
+    if record.get("completed") is None:
+        if (
+            record.get("submission_error") != 404
+            or record.get("server_url") != identity.server_url
+            or record.get("user_id") != identity.user_id
+        ):
+            return False
     return record.get("revision") == candidate.revision
 
 
@@ -1219,7 +1243,7 @@ def run_evaluation_pass(*, now: float | None = None) -> None:
             return
         if candidate.last_activity > quiet_cutoff:
             break  # sorted: everything after this is even more recent
-        if _local_result_covers(candidate):
+        if _local_result_covers(candidate, identity):
             continue
         evaluate_candidate(candidate, evaluator=evaluator, identity=identity)
         return

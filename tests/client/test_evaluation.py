@@ -504,6 +504,61 @@ def test_failed_started_upload_does_not_block_evaluation(device, cli, http):
     assert _record("started-down")["submitted"] is True
 
 
+def test_missing_server_session_skips_paid_work_until_local_revision_changes(
+    device, cli, http
+):
+    now = time.time()
+    path = _write_claude_session(device, "untracked", mtime=now - 10_000)
+    http.status_codes["started"] = 404
+
+    evaluation.run_evaluation_pass(now=now)
+    marker = _record("untracked")
+    assert marker["completed"] is None
+    assert marker["submission_error"] == 404
+    assert marker["server_url"] == SERVER
+    assert marker["user_id"] == "u1"
+
+    evaluation.run_evaluation_pass(now=now)
+    assert cli.calls == []
+    assert http.kinds() == ["started"]
+
+    http.status_codes["started"] = 204
+    _write_claude_session(device, "tracked", mtime=now - 5_000)
+    evaluation.run_evaluation_pass(now=now)
+    assert len(cli.calls) == 1
+    assert _record("tracked")["submitted"] is True
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+    evaluation.run_evaluation_pass(now=time.time() + 601)
+    assert len(cli.calls) == 2
+    assert _record("untracked")["revision"] != marker["revision"]
+    assert _record("untracked")["submitted"] is True
+
+
+@pytest.mark.parametrize("changed_field", ["server_url", "user_id"])
+def test_missing_session_marker_does_not_cover_another_identity(
+    device, cli, http, changed_field
+):
+    _write_claude_session(device, "untracked", mtime=time.time() - 10_000)
+    http.status_codes["started"] = 404
+    evaluation.run_evaluation_pass()
+    assert cli.calls == []
+
+    credentials_path = device / ".tokenage" / "credentials.json"
+    credentials = json.loads(credentials_path.read_text())
+    credentials[changed_field] = (
+        "https://other.example" if changed_field == "server_url" else "u2"
+    )
+    credentials_path.write_text(json.dumps(credentials))
+    http.status_codes["started"] = 204
+    evaluation.run_evaluation_pass()
+
+    assert len(cli.calls) == 1
+    assert _record("untracked")["submitted"] is True
+    assert _record("untracked")[changed_field] == credentials[changed_field]
+
+
 @pytest.mark.parametrize("status", [401, 403])
 def test_explicit_identity_rejection_pauses_paid_evaluation(device, cli, http, status):
     _write_claude_session(device, "revoked", mtime=time.time() - 10_000)

@@ -96,7 +96,6 @@ _SPA_API_PREFIXES = (
     "/devices",
     "/evaluation-jobs",
     "/model-effectiveness",
-    "/config",
     "/pricing",
     "/version",
     "/install.sh",

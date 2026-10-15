@@ -5805,6 +5805,22 @@ def test_migrate_database_creates_missing_model_indexes(fresh_db):
     )
 
 
+def test_migrate_database_creates_missing_user_model_prices(fresh_db):
+    """An install from before price overrides gets the table on upgrade."""
+    from sqlalchemy import inspect
+
+    schema_migrations = fresh_db.schema_migrations_module
+    database_module = fresh_db.database_module
+    engine = database_module.get_engine(fresh_db.db_path)
+    with engine.begin() as conn:
+        conn.execute(database_module.text("DROP TABLE user_model_prices"))
+    assert "user_model_prices" not in inspect(engine).get_table_names()
+
+    schema_migrations.migrate_database(fresh_db.db_path)
+
+    assert "user_model_prices" in inspect(engine).get_table_names()
+
+
 def test_sqlite_pragmas_enable_wal_and_busy_timeout(tmp_path):
     import sqlite3
 

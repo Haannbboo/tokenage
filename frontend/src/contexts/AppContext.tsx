@@ -62,7 +62,6 @@ export function isApiPath(pathname: string): boolean {
     pathname.startsWith('/sessions/') ||
     pathname === '/model-effectiveness' ||
     pathname === '/devices/status' ||
-    pathname.startsWith('/config/') ||
     pathname === '/pricing' ||
     pathname.startsWith('/pricing/') ||
     pathname === '/evaluation-jobs' ||

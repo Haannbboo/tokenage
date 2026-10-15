@@ -44,9 +44,19 @@ Read `references/reviewer-lenses.md` for lens definitions.
 
 ## Step 3 — Detect Tool and Spawn Reviewers
 
+Both paths below write reports to one directory inside the worktree. Create it first;
+a path outside the worktree makes opencode stop on an "Access external directory" prompt:
+
+```sh
+REVIEW_DIR=$(mktemp -d "$PWD/.adversarial-review.XXXXXX")
+export REVIEW_DIR
+```
+
 **Preferred: Orca orchestration.** If the `orchestration` skill is available and
 `orca status --json` reports a running runtime, start reviewers as supervised Orca
-workers instead of CLI processes. Load the skill and its version-matched guide first
+workers. `worker-start --agent` launches the same opposite-tool CLI (`claude` or
+`opencode`) under Orca supervision; it is a supervised way to run that CLI, not a
+different reviewer. Load the skill and its version-matched guide first
 (`orca skills get orchestration`), and resolve the executable as that skill says.
 Then:
 
@@ -65,19 +75,16 @@ orca orchestration check --wait --types "worker_done,escalation,question" --time
   A `worker_done` with `--outcome failed`, an escalation, or a missing or empty
   report counts as a failed reviewer in Step 4.
 - Permission mode follows the user's Orca setting for new agent tabs; there is no flag.
-  Put `$REVIEW_DIR` where reviewers may already write: a path outside the worktree
-  makes opencode stop on an "Access external directory" prompt and the worker never
-  reports. If a wait times out with no messages, check the worker terminals for a
+  If a wait times out with no messages, check the worker terminals for a
   pending permission prompt before assuming the reviewer is still working.
 
 Fall back to the CLI flow below only when Orca is unavailable.
 
 **Fallback: CLI processes.**
 
-Create a temp directory for reviewer output and retain every background process handle:
+Retain every background process handle:
 
 ```sh
-REVIEW_DIR=$(mktemp -d /tmp/adversarial-review.XXXXXX)
 REVIEW_TIMEOUT_SECONDS=300
 review_pids=()
 ```
@@ -131,7 +138,7 @@ Build each reviewer's prompt using the template in `references/reviewer-prompt.m
 Before reading reviewer output, confirm that every reviewer settled (Orca `worker_done` for each Dispatch, or the CLI wait loop completed), log which path and agent were used, and confirm the output files exist:
 
 ```sh
-echo "reviewer_cli=opencode|claude"
+echo "review_path=orca reviewer_agent=opencode"  # the path (orca|cli) and agent actually used
 ls "$REVIEW_DIR"/*.md
 ```
 

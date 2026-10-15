@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { shouldProxyApiRequest } from '../vite-api-proxy.js'
 
 const proxiedRoutes = [
-  '/config/evaluation',
   '/usage',
   '/usage/count',
   '/usage/logs?limit=1',
@@ -38,6 +37,7 @@ const frontendRoutes = [
   '/assets/index.js',
   '/favicon.ico',
   '/local/evaluation-jobs/active',
+  '/config/evaluation',
   '/local/sessions/session-123/evaluation-jobs',
   '/local/poll/job-123',
 ]

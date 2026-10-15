@@ -13,6 +13,7 @@ import {
 
 test('shouldProxyApiRequest matches config, usage and session routes', () => {
   assert.equal(shouldProxyApiRequest('/config'), false)
+  assert.equal(shouldProxyApiRequest('/config/evaluation'), false)
   assert.equal(shouldProxyApiRequest('/pricing/overrides'), true)
   assert.equal(shouldProxyApiRequest('/usage'), true)
   assert.equal(shouldProxyApiRequest('/usage/count?since=1'), true)

@@ -1,6 +1,7 @@
 """Per-key sliding-window rate limiter and ingest-token authentication.
 
-In-process: each service runs one worker and keeps its own windows.
+In-process: the server runs one worker (the API, with OTLP mounted at /otlp)
+and keeps its windows in memory.
 """
 
 import asyncio

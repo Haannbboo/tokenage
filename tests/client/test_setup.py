@@ -15,7 +15,7 @@ import pytest
 
 from client import auth, setup
 
-ENDPOINT = "https://app.example.com/v1/logs"
+ENDPOINT = "https://app.example.com/otlp/v1/logs"
 
 
 @pytest.fixture
@@ -184,7 +184,7 @@ def _sign_in_without_collector(home: Path) -> None:
 def test_signed_in_client_asks_the_server_where_its_collector_is(
     machine: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The OTLP port is not the API port, so only the server can say."""
+    """Only the server knows its public collector URL."""
     _sign_in_without_collector(machine)
     requested: list[str] = []
 
@@ -213,11 +213,39 @@ def test_signed_in_client_asks_the_server_where_its_collector_is(
         "otlp_logs_endpoint"
     ]
     assert remembered == ENDPOINT
-    monkeypatch.setattr(
-        auth.httpx,
-        "get",
-        lambda *a, **k: pytest.fail("a remembered collector must not be looked up"),
-    )
+
+
+def test_setup_follows_a_moved_collector_and_falls_back_offline(
+    machine: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The collector moved from its own port to /otlp: setup must follow it."""
+    _sign_in_without_collector(machine)
+    auth.remember_collector("https://app.example.com:4002/v1/logs")
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"otlp_logs_endpoint": ENDPOINT}
+
+    requested: list[str] = []
+
+    def fake_get(url, **kwargs):
+        requested.append(url)
+        return FakeResponse()
+
+    # Asks the server the stored ingest token belongs to, never TOKENAGE_SERVER.
+    monkeypatch.setenv("TOKENAGE_SERVER", "https://other.example.com")
+    monkeypatch.setattr(auth.httpx, "get", fake_get)
+    assert auth.discover_collector() == ENDPOINT
+    assert requested == ["https://app.example.com/version"]
+    assert auth.stored_collector() == ENDPOINT
+
+    def offline(*a, **k):
+        raise auth.httpx.ConnectError("down")
+
+    monkeypatch.setattr(auth.httpx, "get", offline)
     assert auth.discover_collector() == ENDPOINT
 
 
@@ -232,7 +260,7 @@ def test_status_never_guesses_a_local_collector_when_signed_in_remotely(
     (server_root / ".venv" / "bin" / "python").chmod(0o755)
     monkeypatch.setenv("TOKENAGE_ROOT", str(server_root))
     (machine / ".tokenage" / "config.yaml").write_text(
-        "server:\n  host: 127.0.0.1\n  otlp_port: 4102\n", encoding="utf-8"
+        "server:\n  host: 127.0.0.1\n  api_port: 4102\n", encoding="utf-8"
     )
 
     assert setup.intended_endpoint() is None
@@ -288,7 +316,7 @@ def test_bare_plugin_entry_reports_its_actual_runtime_default(machine):
     path.write_text(
         json.dumps({"plugin": ["/old/tracker/plugins/opencode/dist/index.js"]})
     )
-    state = setup.read_agent_states("http://localhost:4002/v1/logs")["opencode"]
+    state = setup.read_agent_states("http://localhost:4001/otlp/v1/logs")["opencode"]
     assert state["configured_endpoint"] == "http://localhost:4005/v1/logs"
     assert state["status"] == "wrong_endpoint"
 

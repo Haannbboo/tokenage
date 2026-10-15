@@ -189,8 +189,8 @@ def test_session_shortcut_confirm_and_exchange(api_module, monkeypatch, fresh_db
     assert body["device_id"]
     assert body["cli_token"].startswith("tokenage_cli_")
     assert body["ingest_token"].startswith("tokenage_ingest_")
-    assert body["otlp"]["logs_endpoint"].endswith("/v1/logs")
-    assert body["otlp"]["endpoint"]
+    assert body["otlp"]["endpoint"].endswith("/otlp")
+    assert body["otlp"]["logs_endpoint"] == body["otlp"]["endpoint"] + "/v1/logs"
 
     kinds = sorted(
         (kind, device, linked, revoked is None)

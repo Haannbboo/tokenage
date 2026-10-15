@@ -29,11 +29,6 @@ repos:
         entry: uv run lint-imports
         language: system
         pass_filenames: false
-      - id: otlp-ready
-        name: check-otlp-ready
-        entry: uv run python src/scripts/check-otlp-ready.py
-        language: system
-        pass_filenames: false
 
   - repo: local
     hooks:

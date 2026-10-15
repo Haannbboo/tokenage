@@ -19,7 +19,6 @@ import time
 import urllib.request
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import yaml
 
@@ -36,9 +35,9 @@ from src.config.runtime_ports import (
 from src.config.server_config import resolve_server_urls
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICES = ("api", "otlp")
+SERVICES = ("api",)  # the OTLP collector is mounted in the API at /otlp
 PROGRAMS = tuple(f"tokenage-{s}" for s in SERVICES)
-PORT_KEYS = ("api_port", "otlp_port")
+PORT_KEYS = ("api_port",)
 
 
 # ── Output ──────────────────────────────────────────────────────────
@@ -358,14 +357,6 @@ def stop(args: list[str] | None = None) -> int:
     return 0
 
 
-def _endpoint_override() -> bool:
-    try:
-        parsed = urlparse(os.environ.get("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", ""))
-        return bool(parsed.hostname and parsed.port)
-    except ValueError:
-        return False
-
-
 def _programs(names: list[str]) -> list[str]:
     for name in names:
         if name not in PROGRAMS:
@@ -375,49 +366,20 @@ def _programs(names: list[str]) -> list[str]:
 
 # ── restart ─────────────────────────────────────────────────────────
 def restart(args: list[str] | None = None) -> int:
-    """Migrate, then reload running programs (SIGHUP; restart for a new OTLP port)."""
-    args = list(args or [])
-    otlp_port: int | None = None
-    if "--otlp-port" in args:
-        i = args.index("--otlp-port")
-        try:
-            otlp_port = int(args[i + 1])
-        except (IndexError, ValueError):
-            otlp_port = 0
-        if not 1 <= otlp_port <= 65535:
-            raise die("--otlp-port needs a port number (1-65535)")
-        del args[i : i + 2]
-    names = _programs(args)
-    if otlp_port and names and "tokenage-otlp" not in names:
-        raise die("--otlp-port restarts tokenage-otlp: name it, or name no programs")
+    """Migrate, then reload running programs (SIGHUP)."""
+    names = _programs(list(args or []))
     if not _conf().exists():
         raise die("Not running — run tokenage server start")
-    # An endpoint override wins over server.otlp_port at bind time.
-    if otlp_port and _endpoint_override():
-        raise die(
-            "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set, so the collector keeps "
-            "binding to it and --otlp-port would not take effect.",
-            "Unset the endpoint (and restart supervisord) or bake the port into it.",
-        )
 
     step("Applying schema migrations")
     migrate()
     ok("Migrations applied")
-
-    path = _config_path()
-    if otlp_port:
-        _set_server_keys(path, {"otlp_port": otlp_port})
-        ok(f"OTLP port saved as {otlp_port}")
 
     step("Reloading services")
     down = []
     for prog in names or PROGRAMS:
         if _status_of(prog) != "RUNNING":
             down.append(prog)
-        elif prog == "tokenage-otlp" and otlp_port:
-            # The port is baked into the process, so a port change is a restart.
-            _ctl("restart", prog)
-            ok(f"{prog}: restarted")
         else:
             _ctl("signal", "HUP", prog)
             ok(f"{prog}: reloaded")
@@ -552,12 +514,11 @@ def bootstrap(args: list[str] | None = None) -> int:
     check(
         launcher.exists(), f"Launcher: {launcher}", f"Launcher: {launcher} (not found)"
     )
-    for service, label, good, key in (
-        ("API", "API reachable", "API running", "api_url"),
-        ("OTLP", "OTLP listening", "OTLP listening", "otlp_url"),
-    ):
-        up = _wait_for_port(host, port_of[service])
-        check(up, f"{good}: {urls[key]}", f"{label}: {urls[key]} (not responding)")
+    check(
+        _wait_for_port(host, port_of["API"]),
+        f"API running: {urls['api_url']}",
+        f"API reachable: {urls['api_url']} (not responding)",
+    )
 
     # src/api.py mounts frontend/dist at import time, so a build is only served
     # after the API restarts. The only command that builds is the one that restarts.

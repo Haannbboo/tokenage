@@ -70,8 +70,10 @@ def display_endpoint(raw: str | None) -> str | None:
     if port is not None:
         authority += f":{port}"
     path = (
-        "/v1/logs"
-        if parsed.path == "/v1/logs"
+        parsed.path
+        # The server's collector path, and the old standalone collector's (so a
+        # stale agent wiring still reads as such).
+        if parsed.path in {"/otlp/v1/logs", "/v1/logs"}
         else "/[redacted path]"
         if parsed.path not in {"", "/"}
         else ""

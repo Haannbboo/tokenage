@@ -7,7 +7,7 @@ import shlex
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
@@ -21,10 +21,7 @@ from protocol.device_status import DeviceStatusReport
 from protocol.evaluation import EvaluationCompletedReport, EvaluationStartedReport
 from protocol.usage_report import UsageReport
 from src.config.app import CONFIG, _config_lock
-from src.config.server_config import (
-    resolve_otlp_host_port,
-    resolve_server_urls,
-)
+from src.config.server_config import resolve_server_urls
 
 from ._version import get_version
 from .auth import (
@@ -74,6 +71,7 @@ from .database import (
     upsert_model_price,
     upsert_session_evaluation,
 )
+from .otlp import app as otlp_app
 from .pricing.costs import resolve_cost_match
 from .pricing.models import ResolvedCost
 from .pricing.snapshots import enrich_rows
@@ -100,6 +98,7 @@ _SPA_API_PREFIXES = (
     "/version",
     "/install.sh",
     "/ingest/",
+    "/otlp/",
 )
 
 # Public: sign-in endpoints, /auth/me (the frontend probes it before login),
@@ -145,15 +144,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="tokenage-api", lifespan=lifespan)
 app.include_router(auth_router)
+# One process, one port: the collector keeps its own app (still runnable as
+# `uvicorn src.otlp:app`). Starlette skips a mounted app's lifespan; ours runs
+# the only thing it needs, init_db().
+app.mount("/otlp", otlp_app)
 
 
 def _is_public_path(path: str) -> bool:
     """Public: sign-in endpoints, /auth/me, /version, SPA."""
     if not any(path.startswith(prefix) for prefix in _SPA_API_PREFIXES):
         return path not in AUTH_GATE_EXTRA_GATED_PATHS
-    if path.startswith("/ingest/"):
-        # Ingest routes authenticate themselves: ingest tokens only, which the
-        # user gate (cli/web tokens, loopback owner) deliberately rejects.
+    if path.startswith(("/ingest/", "/otlp/")):
+        # Ingest routes and the mounted OTLP collector authenticate themselves:
+        # ingest tokens only, which the user gate (cli/web tokens, loopback
+        # owner) deliberately rejects, and they count against the ingest limit.
         return True
     if path.startswith(("/auth/google/", "/auth/cli/", "/auth/local/")):
         # CLI login endpoints are the credential-issuing surface: the
@@ -177,7 +181,9 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if _is_public_path(request.url.path):
             return await call_next(request)
-        resolved = _resolve_request_user(request)
+        # Token lookup hits the database: keep it off the event loop, which the
+        # mounted OTLP collector shares.
+        resolved = await asyncio.to_thread(_resolve_request_user, request)
         if resolved is None:
             return JSONResponse(status_code=401, content=AUTH_GATE_LOGIN_REQUIRED)
         user, auth_token = resolved
@@ -278,7 +284,7 @@ async def get_usage(
 
 
 @app.get("/usage/count")
-async def get_usage_count(
+def get_usage_count(
     request: Request,
     provider: str | None = None,
     model: str | None = None,
@@ -305,12 +311,12 @@ async def get_usage_count(
 
 
 @app.get("/usage/high-watermark")
-async def usage_high_watermark(request: Request):
+def usage_high_watermark(request: Request):
     return {"ts": get_usage_high_watermark_ts(user_id=_request_user_id(request))}
 
 
 @app.get("/usage/sources")
-async def usage_sources(
+def usage_sources(
     request: Request,
     since: str | None = None,
     until: str | None = None,
@@ -321,7 +327,7 @@ async def usage_sources(
 
 
 @app.get("/usage/tools")
-async def usage_tools(
+def usage_tools(
     request: Request,
     since: str | None = None,
     until: str | None = None,
@@ -332,7 +338,7 @@ async def usage_tools(
 
 
 @app.get("/usage/run-summary")
-async def usage_run_summary(
+def usage_run_summary(
     request: Request,
     after_ts: int = 0,
     until_ts: int | None = None,
@@ -361,7 +367,7 @@ async def usage_run_summary(
 
 
 @app.get("/usage/summary")
-async def usage_summary(
+def usage_summary(
     request: Request,
     since: str | None = None,
     until: str | None = None,
@@ -382,7 +388,7 @@ async def usage_summary(
 
 
 @app.get("/usage/by-source")
-async def usage_by_source(
+def usage_by_source(
     request: Request,
     since: str | None = None,
     until: str | None = None,
@@ -403,7 +409,7 @@ async def usage_by_source(
 
 
 @app.get("/usage/by-tool")
-async def usage_by_tool(
+def usage_by_tool(
     request: Request,
     since: str | None = None,
     until: str | None = None,
@@ -432,7 +438,7 @@ async def usage_by_tool(
 
 
 @app.get("/usage/by-provider")
-async def usage_by_provider(
+def usage_by_provider(
     request: Request,
     since: str | None = None,
     until: str | None = None,
@@ -453,7 +459,7 @@ async def usage_by_provider(
 
 
 @app.get("/usage/daily")
-async def usage_daily(
+def usage_daily(
     request: Request,
     since: str | None = None,
     until: str | None = None,
@@ -478,7 +484,7 @@ async def usage_daily(
 
 
 @app.get("/usage/daily-by-dimension")
-async def usage_daily_by_dimension(
+def usage_daily_by_dimension(
     request: Request,
     dimension: str = "model",
     since: str | None = None,
@@ -501,7 +507,7 @@ async def usage_daily_by_dimension(
 
 
 @app.get("/sessions")
-async def get_sessions(
+def get_sessions(
     request: Request,
     client_source: str | None = None,
     since: str | None = None,
@@ -558,7 +564,7 @@ async def get_sessions(
 
 
 @app.get("/sessions/summary")
-async def get_sessions_summary(
+def get_sessions_summary(
     request: Request,
     client_source: str | None = None,
     since: str | None = None,
@@ -575,7 +581,7 @@ async def get_sessions_summary(
 
 
 @app.get("/model-effectiveness")
-async def model_effectiveness(
+def model_effectiveness(
     request: Request,
     since: str | None = None,
     until: str | None = None,
@@ -599,7 +605,7 @@ async def model_effectiveness(
 
 
 @app.get("/sessions/daily-effectiveness")
-async def sessions_daily_effectiveness(request: Request, date: str):
+def sessions_daily_effectiveness(request: Request, date: str):
     try:
         return daily_session_effectiveness_report(
             date=date, user_id=_request_user_id(request)
@@ -743,7 +749,7 @@ def report_evaluation_completed(request: Request, report: EvaluationCompletedRep
 
 
 @app.get("/evaluation-jobs/active")
-async def active_evaluation_jobs(request: Request, session_ids: str | None = None):
+def active_evaluation_jobs(request: Request, session_ids: str | None = None):
     """Running attempts for the caller, keyed by session. There is no server
     queue, so a run never has a queue position."""
     parsed_session_ids = [
@@ -758,7 +764,7 @@ async def active_evaluation_jobs(request: Request, session_ids: str | None = Non
 
 
 @app.get("/evaluation-jobs/{job_id}")
-async def get_evaluation_job_route(request: Request, job_id: str):
+def get_evaluation_job_route(request: Request, job_id: str):
     job = get_evaluation_job(job_id, user_id=_request_user_id(request))
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -766,13 +772,13 @@ async def get_evaluation_job_route(request: Request, job_id: str):
 
 
 @app.get("/sessions/{session_id}/evaluation-jobs")
-async def session_evaluation_jobs(request: Request, session_id: str):
+def session_evaluation_jobs(request: Request, session_id: str):
     jobs = list_session_evaluation_jobs(session_id, user_id=_request_user_id(request))
     return {"jobs": jobs}
 
 
 @app.put("/sessions/{session_id}/evaluation")
-async def put_session_evaluation(
+def put_session_evaluation(
     request: Request, session_id: str, update: SessionEvaluationUpdate
 ):
     if update.outcome not in VALID_OUTCOMES:
@@ -812,13 +818,13 @@ async def put_session_evaluation(
 
 
 @app.get("/sessions/{session_id}/evaluation")
-async def get_evaluation(request: Request, session_id: str):
+def get_evaluation(request: Request, session_id: str):
     evaluation = get_session_evaluation(session_id, user_id=_request_user_id(request))
     return {"evaluation": evaluation}
 
 
 @app.delete("/sessions/{session_id}/evaluation")
-async def delete_evaluation(request: Request, session_id: str):
+def delete_evaluation(request: Request, session_id: str):
     deleted = delete_session_evaluation(session_id, user_id=_request_user_id(request))
     if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -826,17 +832,17 @@ async def delete_evaluation(request: Request, session_id: str):
 
 
 @app.get("/usage/{usage_id}/tool-calls")
-async def get_usage_tool_calls(request: Request, usage_id: str):
+def get_usage_tool_calls(request: Request, usage_id: str):
     return fetch_tool_calls(usage_id=usage_id, user_id=_request_user_id(request))
 
 
 @app.get("/sessions/{session_id}/tool-calls")
-async def get_session_tool_calls(request: Request, session_id: str):
+def get_session_tool_calls(request: Request, session_id: str):
     return fetch_tool_calls(session_id=session_id, user_id=_request_user_id(request))
 
 
 @app.get("/sessions/{session_id}/tool-calls/summary")
-async def get_session_tool_calls_summary(request: Request, session_id: str):
+def get_session_tool_calls_summary(request: Request, session_id: str):
     summary = summarize_session_tool_calls(
         session_id, user_id=_request_user_id(request)
     )
@@ -1126,75 +1132,17 @@ async def reprice_estimated_usage(
     )
 
 
-def _collector_hint() -> dict[str, str]:
-    """The OTLP logs endpoint for clients, or nothing when it is not configured."""
-    override = os.environ.get("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
-    if override:
-        try:
-            parsed = urlparse(override)
-            if (
-                parsed.hostname
-                and parsed.port
-                and parsed.scheme in {"http", "https"}
-                and not parsed.username
-                and not parsed.password
-                and not parsed.query
-                and not parsed.fragment
-            ):
-                host = parsed.hostname
-                scheme = parsed.scheme
-                public = urlparse(resolve_server_urls(CONFIG)["otlp_url"])
-                if host in {"0.0.0.0", "::"}:
-                    host = public.hostname or "localhost"
-                    scheme = public.scheme
-                elif host in {
-                    "localhost",
-                    "127.0.0.1",
-                    "::1",
-                } and public.hostname not in {
-                    "localhost",
-                    "127.0.0.1",
-                    "::1",
-                    "0.0.0.0",
-                    "::",
-                }:
-                    # A loopback-only listener is not reachable by clients of a
-                    # remotely published API. Do not point them at themselves.
-                    return {}
-                authority = f"[{host}]" if ":" in host else host
-                path = parsed.path or "/v1/logs"
-                if not path.endswith("/v1/logs"):
-                    return {}
-                return {
-                    "otlp_logs_endpoint": f"{scheme}://{authority}:{parsed.port}{path}"
-                }
-            # Do not advertise a different collector when the runtime override
-            # has a bind address but cannot safely be shared with clients.
-            if parsed.hostname and parsed.port:
-                return {}
-        except ValueError:
-            pass
-    otlp_url = resolve_server_urls(CONFIG).get("otlp_url")
-    return {"otlp_logs_endpoint": f"{otlp_url}/v1/logs"} if otlp_url else {}
-
-
 @app.get("/version")
 async def version():
     """Return API version information."""
-    bind_host, bind_port = resolve_otlp_host_port(CONFIG)
     return {
         "name": app.title,
         "version": get_version(),
         "protocol_min": MIN_SUPPORTED_GENERATION,
         "protocol_max": MAX_SUPPORTED_GENERATION,
-        # Bind metadata is separate from the externally published client URL.
-        # The resolver emits only host/port, never URL credentials or paths.
-        "collector_bind": {"host": bind_host, "port": bind_port},
         # Where clients should point agents. A property of this server's own
-        # config, and not a secret: ingesting still needs a token. Left out
-        # rather than half-built when the config has no collector URL, because
-        # /version is public and must answer either way.
-        **_collector_hint(),
+        # config, and not a secret: ingesting still needs a token.
+        "otlp_logs_endpoint": f"{resolve_server_urls(CONFIG)['otlp_url']}/v1/logs",
     }
 
 

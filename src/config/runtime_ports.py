@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
-
-OTEL_EXPORTER_OTLP_LOGS_ENDPOINT_ENV = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
 
 
 @dataclass(frozen=True)
@@ -50,43 +46,11 @@ class PortIssue:
 
 
 def get_configured_service_ports(config: dict[str, Any]) -> list[ServicePort]:
-    """Expand effective service ports, including OTLP endpoint env override."""
+    """Expand configured service ports (OTLP is mounted in the API)."""
     server = config.get("server", {})
     host = str(server.get("host", "127.0.0.1"))
     api_port = int(server.get("api_port", 4001))
-
-    return [
-        ServicePort("API", "tokenage-api", host, api_port),
-        resolve_otlp_service_port(config),
-    ]
-
-
-def resolve_otlp_service_port(config: dict[str, Any]) -> ServicePort:
-    """Return OTLP listener target, preferring a parseable OTEL logs endpoint."""
-    server = config.get("server", {})
-    endpoint = os.environ.get(OTEL_EXPORTER_OTLP_LOGS_ENDPOINT_ENV)
-    if endpoint:
-        parsed_endpoint = _parse_otlp_endpoint(endpoint)
-        if parsed_endpoint is not None:
-            host, port = parsed_endpoint
-            return ServicePort("OTLP", "tokenage-otlp", host, port)
-
-    host = str(server.get("host", "127.0.0.1"))
-    api_port = int(server.get("api_port", 4001))
-    otlp_port = int(server.get("otlp_port", api_port + 1))
-    return ServicePort("OTLP", "tokenage-otlp", host, otlp_port)
-
-
-def _parse_otlp_endpoint(endpoint: str) -> tuple[str, int] | None:
-    try:
-        parsed = urlparse(endpoint)
-        port = parsed.port
-    except ValueError:
-        return None
-
-    if parsed.hostname is None or port is None:
-        return None
-    return parsed.hostname, port
+    return [ServicePort("API", "tokenage-api", host, api_port)]
 
 
 def parse_supervisor_status(text: str) -> dict[str, SupervisorProgramState]:

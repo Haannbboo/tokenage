@@ -154,78 +154,15 @@ def test_get_blocking_port_issues_ignores_not_listening(runtime_ports_module):
     assert runtime_ports_module.get_blocking_port_issues(issues) == []
 
 
-def test_get_configured_service_ports_prefers_otlp_endpoint_env(
-    runtime_ports_module, monkeypatch
-):
-    monkeypatch.setenv(
-        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-        "http://127.0.0.1:49153/v1/logs",
-    )
-
+def test_get_configured_service_ports_lists_only_the_api(runtime_ports_module):
+    # OTLP is mounted in the API; a stale server.otlp_port is ignored.
     service_ports = runtime_ports_module.get_configured_service_ports(
-        {
-            "server": {
-                "host": "127.0.0.1",
-                "api_port": 4001,
-                "otlp_port": 4005,
-            }
-        }
+        {"server": {"host": "127.0.0.1", "api_port": 4001, "otlp_port": 4005}}
     )
 
-    assert service_ports[-1] == runtime_ports_module.ServicePort(
-        "OTLP",
-        "tokenage-otlp",
-        "127.0.0.1",
-        49153,
-    )
-
-
-def test_get_configured_service_ports_uses_configured_otlp_port_without_env(
-    runtime_ports_module, monkeypatch
-):
-    monkeypatch.delenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", raising=False)
-
-    service_ports = runtime_ports_module.get_configured_service_ports(
-        {
-            "server": {
-                "host": "127.0.0.1",
-                "api_port": 4001,
-                "otlp_port": 4005,
-            }
-        }
-    )
-
-    assert service_ports[-1] == runtime_ports_module.ServicePort(
-        "OTLP",
-        "tokenage-otlp",
-        "127.0.0.1",
-        4005,
-    )
-
-
-# ---------------------------------------------------------------------------
-# _parse_otlp_endpoint
-# ---------------------------------------------------------------------------
-
-
-def test_parse_otlp_endpoint_valid(runtime_ports_module):
-    result = runtime_ports_module._parse_otlp_endpoint("http://127.0.0.1:49153/v1/logs")
-    assert result == ("127.0.0.1", 49153)
-
-
-def test_parse_otlp_endpoint_missing_port(runtime_ports_module):
-    result = runtime_ports_module._parse_otlp_endpoint("http://127.0.0.1/v1/logs")
-    assert result is None
-
-
-def test_parse_otlp_endpoint_invalid_url(runtime_ports_module):
-    result = runtime_ports_module._parse_otlp_endpoint("not-a-url")
-    assert result is None
-
-
-def test_parse_otlp_endpoint_empty_string(runtime_ports_module):
-    result = runtime_ports_module._parse_otlp_endpoint("")
-    assert result is None
+    assert service_ports == [
+        runtime_ports_module.ServicePort("API", "tokenage-api", "127.0.0.1", 4001)
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -172,9 +172,7 @@ usage: tokenage server <command>
   bootstrap              install, build the dashboard, start, verify
   start                  turn the services on
   stop [program...]      stop all services, or the named ones
-  restart [program...] [--otlp-port N]
-                         reload running services (programs: tokenage-api,
-                         tokenage-otlp)
+  restart [program...]   reload running services (program: tokenage-api)
   status [program...]    supervisord table, ports, port check
   update [--check|--dry-run]
                          fast-forward the server clone, bootstrap, restart

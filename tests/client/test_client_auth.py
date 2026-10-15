@@ -488,8 +488,8 @@ def test_logout_keep_agents_names_the_collector_not_the_api(capsys):
     [
         "https://api.example.com:4005/v1/logs",
         "http://localhost:4005/v1/logs",
-        "http://127.0.0.1:4002/v1/logs",
-        "http://[::1]:4002/v1/logs",
+        "http://127.0.0.1:4001/otlp/v1/logs",
+        "http://[::1]:4001/otlp/v1/logs",
     ],
 )
 def test_valid_logs_endpoint_accepts_https_and_loopback(raw):

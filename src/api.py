@@ -913,9 +913,23 @@ async def _resolve_live_cost_maps():
 async def get_pricing(request: Request):
     """Return all models with resolved pricing and source metadata, with the
     caller's own overrides on top (source "user")."""
-    overrides = load_model_price_overrides(user_id=_request_user_id(request))
+    overrides = await asyncio.to_thread(
+        load_model_price_overrides, user_id=_request_user_id(request)
+    )
     resolved, _costs, _sources = await _resolve_live_cost_maps()
-    entries = {key: _pricing_entry(rc) for key, rc in resolved.items()}
+    override_sources = dict.fromkeys(overrides, "user")
+    entries = {}
+    for key, rc in resolved.items():
+        # Same segment matching as record time, so e.g. an override for
+        # "proxy/zen/gpt-4o" shows on "gpt-4o" too.
+        # ponytail: rebuilds the tiny override segment index per key; hoist
+        # it if users ever carry thousands of overrides.
+        match = (
+            resolve_cost_match(key, overrides, override_sources) if overrides else None
+        )
+        if match is not None:
+            rc = ResolvedCost(cost=match.cost, source="user")
+        entries[key] = _pricing_entry(rc)
     for key, cost in overrides.items():
         entries[key] = _pricing_entry(ResolvedCost(cost=cost, source="user"))
     return entries
@@ -940,12 +954,12 @@ def _override_model(model: str) -> str:
 
 # Registered before /pricing/{model:path}, which would otherwise swallow it.
 @app.get("/pricing/overrides")
-async def get_pricing_overrides(request: Request):
+def get_pricing_overrides(request: Request):
     return list_model_prices(user_id=_request_user_id(request))
 
 
 @app.put("/pricing/overrides/{model:path}")
-async def put_pricing_override(request: Request, model: str, body: ModelPriceUpdate):
+def put_pricing_override(request: Request, model: str, body: ModelPriceUpdate):
     return upsert_model_price(
         user_id=_request_user_id(request),
         model=_override_model(model),
@@ -954,7 +968,7 @@ async def put_pricing_override(request: Request, model: str, body: ModelPriceUpd
 
 
 @app.delete("/pricing/overrides/{model:path}", status_code=204)
-async def delete_pricing_override(request: Request, model: str):
+def delete_pricing_override(request: Request, model: str):
     if not delete_model_price(
         user_id=_request_user_id(request), model=_override_model(model)
     ):
@@ -974,7 +988,9 @@ async def get_model_pricing(request: Request, model: str):
     if not model:
         raise HTTPException(status_code=422, detail="model must not be empty")
 
-    overrides = load_model_price_overrides(user_id=_request_user_id(request))
+    overrides = await asyncio.to_thread(
+        load_model_price_overrides, user_id=_request_user_id(request)
+    )
     match = resolve_cost_match(model, overrides, dict.fromkeys(overrides, "user"))
     if match is not None:
         return {

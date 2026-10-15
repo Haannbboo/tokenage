@@ -458,6 +458,7 @@ def recalculate_usage_cost(
     model_costs: dict[str, Any] | None = None,
     model_cost_sources: dict[str, str] | None = None,
     db_path: str | None = None,
+    overrides: dict[str, Any] | None = None,
 ) -> CostRecalcResult | None:
     """Recompute one Usage row's cost against current pricing and keep its
     usage_daily and sessions rollups in sync, all in one transaction. Returns
@@ -475,7 +476,8 @@ def recalculate_usage_cost(
         get_session_record,
     )
 
-    overrides = load_model_price_overrides(user_id=user_id, db_path=db_path)
+    if overrides is None:
+        overrides = load_model_price_overrides(user_id=user_id, db_path=db_path)
     engine = get_engine(db_path)
     with Session(engine) as session:
         query = select(Usage).where(Usage.id == usage_id, Usage.user_id == user_id)
@@ -675,6 +677,7 @@ def reprice_estimated_rows(
         until=until,
         db_path=db_path,
     )
+    overrides = load_model_price_overrides(user_id=user_id, db_path=db_path)
     repriced = skipped = examined = 0
     for usage_id in rows:
         if limit is not None and repriced >= limit:
@@ -686,6 +689,7 @@ def reprice_estimated_rows(
             model_cost_sources=model_cost_sources,
             user_id=user_id,
             db_path=db_path,
+            overrides=overrides,
         )
         # A snapshot failure leaves the row unbound, so don't report it as
         # repriced; it stays eligible for a later run.

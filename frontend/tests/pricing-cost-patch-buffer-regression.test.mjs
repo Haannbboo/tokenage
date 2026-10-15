@@ -41,12 +41,14 @@ test('pricing save PUTs per-model overrides instead of PATCHing config', () => {
   assert.match(savePricingSource, /const path = encodeURIComponent\(model\)/)
 })
 
-test('pricing save optionally reprices past usage after each successful PUT', () => {
+test('pricing save optionally reprices unpriced usage after each successful PUT', () => {
   const putIndex = savePricingSource.indexOf("method: 'PUT'")
   const repriceIndex = savePricingSource.indexOf('fetch(`/usage/reprice?model=${path}`')
   assert.ok(putIndex !== -1 && repriceIndex > putIndex)
   assert.match(savePricingSource, /if \(repricePast\)/)
   assert.match(savePricingSource, /repriced \+= /)
+  // The draft survives a failed save or reprice.
+  assert.ok(savePricingSource.indexOf('dropDraft(model)') > repriceIndex)
   assert.match(savePricingSource, /await refetchPricing\(\)/)
 })
 
@@ -54,4 +56,10 @@ test('pricing reset deletes the override without repricing and refetches', () =>
   assert.match(resetPricingSource, /method: 'DELETE'/)
   assert.doesNotMatch(resetPricingSource, /\/usage\/reprice/)
   assert.match(resetPricingSource, /await refetchPricing\(\)/)
+})
+
+test('adding a listed model matches its existing key case-insensitively', () => {
+  assert.match(pricingHook, /name\.trim\(\)\.toLowerCase\(\)/)
+  assert.match(pricingHook, /key\.toLowerCase\(\) === model/)
+  assert.match(pricingHook, /setPricingSearch\(existing\)/)
 })

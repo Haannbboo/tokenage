@@ -298,3 +298,53 @@ def test_reprice_route_is_scoped_to_caller(client, fresh_db, users):
     assert (
         db.fetch_recent_usage(limit=1, user_id=ids["b"])[0]["price_snapshot_id"] is None
     )
+
+
+def test_unbound_rows_never_borrow_another_users_override_snapshot(
+    fresh_db, users, shared_prices
+):
+    from src.pricing.snapshots import enrich_rows, get_price_snapshot
+
+    db = fresh_db.database_module
+    _, ids = users
+    db.upsert_model_price(user_id=ids["a"], model="shared-model", input=50, output=70)
+    a = _record(ids["a"], "shared-model", fresh_db.db_path)
+    assert _snapshot_source(db, a.price_snapshot_id) == "user"
+    _unpriced(db, ids["b"], "b-row", "shared-model")
+
+    (row,) = enrich_rows(db.fetch_recent_usage(limit=10, user_id=ids["b"]))
+    assert row["pricing"]["source"] != "user"
+    assert row["pricing"]["input"] == pytest.approx(1.0)
+    assert get_price_snapshot(date="2026-05-19", model="shared-model") is None
+
+
+def test_reprice_loads_overrides_once(fresh_db, users, shared_prices, monkeypatch):
+    from src.database import usage as usage_module
+
+    db = fresh_db.database_module
+    _, ids = users
+    for i in range(3):
+        _unpriced(db, ids["a"], f"row-{i}", "shared-model")
+    calls = []
+    real = usage_module.load_model_price_overrides
+    monkeypatch.setattr(
+        usage_module,
+        "load_model_price_overrides",
+        lambda **kw: calls.append(kw) or real(**kw),
+    )
+
+    summary = db.reprice_estimated_rows(user_id=ids["a"], db_path=fresh_db.db_path)
+
+    assert summary["repriced"] == 3
+    assert len(calls) == 1
+
+
+def test_get_pricing_overlays_segment_matched_overrides(client):
+    a = client("a")
+    a.put("/pricing/overrides/proxy/zen/shared-model", json={"input": 6, "output": 8})
+
+    entries = a.get("/pricing").json()
+    assert entries["shared-model"]["source"] == "user"
+    assert entries["shared-model"]["input"] == 6
+    assert entries["proxy/zen/shared-model"]["source"] == "user"
+    assert client("b").get("/pricing").json()["shared-model"]["source"] == "yaml"

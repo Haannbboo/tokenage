@@ -137,10 +137,12 @@ export function usePricingData() {
   /** Start a draft for a model by name. Returns false when the model is
    *  already listed (the search is narrowed to it instead). */
   const addModel = useCallback((name: string) => {
-    const model = name.trim()
+    // The server stores override names lowercased, so match and key the same way.
+    const model = name.trim().toLowerCase()
     if (!model) return true
-    if (pricingData?.[model]) {
-      setPricingSearch(model)
+    const existing = Object.keys(pricingData ?? {}).find((key) => key.toLowerCase() === model)
+    if (existing) {
+      setPricingSearch(existing)
       return false
     }
     setDrafts((prev) => (prev[model] ? prev : { ...prev, [model]: draftFrom() }))
@@ -188,16 +190,17 @@ export function usePricingData() {
           setConfigStatus('error')
           return
         }
-        dropDraft(model)
         if (repricePast) {
           const repriceResp = await fetch(`/usage/reprice?model=${path}`, { method: 'POST' })
           if (!repriceResp.ok) {
-            setError(`${model}: ${t('Failed to reprice past usage')}`)
+            setError(`${model}: ${t('Failed to reprice unpriced usage')}`)
             setConfigStatus('error')
             return
           }
           repriced += (await repriceResp.json()).repriced ?? 0
         }
+        // Only now: a failed save or reprice keeps the edit for a retry.
+        dropDraft(model)
       }
       setConfigStatus('saved')
       showToast(repricePast

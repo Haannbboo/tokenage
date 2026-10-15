@@ -54,7 +54,7 @@ export function PricingPage() {
     handleResetPricing,
   } = usePricingData()
 
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'user' | 'yaml' | 'litellm' | 'openrouter'>('user')
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'user' | 'yaml' | 'litellm' | 'openrouter'>('all')
   const [newModelName, setNewModelName] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
@@ -202,7 +202,7 @@ export function PricingPage() {
                 disabled={saving}
                 onChange={(e) => setRepricePast(e.target.checked)}
               />
-              {t('Reprice past usage')}
+              {t('Reprice unpriced usage')}
             </label>
             <button
               type="button"

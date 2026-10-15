@@ -82,7 +82,7 @@ From a checkout, `bash src/scripts/bootstrap.sh` is the server install alone. It
 2. builds the dashboard when Node/npm are available
 3. creates a launcher symlink at `~/.local/bin/tokenage` if there is none (steps 1 and 3 are shell, the rest `src/ops.py`)
 4. creates `~/.tokenage/config.yaml` if needed
-5. starts the API and OTLP services with Supervisor
+5. starts the server (API, dashboard and OTLP collector in one process) with Supervisor
 6. verifies service ports and the dashboard
 7. restarts the API so the freshly built dashboard is served
 
@@ -139,7 +139,7 @@ The empty dashboard automatically checks for your first event. No fake demo data
 
 ## Docker deployment
 
-Run the API and OTLP servers in a single container for NAS or remote server deployment. See [docker/README.md](docker/README.md).
+Run the server (API, dashboard and OTLP collector) in a single container for NAS or remote server deployment. See [docker/README.md](docker/README.md).
 
 ## CLI examples
 
@@ -210,7 +210,7 @@ Frontend-specific notes live in [frontend/README.md](frontend/README.md).
 | Service | Default URL | Purpose |
 | --- | --- | --- |
 | API + dashboard | `http://127.0.0.1:4001` | REST API and built dashboard |
-| OTLP collector | `http://127.0.0.1:4002` | Local agent telemetry ingestion |
+| OTLP collector | `http://127.0.0.1:4001/otlp` | Agent telemetry ingestion (`/otlp/v1/logs`) |
 
 Service commands:
 
@@ -248,7 +248,6 @@ models:
 server:
   host: 127.0.0.1
   api_port: 4001
-  otlp_port: 4002
 
 db:
   path: ~/.tokenage/usage.db

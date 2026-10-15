@@ -1,5 +1,4 @@
 import asyncio
-import json
 from unittest.mock import ANY
 
 import pytest
@@ -1333,102 +1332,18 @@ def test_version_publishes_the_collector_for_clients(api_module, monkeypatch):
     """Clients need to know where to point agents, and only the server knows."""
     monkeypatch.setattr(
         api_module,
-        "resolve_server_urls",
-        lambda _config: {
-            "api_url": "https://tracker.example.test:4004",
-            "otlp_url": "https://tracker.example.test:4005",
-        },
-    )
-    client = TestClient(api_module.app)
-    payload = client.get("/version").json()
-
-    assert payload["otlp_logs_endpoint"] == "https://tracker.example.test:4005/v1/logs"
-
-
-@pytest.mark.parametrize(
-    "endpoint,expected",
-    [
-        ("http://localhost:9205/v1/logs", "http://localhost:9205/v1/logs"),
-        ("https://[::1]:9205/v1/logs", "https://[::1]:9205/v1/logs"),
-        ("http://0.0.0.0:9205", "http://localhost:9205/v1/logs"),
-    ],
-)
-def test_version_collector_hint_honors_runtime_endpoint_override(
-    api_module, monkeypatch, endpoint, expected
-):
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", endpoint)
-    monkeypatch.setattr(api_module, "CONFIG", {"server": {"otlp_port": 4002}})
-    assert (
-        TestClient(api_module.app).get("/version").json()["otlp_logs_endpoint"]
-        == expected
-    )
-
-
-@pytest.mark.parametrize(
-    "override",
-    [
-        "not-a-url",
-        "http://localhost:bad/v1/logs",
-        "https://user:secret@localhost:9205/v1/logs",
-        "https://localhost:9205/v1/logs?token=secret",
-    ],
-)
-def test_version_collector_hint_does_not_publish_unsafe_overrides(
-    api_module, monkeypatch, override
-):
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", override)
-    payload = TestClient(api_module.app).get("/version").json()
-    assert "secret" not in json.dumps(payload)
-    if "secret" in override:
-        assert "otlp_logs_endpoint" not in payload
-        assert payload["collector_bind"] == {"host": "localhost", "port": 9205}
-    else:
-        assert payload["otlp_logs_endpoint"].endswith("/v1/logs")
-
-
-def test_version_preserves_safe_custom_collector_path(api_module, monkeypatch):
-    endpoint = "https://collector.example:9443/custom/v1/logs"
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", endpoint)
-    assert (
-        TestClient(api_module.app).get("/version").json()["otlp_logs_endpoint"]
-        == endpoint
-    )
-
-
-@pytest.mark.parametrize("host", ["0.0.0.0", "[::]"])
-def test_version_wildcard_collector_uses_configured_public_origin(
-    api_module, monkeypatch, host
-):
-    monkeypatch.setattr(
-        api_module,
         "CONFIG",
-        {
-            "server": {
-                "host": "0.0.0.0",
-                "base_url": "https://tracker.example",
-                "otlp_port": 4002,
-            }
-        },
+        {"server": {"base_url": "https://tracker.example.test", "api_port": 4004}},
     )
-    monkeypatch.setenv(
-        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", f"http://{host}:9205/v1/logs"
-    )
+    # The collector is mounted in the API: a bind override no longer moves it.
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://localhost:9/v1/logs")
     payload = TestClient(api_module.app).get("/version").json()
-    assert payload["otlp_logs_endpoint"] == "https://tracker.example:9205/v1/logs"
-    assert payload["collector_bind"] == {"host": host.strip("[]"), "port": 9205}
 
-
-@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
-def test_version_does_not_publish_server_loopback_to_remote_clients(
-    api_module, monkeypatch, host
-):
-    monkeypatch.setattr(
-        api_module, "CONFIG", {"server": {"base_url": "https://tracker.example"}}
+    assert (
+        payload["otlp_logs_endpoint"]
+        == "https://tracker.example.test:4004/otlp/v1/logs"
     )
-    monkeypatch.setenv(
-        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", f"http://{host}:9205/v1/logs"
-    )
-    assert "otlp_logs_endpoint" not in TestClient(api_module.app).get("/version").json()
+    assert "collector_bind" not in payload
 
 
 def test_version_publishes_supported_protocol(api_module):
@@ -1500,3 +1415,77 @@ def test_hosted_installer_rejects_invalid_api_origins(
     )
     response = TestClient(api_module.app).get("/install.sh")
     assert response.status_code == 503
+
+
+def _otlp_body() -> dict:
+    attrs = {
+        "event.name": "claude_code.api_request",
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "model": "test-model",
+    }
+    return {
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "claude-code"}}
+                    ]
+                },
+                "scopeLogs": [
+                    {
+                        "logRecords": [
+                            {
+                                "attributes": [
+                                    {
+                                        "key": k,
+                                        "value": {"intValue": v}
+                                        if isinstance(v, int)
+                                        else {"stringValue": v},
+                                    }
+                                    for k, v in attrs.items()
+                                ],
+                                "timeUnixNano": "1800000000000000000",
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def test_otlp_is_mounted_under_the_api(api_module, fresh_db, monkeypatch):
+    """One process, one port: /otlp/* reaches the collector with its own auth."""
+    from src.auth.tokens import mint_token
+
+    monkeypatch.setitem(
+        api_module.CONFIG, "auth", {"provider": "google", "allowlist": []}
+    )
+    gate_hits = []
+    monkeypatch.setattr(
+        api_module, "rate_limit_hit", lambda key, _limit: gate_hits.append(key)
+    )
+    client = TestClient(api_module.app)
+
+    health = client.get("/otlp/health")
+    assert health.json() == {"status": "ok", "service": "tokenage-otlp"}
+
+    # Tokenless: the collector's own 401, not the API gate's login response.
+    response = client.post("/otlp/v1/logs", json=_otlp_body())
+    assert response.status_code == 401
+    assert response.json() == {"detail": "invalid token"}
+
+    token, user = mint_token("o@example.com", kind="ingest", db_path=fresh_db.db_path)
+    response = client.post(
+        "/otlp/v1/logs", json=_otlp_body(), headers={"x-tokenage-token": token}
+    )
+    assert response.status_code == 200
+    engine = fresh_db.database_module.get_engine(fresh_db.db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            fresh_db.database_module.text("SELECT user_id, endpoint FROM usage")
+        ).all()
+    assert [tuple(r) for r in rows] == [(user.id, "otlp")]
+    # Counted once, against the token's ingest limit; never the API user limit.
+    assert gate_hits == []

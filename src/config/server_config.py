@@ -8,42 +8,20 @@ from urllib.parse import urlparse
 
 import yaml
 
-OTEL_EXPORTER_OTLP_LOGS_ENDPOINT_ENV = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
-
 
 @dataclass(frozen=True)
 class ServerConfig:
     host: str
     api_port: int
-    otlp_host: str
-    otlp_port: int
     base_url: str | None = None
 
 
-def resolve_otlp_host_port(config: dict) -> tuple[str, int]:
-    """Effective collector bind address, shared by gunicorn and diagnostics."""
-    endpoint = os.environ.get(OTEL_EXPORTER_OTLP_LOGS_ENDPOINT_ENV)
-    if endpoint:
-        try:
-            parsed = urlparse(endpoint)
-            if parsed.hostname and parsed.port:
-                return parsed.hostname, parsed.port
-        except ValueError:
-            pass
-
-    server = config.get("server", {})
-    host = str(server.get("host", "127.0.0.1"))
-    api_port = int(server.get("api_port", 4001))
-    otlp_port = int(server.get("otlp_port", api_port + 1))
-    return host, otlp_port
-
-
 def resolve_server_urls(config: dict) -> dict[str, str]:
-    """Return full URLs for api and otlp services.
+    """Return full URLs for the api and its mounted OTLP collector.
 
     Uses ``server.base_url`` when set (e.g. ``http://my-nas``), otherwise
-    derives the host from ``server.host``.  Ports come from
-    ``server.api_port`` and ``server.otlp_port``.
+    derives the host from ``server.host``.  The port comes from
+    ``server.api_port``; OTLP is served under ``/otlp`` on the same port.
     """
     server = config.get("server", {})
     base_url = server.get("base_url")
@@ -65,12 +43,8 @@ def resolve_server_urls(config: dict) -> dict[str, str]:
         elif ":" in host and not host.startswith("["):
             host = f"[{host}]"
         base = f"http://{host}"
-    api_port = int(server.get("api_port", 4001))
-    otlp_port = int(server.get("otlp_port", api_port + 1))
-    return {
-        "api_url": f"{base}:{api_port}",
-        "otlp_url": f"{base}:{otlp_port}",
-    }
+    api_url = f"{base}:{int(server.get('api_port', 4001))}"
+    return {"api_url": api_url, "otlp_url": f"{api_url}/otlp"}
 
 
 def load_server_config() -> ServerConfig:
@@ -84,12 +58,9 @@ def load_server_config() -> ServerConfig:
     server = cfg.get("server", {})
     host = str(server.get("host", "127.0.0.1"))
     base_url = server.get("base_url")
-    otlp_host, otlp_port = resolve_otlp_host_port(cfg)
 
     return ServerConfig(
         host=host,
         api_port=int(server.get("api_port", 4001)),
-        otlp_host=otlp_host,
-        otlp_port=otlp_port,
         base_url=base_url,
     )

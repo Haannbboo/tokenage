@@ -893,6 +893,8 @@ def _parse_log_record(
             )
 
 
+# Runs only standalone (`uvicorn src.otlp:app`). src/api.py mounts this app
+# at /otlp, where Starlette skips it: the API's own lifespan runs init_db().
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()

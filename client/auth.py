@@ -212,24 +212,24 @@ def remember_collector(endpoint: str) -> None:
 def discover_collector() -> str | None:
     """The collector to wire agents at, from the server this machine signed in to.
 
-    Logins made before the client recorded the endpoint have none, and a remote
-    server's collector cannot be derived from the local config — the OTLP port
-    is usually not the API port. So ask the server, then remember the answer.
+    Ask the server first: the collector can move (it was its own port before it
+    was mounted at /otlp on the API), and `tokenage update` re-runs setup to
+    follow it. Remember the answer; fall back to the recorded one offline.
     """
     stored = stored_collector()
-    if stored:
-        return stored
-    server = resolve_server(None)
+    # The server the stored ingest token belongs to, never TOKENAGE_SERVER: the
+    # token is wired into agents along with whatever endpoint this returns.
+    server = (load_credentials() or {}).get("server_url")
     if not server:
-        return None
+        return stored
     try:
         response = httpx.get(f"{server}/version", timeout=5)
         response.raise_for_status()
         endpoint = response.json().get("otlp_logs_endpoint")
     except (httpx.HTTPError, ValueError, AttributeError):
-        return None
+        return stored
     if not isinstance(endpoint, str) or not valid_logs_endpoint(endpoint):
-        return None
+        return stored
     remember_collector(endpoint)
     return endpoint
 

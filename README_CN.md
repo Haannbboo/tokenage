@@ -81,7 +81,7 @@ snapshot 和 virtualenv，即使与 server 在同一台机器上也一样，两�
 2. Node/npm 可用时构建 Dashboard
 3. 没有 launcher 时在 `~/.local/bin/tokenage` 创建 symlink
 4. 按需创建 `~/.tokenage/config.yaml`
-5. 用 Supervisor 启动 API 和 OTLP 服务
+5. 用 Supervisor 启动服务端（API、Dashboard 和 OTLP collector 在同一进程）
 6. 检查服务端口和 Dashboard
 7. 重启 API，让刚构建出来的 Dashboard 生效
 
@@ -199,7 +199,7 @@ Dashboard 提供：
 | 服务 | 默认 URL | 用途 |
 | --- | --- | --- |
 | API + Dashboard | `http://127.0.0.1:4001` | REST API 和构建后的 Dashboard |
-| OTLP collector | `http://127.0.0.1:4002` | 本地 Agent telemetry ingestion |
+| OTLP collector | `http://127.0.0.1:4001/otlp` | Agent telemetry ingestion（`/otlp/v1/logs`） |
 
 服务命令：
 
@@ -234,7 +234,6 @@ models:
 server:
   host: 127.0.0.1
   api_port: 4001
-  otlp_port: 4002
 
 db:
   path: ~/.tokenage/usage.db

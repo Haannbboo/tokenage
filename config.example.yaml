@@ -53,14 +53,13 @@ models:
       cacheRead: 0.084
 
 server:
-  # Base URL for agent OTLP endpoint configuration.
+  # Base URL for the URLs handed to clients (dashboard, OTLP at <url>/otlp).
   # When set, overrides 'host' for URL generation (e.g. http://my-nas).
-  # Ports still come from api_port/otlp_port below.
+  # The port still comes from api_port below.
   # Leave commented for local-only usage (defaults to http://localhost).
   # base_url: http://my-nas
   host: 127.0.0.1       # bind address: 127.0.0.1 = local only, 0.0.0.0 = all interfaces
   api_port: 4001
-  otlp_port: 4002
 
 db:
   path: ~/.tokenage/usage.db

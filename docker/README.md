@@ -50,16 +50,16 @@ Then re-run `start.sh` on your local machine to update agent OTLP endpoints, or 
 
 ```bash
 # OTLP (for Claude Code, Codex)
-export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://your-nas.tailnet.ts.net:4002/v1/logs
+export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://your-nas.tailnet.ts.net:4001/otlp/v1/logs
 ```
 
 Dashboard: open `http://your-nas.tailnet.ts.net:4001` in your browser.
 
 ## How it works
 
-- The entrypoint runs schema migrations on startup, then starts both servers under supervisord.
+- The entrypoint runs schema migrations on startup, then starts the server (API, dashboard, and the OTLP collector at `/otlp`) under supervisord.
 - `server.host` is automatically patched from `127.0.0.1` to `0.0.0.0` inside the container for proper Docker networking.
-- The container exposes ports 4001 (API + dashboard), and 4002 (OTLP).
+- The container exposes port 4001 (API + dashboard + OTLP at `/otlp`).
 - Logs go to stdout/stderr — use `docker logs tokenage` to view them.
 
 ## Unraid

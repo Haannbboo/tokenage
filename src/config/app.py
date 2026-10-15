@@ -36,7 +36,6 @@ def load_config(path: str | None = None) -> dict[str, Any]:
 
     server.setdefault("host", "127.0.0.1")
     server.setdefault("api_port", 4001)
-    server.setdefault("otlp_port", server["api_port"] + 1)
 
     auth = config.setdefault("auth", {})
     auth.setdefault("provider", "local")

@@ -22,7 +22,7 @@ from client import service, setup
 from protocol.device_status import DeviceStatusReport
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ENDPOINT = "http://localhost:4002/v1/logs"
+ENDPOINT = "http://localhost:4001/otlp/v1/logs"
 
 
 @pytest.fixture
@@ -119,7 +119,7 @@ def test_health_accepts_codex_otlp_http_enabled(device_home: Path) -> None:
 environment = "dev"
 [otel.exporter]
 [otel.exporter.otlp-http]
-endpoint = "http://localhost:4002/v1/logs"
+endpoint = "http://localhost:4001/otlp/v1/logs"
 enabled = true
 api_key = "super-secret"
 """,
@@ -144,7 +144,7 @@ environment = "dev"
 
 [otel.exporter]
 [otel.exporter.otlp-http]
-endpoint = "http://localhost:4002/v1/logs"
+endpoint = "http://localhost:4001/otlp/v1/logs"
 protocol = "json"
 
 [plugins."superpowers@openai-curated"]
@@ -166,7 +166,7 @@ def test_health_rejects_codex_otel_explicit_false(device_home: Path) -> None:
 enabled = false
 
 [otel.exporter.otlp-http]
-endpoint = "http://localhost:4002/v1/logs"
+endpoint = "http://localhost:4001/otlp/v1/logs"
 protocol = "json"
 """,
     )
@@ -188,7 +188,7 @@ environment = "dev"
 
 [otel.exporter.otlp-http]
 enabled = false
-endpoint = "http://localhost:4002/v1/logs"
+endpoint = "http://localhost:4001/otlp/v1/logs"
 protocol = "json"
 """,
     )

@@ -202,6 +202,7 @@ def test_merge_missing_config_defaults_backfills_missing_fields(config_module):
         },
         "server": {
             "api_port": 4100,
+            "otlp_port": 4101,  # stale: OTLP is mounted in the API now
         },
     }
     default_config = {
@@ -224,7 +225,6 @@ def test_merge_missing_config_defaults_backfills_missing_fields(config_module):
         "server": {
             "host": "127.0.0.1",
             "api_port": 4001,
-            "otlp_port": 4002,
         },
         "db": {
             "path": "~/.tokenage/usage.db",
@@ -241,59 +241,19 @@ def test_merge_missing_config_defaults_backfills_missing_fields(config_module):
     assert merged_config["models"]["gpt-5-mini"]["cost"]["output"] == 2.0
     assert merged_config["server"]["api_port"] == 4100
     assert merged_config["server"]["host"] == "127.0.0.1"
-    assert merged_config["server"]["otlp_port"] == 4002
+    assert merged_config["server"]["otlp_port"] == 4101  # kept, never used
     assert merged_config["db"]["path"] == "~/.tokenage/usage.db"
 
 
-def test_otlp_gunicorn_config_prefers_otlp_endpoint_env(tmp_path, monkeypatch):
-    repo_root = Path(__file__).resolve().parents[1]
-    config_dir = tmp_path / ".tokenage"
-    config_dir.mkdir()
-    (config_dir / "config.yaml").write_text(
-        """
-server:
-  host: 127.0.0.1
-  api_port: 4001
-  otlp_port: 4005
-db:
-  path: usage.db
-models: {}
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv(
-        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-        "http://127.0.0.1:49153/v1/logs",
+def test_load_config_ignores_stale_otlp_port(config_module, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "server:\n  api_port: 4001\n  otlp_port: 4002\n", encoding="utf-8"
     )
 
-    namespace = runpy.run_path(str(repo_root / "src" / "config" / "otlp.conf.py"))
+    config = config_module.load_config(str(config_path))
 
-    assert namespace["bind"] == "127.0.0.1:49153"
-
-
-def test_otlp_gunicorn_config_uses_configured_port_without_env(tmp_path, monkeypatch):
-    repo_root = Path(__file__).resolve().parents[1]
-    config_dir = tmp_path / ".tokenage"
-    config_dir.mkdir()
-    (config_dir / "config.yaml").write_text(
-        """
-server:
-  host: 127.0.0.1
-  api_port: 4001
-  otlp_port: 4005
-db:
-  path: usage.db
-models: {}
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", raising=False)
-
-    namespace = runpy.run_path(str(repo_root / "src" / "config" / "otlp.conf.py"))
-
-    assert namespace["bind"] == "127.0.0.1:4005"
+    assert config["server"]["api_port"] == 4001
 
 
 def test_gunicorn_configs_resolve_log_paths_to_repo_root(tmp_path, monkeypatch):
@@ -305,7 +265,6 @@ def test_gunicorn_configs_resolve_log_paths_to_repo_root(tmp_path, monkeypatch):
 server:
   host: 127.0.0.1
   api_port: 4001
-  otlp_port: 4005
 db:
   path: usage.db
 models: {}
@@ -314,9 +273,8 @@ models: {}
     )
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    for conf in ("api.conf.py", "otlp.conf.py"):
-        namespace = runpy.run_path(str(repo_root / "src" / "config" / conf))
-        assert namespace["ROOT"] == str(repo_root)
+    namespace = runpy.run_path(str(repo_root / "src" / "config" / "api.conf.py"))
+    assert namespace["ROOT"] == str(repo_root)
 
 
 def test_replace_contents_updates_keys(config_module):

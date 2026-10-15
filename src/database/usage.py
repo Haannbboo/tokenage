@@ -95,7 +95,7 @@ def _avg_effective_price_per_million_expr(
 # window instead of an exact key. Widen the window, or add a real shared id,
 # if collisions or missed matches become a problem. This also can't close the
 # race where both writers' lookups run before either has committed its own
-# insert (they're separate processes in separate transactions) — if that
+# insert (they're separate requests in separate transactions) — if that
 # happens, both still insert. Accepted gap: fixing it needs a DB-level
 # uniqueness constraint on a real shared key, which doesn't exist yet.
 DEDUP_WINDOW_MICROS = 15_000_000
@@ -108,7 +108,7 @@ DEDUP_WINDOW_MICROS = 15_000_000
 #
 # Kilo is a fork that reuses OpenCode's config schema and OTLP field
 # extraction (both parsed by _extract_opencode_fields in otlp.py), but the
-# proxy's user-agent sniffing (parse_client_source in proxy.py) has no
+# proxy's user-agent sniffing (parse_client_source in client/proxy/usage.py) has no
 # separate Kilo case — if Kilo's outbound requests don't rebrand their UA,
 # the proxy would label them "opencode" while OTLP labels them "kilo".
 # Folding them into one family keeps dedup working either way.
@@ -159,10 +159,6 @@ def merge_duplicate_usage(
     they're already folded into `usage_daily`/`sessions` running sums the
     moment the existing row was inserted, so changing them here would desync
     those aggregates without a matching correction.
-
-    Authenticated OTLP rows intentionally do not merge with unscoped proxy
-    rows (`user_id` NULL); merging them would attribute another tenant's
-    traffic without a trustworthy identity.
     """
     family = _CLIENT_SOURCE_FAMILIES.get(client_source or "")
     if family is None:

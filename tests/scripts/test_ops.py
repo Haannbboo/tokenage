@@ -22,14 +22,13 @@ def box(tmp_path, monkeypatch):
     (root / "src").mkdir(parents=True)
     (root / "src" / "pyproject.toml").write_text("[project]\nname='x'\n")
     (root / "config.example.yaml").write_text(
-        "server:\n  host: 127.0.0.1\n  api_port: 4001\n  otlp_port: 4002\n"
+        "server:\n  host: 127.0.0.1\n  api_port: 4001\n"
     )
     (root / ".venv").mkdir()
     home = tmp_path / "home"
     monkeypatch.setattr(ops, "ROOT", root)
     monkeypatch.setenv("TOKENAGE_HOME", str(home))
     monkeypatch.delenv("TOKENAGE_CONFIG", raising=False)
-    monkeypatch.delenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", raising=False)
     monkeypatch.setattr(ops.time, "sleep", lambda _: None)
 
     b = SimpleNamespace(root=root, home=home, calls=[], states={}, busy=set())
@@ -98,7 +97,7 @@ def test_first_run_moves_busy_ports_but_an_existing_config_fails(box, capsys):
 
     assert ops.start() == 0
     server = yaml.safe_load((box.home / "config.yaml").read_text())["server"]
-    assert 4001 not in (server["api_port"], server["otlp_port"])
+    assert server["api_port"] != 4001
 
     server["api_port"] = 4001
     (box.home / "config.yaml").write_text(yaml.safe_dump({"server": server}))
@@ -106,40 +105,28 @@ def test_first_run_moves_busy_ports_but_an_existing_config_fails(box, capsys):
     assert "Port check failed" in capsys.readouterr().out
 
 
-def test_restart_reloads_named_programs_and_persists_the_otlp_port(box):
+def test_restart_reloads_named_programs(box):
     (box.home).mkdir()
     (box.home / "supervisord.conf").write_text("")
-    (box.home / "config.yaml").write_text(
-        "# mine\nserver:\n  otlp_port: 4002  # collector\n"
-    )
-    box.states = {p: "RUNNING" for p in ops.PROGRAMS[:2]}
+    (box.home / "config.yaml").write_text("server:\n  api_port: 4001\n")
+    box.states = {"tokenage-api": "RUNNING"}
 
+    assert ops.PROGRAMS == ("tokenage-api",)  # OTLP is mounted in the API
     assert ops.restart(["tokenage-api"]) == 0
     assert ctl(box, "signal", "HUP", "tokenage-api")
-    assert not ctl(box, "signal", "HUP", "tokenage-otlp")
     assert "migrate" in box.calls
 
-    box.states["tokenage-otlp"] = "RUNNING"
-    assert ops.restart(["--otlp-port", "5505"]) == 0
-    assert "# mine" in (box.home / "config.yaml").read_text()  # comments survive
-    assert ctl(box, "restart", "tokenage-otlp")
-    assert (
-        yaml.safe_load((box.home / "config.yaml").read_text())["server"]["otlp_port"]
-        == 5505
-    )
-
-    with pytest.raises(SystemExit):
-        ops.restart(["nope"])
-    with pytest.raises(SystemExit):
-        ops.restart(["--otlp-port", "5505", "tokenage-api"])
+    for args in (["nope"], ["tokenage-otlp"], ["--otlp-port", "5505"]):
+        with pytest.raises(SystemExit):
+            ops.restart(args)
 
 
 def test_stop_named_or_everything(box):
     box.home.mkdir()
     (box.home / "supervisord.conf").write_text("")
 
-    ops.stop(["tokenage-otlp"])
-    assert ctl(box, "stop", "tokenage-otlp") and not ctl(box, "shutdown")
+    ops.stop(["tokenage-api"])
+    assert ctl(box, "stop", "tokenage-api") and not ctl(box, "shutdown")
     ops.stop()
     assert ctl(box, "stop", "all") and ctl(box, "shutdown")
 
@@ -150,19 +137,17 @@ def test_bootstrap_records_the_stamp_and_reports_display_urls(box, monkeypatch, 
         "server:\n  base_url: https://tok.example.com\n"
     )
     (box.root / "frontend" / "dist").mkdir(parents=True)
-    monkeypatch.setattr(
-        ops, "_wait_for_port", lambda host, port, retries=10: port != 4002
-    )
+    monkeypatch.setattr(ops, "_wait_for_port", lambda host, port, retries=10: True)
     monkeypatch.setattr(ops, "_content_type", lambda url: "text/html")
     monkeypatch.setattr(ops, "start", lambda args=None: 0)
     monkeypatch.setattr(ops.shutil, "which", lambda name: None)
 
-    assert ops.bootstrap() == 1  # OTLP port closed
+    assert ops.bootstrap() == 1  # the fake checkout has no client/bin/tokenage
 
     out = capsys.readouterr().out
     assert ops._stamp_file().read_text().strip() == ops._requirements_hash()
     assert "API running: https://tok.example.com:4001" in out
-    assert "OTLP listening: https://tok.example.com:4002 (not responding)" in out
+    assert "OTLP" not in out  # no separate collector port to check
     assert ctl(box, "restart", "tokenage-api")  # new frontend/dist is served
 
 

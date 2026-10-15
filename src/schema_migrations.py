@@ -7,7 +7,8 @@ from .database.models import metadata
 
 TENANT_TABLES = ("usage", "usage_daily", "sessions", "tool_calls", "evaluation_jobs")
 LEGACY_USAGE_DAILY_INDEXES = ("uq_usage_daily_local", "uq_usage_daily_user")
-DEVICE_ID_TABLES = ("usage", "usage_daily")
+DEVICE_ID_TABLES = ("usage", "usage_daily", "evaluation_jobs")
+LEGACY_EVALUATION_JOB_INDEX = "ix_evaluation_jobs_one_active_per_session"
 
 
 def _require_no_null_user_ids(engine, insp) -> None:
@@ -108,6 +109,28 @@ def migrate_database(db_path: str | None = None) -> list[str]:
             if index.name not in existing.get(table.name, ()):
                 index.create(engine, checkfirst=True)
                 applied.append(f"{table.name}.{index.name}")
+
+    # Evaluation moved to the client: the old server queue's one-active-job
+    # index would block a second client run on the same session, and any
+    # queued/running rows it guarded can never finish without the worker.
+    if LEGACY_EVALUATION_JOB_INDEX in existing.get("evaluation_jobs", ()):
+        with engine.begin() as connection:
+            connection.execute(
+                text(f"DROP INDEX IF EXISTS {LEGACY_EVALUATION_JOB_INDEX}")
+            )
+        applied.append("evaluation_jobs.drop_one_active_index")
+
+    with engine.begin() as connection:
+        result = connection.execute(
+            text(
+                "UPDATE evaluation_jobs SET status = 'failed', "
+                "error = 'Evaluation moved to the client', "
+                "finished_at = COALESCE(finished_at, created_at) "
+                "WHERE device_id IS NULL AND status NOT IN ('succeeded', 'failed')"
+            )
+        )
+        if result.rowcount:  # type: ignore[attr-defined]
+            applied.append("evaluation_jobs.fail_legacy_active")
 
     # The pre-NOT-NULL pair of partial unique indexes (NULL-user / real-user).
     legacy = [

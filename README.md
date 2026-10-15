@@ -309,6 +309,49 @@ Supported proxy paths include:
 
 For streamed responses, the proxy records TTFT as time until the first upstream chunk arrives.
 
+## Automatic session evaluation
+
+The client service evaluates local Claude Code, Codex, OpenCode, and Kilo sessions
+after ten minutes without activity, oldest last activity first. It uses your
+installed evaluator's account and credits. Setup chooses the first installed
+evaluator in this order: **Claude Code → Codex → OpenCode**. If none is installed,
+evaluation stays idle. An explicit choice is preserved across updates.
+
+Configure it in `~/.tokenage/client.yaml`, alongside any `proxy:` settings:
+
+```yaml
+evaluation:
+  auto_enabled: true
+  evaluator: claude        # claude, codex, or opencode
+  quiet_delay_seconds: 600
+```
+
+Set `auto_enabled: false` to turn it off, then run `tokenage client restart`.
+The client selects and runs evaluations locally; the dashboard shows current
+results and run history and lets you annotate outcomes manually. A resumed
+session is evaluated again after it becomes quiet. Manual annotations take
+precedence over reported results.
+
+If the server rejects a start report with HTTP 404, the client skips evaluation
+and saves a local rejection marker. That revision stays covered until the local
+transcript changes, avoiding evaluator charges for sessions the server cannot store.
+
+Full transcripts stay on the machine and are passed to your configured evaluator;
+tokenage receives only bounded, secret-scrubbed derived results and run metadata.
+The client retains one latest result per session under
+`$TOKENAGE_HOME/evaluations/`, including whether submission succeeded. Unsent
+results are retried without repeating the evaluation. Permanent rejections
+(HTTP 400, 404, 409, or 422) remain local with `submission_error` and are not
+retried automatically. The server keeps run
+metadata history and the latest session evaluation, not historical result copies.
+
+The client reports to `POST /evaluation-jobs/started` and
+`POST /evaluation-jobs/completed` with its device-bound CLI bearer token, including
+on loopback. A successful completion response means the server committed the
+report; retrying the same job ID is safe. User-scoped run history is available at
+`GET /sessions/{session_id}/evaluation-jobs`. Manual annotations use
+`GET`, `PUT`, and `DELETE /sessions/{session_id}/evaluation`.
+
 ## Tracking coverage
 
 | Metric | Claude Code | Codex | OpenCode / Kilo Code | Direct proxy |

@@ -23,12 +23,10 @@ describe('Login gate', () => {
     assert.match(context, /data\.provider === 'google'/)
   })
 
-  test('isApiPath treats /local/* routes as API paths so a 401 there logs out', () => {
-    // Regression: isApiPath used to check pathname === '/local/', which never
-    // matches real routes like /local/agents or /local/setup-health, so a 401
-    // from those endpoints silently failed to trigger markLoggedOut().
-    assert.match(context, /pathname\.startsWith\('\/local\/'\)/)
-    assert.doesNotMatch(context, /pathname === '\/local\/'/)
+  test('isApiPath treats evaluation jobs routes as API paths so a 401 there logs out', () => {
+    assert.match(context, /pathname\.startsWith\('\/evaluation-jobs\/'\)/)
+    // The removed /local/* evaluation routes must not linger in the API path list.
+    assert.doesNotMatch(context, /'\/local\//)
   })
 
   test('App renders LoginGate whenever there is no user', () => {

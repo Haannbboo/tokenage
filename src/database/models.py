@@ -332,15 +332,22 @@ VALID_SOURCES = {"manual", "heuristic", "llm"}
 
 
 class EvaluationJob(Base):
+    """One client-reported evaluation run. Metadata only: the result itself
+    lives on the session row, so a job never stores a result snapshot."""
+
     __tablename__ = "evaluation_jobs"
 
     job_id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    # NULL only for legacy rows written before evaluation moved to the client.
+    device_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("devices.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     kind: Mapped[str] = mapped_column(String, nullable=False)
-    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     client_source: Mapped[str | None] = mapped_column(String, nullable=True)
     trigger: Mapped[str] = mapped_column(
-        String, nullable=False, server_default=text("'manual'")
+        String, nullable=False, server_default=text("'auto'")
     )
     evaluator_type: Mapped[str] = mapped_column(
         String, nullable=False, server_default=text("'codex'")
@@ -350,16 +357,6 @@ class EvaluationJob(Base):
     started_at: Mapped[str | None] = mapped_column(String, nullable=True)
     finished_at: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
-
-
-Index(
-    "ix_evaluation_jobs_one_active_per_session",
-    EvaluationJob.kind,
-    EvaluationJob.session_id,
-    unique=True,
-    sqlite_where=EvaluationJob.status.in_(("queued", "running")),
-    postgresql_where=EvaluationJob.status.in_(("queued", "running")),
-)
 
 
 class ToolCall(Base):

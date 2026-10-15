@@ -1,3 +1,5 @@
+import os
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -48,7 +50,7 @@ def test_bump_version_workflow_bumps_only_changed_packages_from_base_version():
     # branch name containing shell syntax run inside this script.
     assert bump_step["env"]["BASE_REF"] == "${{ github.base_ref }}"
     assert "github.base_ref" not in bump_step["run"]
-    assert 'git fetch origin "$BASE_REF" --depth=1' in bump_step["run"]
+    assert 'git fetch origin "$BASE_REF"' in bump_step["run"]
     assert 'git diff --name-only "origin/$BASE_REF...HEAD"' in bump_step["run"]
     assert "client/*|plugins/*)" in bump_step["run"]
     assert "server/*|src/*|frontend/*" in bump_step["run"]
@@ -86,6 +88,61 @@ def test_bump_version_workflow_fails_when_path_detection_fails():
     )
     assert '<<< "$CHANGED_FILES"' in bump_step["run"]
     assert "< <(git diff" not in bump_step["run"]
+
+
+def test_bump_version_workflow_handles_main_advancing_after_pr_branch(
+    tmp_path, monkeypatch
+):
+    origin = tmp_path / "origin"
+    checkout = tmp_path / "checkout"
+    origin.mkdir()
+    hook_index = tmp_path / "hook-index"
+    hook_index.write_bytes(b"outer Git index")
+    monkeypatch.setenv("GIT_INDEX_FILE", str(hook_index))
+    env = {
+        # Commit hooks export Git paths; fixture repos must not inherit them.
+        **{
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("GIT_")
+        },
+        "GIT_AUTHOR_NAME": "Workflow test",
+        "GIT_AUTHOR_EMAIL": "workflow@example.com",
+        "GIT_COMMITTER_NAME": "Workflow test",
+        "GIT_COMMITTER_EMAIL": "workflow@example.com",
+        "BASE_REF": "main",
+        "GITHUB_OUTPUT": str(tmp_path / "output"),
+    }
+
+    def git(*args):
+        subprocess.run(
+            ["git", *args], cwd=origin, env=env, check=True, capture_output=True
+        )
+
+    git("init", "--initial-branch=main")
+    (origin / "VERSION").write_text("0.1.0\n")
+    (origin / "client").mkdir()
+    (origin / "client" / "VERSION").write_text("0.1.0\n")
+    git("add", ".")
+    git("commit", "-m", "initial versions")
+    git("checkout", "-b", "pr")
+    (origin / "client" / "feature.py").write_text("pass\n")
+    git("add", ".")
+    git("commit", "-m", "client feature")
+    git("checkout", "main")
+    (origin / "README.md").write_text("Main advanced after the PR branched.\n")
+    git("add", ".")
+    git("commit", "-m", "advance main")
+    git("clone", "--branch=pr", origin.as_uri(), str(checkout))
+
+    script = load_workflow()["jobs"]["bump"]["steps"][1]["run"]
+    subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", script], cwd=checkout, env=env, check=True
+    )
+
+    assert (checkout / "client" / "VERSION").read_text() == "0.1.1\n"
+    assert (checkout / "VERSION").read_text() == "0.1.0\n"
+    assert hook_index.read_bytes() == b"outer Git index"
 
 
 def test_bump_version_workflow_includes_version_in_bump_commit_message():

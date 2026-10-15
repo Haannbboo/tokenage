@@ -33,13 +33,12 @@ test('sessions secondary tab button exists in dashboard', () => {
   assert.match(dashboardSource, /onClick=\{.*setDashboardTab\('sessions'\)/)
 })
 
-test('sessions tab shows configured evaluator from runtime config', () => {
-  assert.match(appContextSource, /evaluationEvaluator: EvaluatorType/)
-  assert.match(appContextSource, /setEvaluationEvaluator\(data\.runtime\?\.evaluation\?\.evaluator === 'claude' \? 'claude' : 'codex'\)/)
-  assert.match(sessionsTabSource, /evaluationEvaluator/)
-  assert.match(sessionsTabSource, /t\('Evaluator'\)/)
-  assert.match(sessionsTabSource, /evaluatorLabel\(evaluationEvaluator\)/)
-  assert.doesNotMatch(sessionsTabSource, /evaluationEvaluator === 'claude' \? t\('Claude'\) : t\('Codex'\)/)
+test('sessions tab has no global evaluator default (client evaluates automatically)', () => {
+  assert.doesNotMatch(appContextSource, /evaluationEvaluator/)
+  assert.doesNotMatch(sessionsTabSource, /evaluationEvaluator/)
+  assert.doesNotMatch(sessionsTabSource, /t\('Evaluator Queue'\)/)
+  assert.match(sessionsTabSource, /t\('Running Evaluations'\)/)
+  assert.match(sessionsTabSource, /fetch\('\/evaluation-jobs\/active'\)/)
 })
 
 test('sessions state variables are declared', () => {

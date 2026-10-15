@@ -11,7 +11,7 @@ import {
   shortSessionId, sessionAgentName, sessionDisplayName, sessionTaskTitle, getSinceDate, resolveTimezone, ToolBadge, formatModelName,
 } from '../utils'
 import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
-import type { DailyEffectivenessReport, EvaluatorOption, EvaluatorType, EvaluationJobProgress, ModelEffectivenessGroup, SessionOutcome, SessionSummary, SessionsSummary } from '../types'
+import type { DailyEffectivenessReport, EvaluationJob, ModelEffectivenessGroup, SessionOutcome, SessionSummary, SessionsSummary } from '../types'
 
 type SessionsTabProps = {
   onNavigateToLogs: (filters?: { sessionFilter?: string }) => void
@@ -51,12 +51,9 @@ function modelEffectivenessClassifiedCount(group: ModelEffectivenessGroup): numb
   return group.evaluated_count + group.no_op_count
 }
 
-function formatEvaluationJobBadge(job?: EvaluationJobProgress | null): string | null {
+function formatEvaluationJobBadge(job?: EvaluationJob | null): string | null {
   if (!job) return null
   if (job.status === 'running') return t('Evaluating...')
-  if (job.status === 'queued') {
-    return `${t('Queued')}${job.queue_position ? ` #${job.queue_position}` : ''}`
-  }
   return null
 }
 
@@ -77,7 +74,7 @@ function getLocalDateKey(date: Date, tz?: string): string {
 export function SessionsTab({
   onNavigateToLogs,
 }: SessionsTabProps) {
-  const { lang, showToast, requestUsageRefresh, refreshTrigger, setError, activeSource, dateRange, customSince, customUntil, setActiveFilter, evaluationEvaluator, setEvaluationEvaluator, evaluationEvaluators, setEvaluationEvaluators, timezone } = useApp()
+  const { lang, showToast, requestUsageRefresh, refreshTrigger, setError, activeSource, dateRange, customSince, customUntil, setActiveFilter, timezone } = useApp()
   const tz = resolveTimezone(timezone)
   const [hideNoop, setHideNoop] = useState(true)
   const {
@@ -116,11 +113,8 @@ export function SessionsTab({
     refreshModelEffectiveness,
   } = useModelEffectivenessData({ activeSource, dateRange, customSince, customUntil, hideNoop })
 
-  const [activeEvaluationJobs, setActiveEvaluationJobs] = useState<Record<string, EvaluationJobProgress>>({})
-  const [queueEvaluators, setQueueEvaluators] = useState<EvaluatorOption[]>([])
-  const [globalEvaluatorAvailable, setGlobalEvaluatorAvailable] = useState(true)
-  const [editingEvaluationJobId, setEditingEvaluationJobId] = useState<string | null>(null)
-  const activeEvaluationJobsRef = useRef<Record<string, EvaluationJobProgress>>({})
+  const [activeEvaluationJobs, setActiveEvaluationJobs] = useState<Record<string, EvaluationJob>>({})
+  const activeEvaluationJobsRef = useRef<Record<string, EvaluationJob>>({})
   const activeEvaluationJobsPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -128,48 +122,25 @@ export function SessionsTab({
   }, [activeEvaluationJobs])
 
   const activeEvaluationJobList = useMemo(
-    () => Object.values(activeEvaluationJobs).sort((a, b) => {
-      const aPosition = a.queue_position ?? Number.MAX_SAFE_INTEGER
-      const bPosition = b.queue_position ?? Number.MAX_SAFE_INTEGER
-      if (aPosition !== bPosition) return aPosition - bPosition
-      return (a.created_at ?? '').localeCompare(b.created_at ?? '')
-    }),
+    () => Object.values(activeEvaluationJobs).sort((a, b) =>
+      (a.started_at ?? a.created_at ?? '').localeCompare(b.started_at ?? b.created_at ?? '')
+    ),
     [activeEvaluationJobs]
   )
-  const runningEvaluationJobs = activeEvaluationJobList.filter((job) => job.status === 'running')
-  const queuedEvaluationJobs = activeEvaluationJobList.filter((job) => job.status === 'queued')
-  const evaluatorOptions = queueEvaluators.length > 0 ? queueEvaluators : evaluationEvaluators
-  const evaluatorLabel = (evaluatorType?: string | null) => {
-    const evaluator = evaluatorOptions.find((item) => item.id === evaluatorType)
-    return evaluator?.label || (evaluatorType ? evaluatorType : 'Codex')
-  }
-  const defaultEvaluatorUnavailable = !globalEvaluatorAvailable
 
   const pollActiveEvaluationJobs = useCallback(async () => {
     try {
-      const response = await fetch('/local/evaluation-jobs/active')
+      const response = await fetch('/evaluation-jobs/active')
       if (!response.ok) return
 
-      const data: {
-        jobs: Record<string, EvaluationJobProgress>
-        evaluators?: EvaluatorOption[]
-        global_evaluator_type?: EvaluatorType
-        global_evaluator_available?: boolean
-      } = await response.json()
-      const previousHadActive = Object.keys(activeEvaluationJobsRef.current).length > 0
-      const nextHasActive = Object.values(data.jobs).some(
-        (job) => job.status === 'queued' || job.status === 'running'
-      )
-      activeEvaluationJobsRef.current = data.jobs
-      setActiveEvaluationJobs(data.jobs)
-      if (Array.isArray(data.evaluators)) {
-        setQueueEvaluators(data.evaluators)
-        setEvaluationEvaluators(data.evaluators)
-      }
-      if (data.global_evaluator_type) setEvaluationEvaluator(data.global_evaluator_type)
-      setGlobalEvaluatorAvailable(data.global_evaluator_available !== false)
+      const data: { jobs: Record<string, EvaluationJob> } = await response.json()
+      const previousJobIds = new Set(Object.values(activeEvaluationJobsRef.current).map((job) => job.job_id))
+      const jobs = data.jobs ?? {}
+      activeEvaluationJobsRef.current = jobs
+      setActiveEvaluationJobs(jobs)
 
-      if (previousHadActive && !nextHasActive) {
+      const nextJobIds = new Set(Object.values(jobs).map((job) => job.job_id))
+      if ([...previousJobIds].some((jobId) => !nextJobIds.has(jobId))) {
         requestUsageRefresh()
         refreshModelEffectiveness()
       }
@@ -187,34 +158,6 @@ export function SessionsTab({
       }
     }
   }, [pollActiveEvaluationJobs])
-
-  const updateQueuedEvaluationJobEvaluator = async (job: EvaluationJobProgress, evaluatorType: EvaluatorType) => {
-    if (job.status !== 'queued') return
-    setEditingEvaluationJobId(job.job_id)
-    try {
-      const response = await fetch(`/local/evaluation-jobs/${encodeURIComponent(job.job_id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ evaluator_type: evaluatorType }),
-      })
-      if (response.status === 409) {
-        showToast(t('Job already started; evaluator was not changed'))
-        void pollActiveEvaluationJobs()
-        return
-      }
-      if (!response.ok) throw new Error('Failed to update evaluator')
-      const updated: EvaluationJobProgress = await response.json()
-      setActiveEvaluationJobs((jobs) => ({
-        ...jobs,
-        [updated.session_id]: updated,
-      }))
-    } catch {
-      showToast(t('Failed to update evaluator'))
-      void pollActiveEvaluationJobs()
-    } finally {
-      setEditingEvaluationJobId(null)
-    }
-  }
 
   const modelEffectivenessTotals = useMemo(() => {
     return modelEffectiveness.groups.reduce(
@@ -357,10 +300,6 @@ export function SessionsTab({
           <div className="widget">
             <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>{t('Avg Latency')}</div>
             <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--text-primary)' }}>{sessionsSummary ? formatLatency(sessionsSummary.avg_latency_ms) : '—'}</div>
-          </div>
-          <div className="widget">
-            <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>{t('Evaluator')}</div>
-            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--text-primary)' }}>{evaluatorLabel(evaluationEvaluator)}</div>
           </div>
         </div>
 
@@ -549,89 +488,38 @@ export function SessionsTab({
           )}
         </div>
 
-        {(activeEvaluationJobList.length > 0 || defaultEvaluatorUnavailable) && (
-          <div className="panel evaluator-queue-panel">
-            <div className="evaluator-queue-header">
+        {activeEvaluationJobList.length > 0 && (
+          <div className="panel evaluator-active-panel">
+            <div className="evaluator-active-header">
               <div>
-                <div className="evaluator-queue-title">{t('Evaluator Queue')}</div>
-                <div className="evaluator-queue-subtitle">
-                  {formatNumber(runningEvaluationJobs.length)} {t('running')} · {formatNumber(queuedEvaluationJobs.length)} {t('queued')}
+                <div className="evaluator-active-title">{t('Running Evaluations')}</div>
+                <div className="evaluator-active-subtitle">
+                  {formatNumber(activeEvaluationJobList.length)} {t('running')}
                 </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{t('Default')}:</span>
-                <select
-                  className="input-plain"
-                  value={evaluationEvaluator}
-                  onChange={async (event) => {
-                    const newEvaluator = event.target.value as EvaluatorType
-                    try {
-                      const response = await fetch("/config/evaluation", {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ evaluator: newEvaluator }),
-                      })
-                      if (!response.ok) throw new Error("Failed")
-                      setEvaluationEvaluator(newEvaluator)
-                      showToast?.("Default evaluator updated")
-                    } catch {
-                      showToast?.("Failed to update default evaluator")
-                    }
-                  }}
-                >
-                  {evaluatorOptions.map((evaluator) => (
-                    <option key={evaluator.id} value={evaluator.id} disabled={!evaluator.available}>
-                      {evaluator.label}{evaluator.available ? '' : ` (${t('Not found')})`}
-                    </option>
-                  ))}
-                </select>
-              </div>
             </div>
-            {defaultEvaluatorUnavailable && (
-              <div className="evaluation-warning">
-                {t('Evaluator unavailable')}: {evaluatorLabel(evaluationEvaluator)}
-              </div>
-            )}
-            <div className="evaluator-queue-list">
+            <div className="evaluator-active-list">
               {activeEvaluationJobList.map((job) => (
                 <div key={job.job_id} className="evaluation-job-row">
-                  <div className={`evaluation-job-status evaluation-job-status-${job.status}${job.status === 'running' ? ' evaluation-job-running-pulse' : ''}`}>
-                    {job.status === 'running' ? t('Running') : t('Queued')}
+                  <div className="evaluation-job-status evaluation-job-status-running evaluation-job-running-pulse">
+                    {t('Running')}
                   </div>
                   <div className="evaluation-job-main">
                     <div className="evaluation-job-session">
                       <ClickToCopy text={job.session_id} onCopy={showToast}>
                         <span>{shortSessionId(job.session_id)}</span>
                       </ClickToCopy>
-                      <span className="evaluation-job-trigger">
-                        {job.trigger === 'auto' ? t('Auto') : t('Manual')}
-                      </span>
                       {job.client_source && (
                         <span className="evaluation-job-source">{sessionAgentName(job.client_source)}</span>
                       )}
                     </div>
                     <div className="evaluation-job-meta">
-                      {job.queue_position ? `${t('Position')} #${job.queue_position}` : t('Active')}
-                      {' · '}
-                      {t('Evaluator')}: {evaluatorLabel(job.evaluator_type)}
+                      {t('Evaluator')}: {job.evaluator_type}
                       {' · '}
                       {job.started_at ? `${t('Started')} ${formatTime(job.started_at, tz)}` : `${t('Created')} ${job.created_at ? formatTime(job.created_at, tz) : '—'}`}
+                      {job.device_name && <> {' · '}{t('Device')}: {job.device_name}</>}
                     </div>
                   </div>
-                  {job.status === 'queued' && evaluatorOptions.length > 0 && (
-                    <select
-                      className="input-plain"
-                      value={job.evaluator_type}
-                      disabled={editingEvaluationJobId === job.job_id}
-                      onChange={(event) => updateQueuedEvaluationJobEvaluator(job, event.target.value as EvaluatorType)}
-                    >
-                      {evaluatorOptions.map((evaluator) => (
-                        <option key={evaluator.id} value={evaluator.id} disabled={!evaluator.available}>
-                          {evaluator.label}{evaluator.available ? '' : ` (${t('Not found')})`}
-                        </option>
-                      ))}
-                    </select>
-                  )}
                 </div>
               ))}
             </div>
@@ -870,7 +758,7 @@ function SessionDetailInline({
   showToast: (msg: string) => void
   onEvaluationUpdate: (evalData: any | null) => void
   onEvaluationPersisted: () => void
-  activeEvaluationJob?: EvaluationJobProgress | null
+  activeEvaluationJob?: EvaluationJob | null
 }) {
   return (
     <div className="session-detail-expanded" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', flexWrap: 'wrap', gap: '20px' }}>

@@ -3,7 +3,6 @@ import threading
 from pathlib import Path
 
 import pytest
-import yaml
 
 
 def test_load_config_expands_database_path(config_module, tmp_path, monkeypatch):
@@ -365,17 +364,6 @@ def test_replace_contents_concurrent_readers_never_see_empty(config_module):
     assert not errors
 
 
-def test_set_evaluation_evaluator(config_module, tmp_path):
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("evaluation:\n  evaluator: codex\n", encoding="utf-8")
-
-    config_module.set_evaluation_evaluator("claude", str(config_path))
-
-    content = config_path.read_text(encoding="utf-8")
-    assert "evaluator: claude" in content
-    assert config_module.CONFIG["evaluation"]["evaluator"] == "claude"
-
-
 def test_load_config_auth_defaults(config_module, tmp_path, monkeypatch):
     monkeypatch.delenv("TOKENAGE_AUTH__GOOGLE_CLIENT_ID", raising=False)
     monkeypatch.delenv("TOKENAGE_AUTH__GOOGLE_CLIENT_SECRET", raising=False)
@@ -443,12 +431,3 @@ def test_load_config_reads_google_creds_from_yaml(config_module, tmp_path, monke
 
     assert config["auth"]["google_client_id"] == "from-yaml"
     assert config["auth"]["google_client_secret"] == "from-yaml"
-
-
-def test_set_evaluation_evaluator_creates_missing_parent_dirs(config_module, tmp_path):
-    target = tmp_path / ".tokenage" / "nested" / "config.yaml"
-
-    config_module.set_evaluation_evaluator("remote", path=str(target))
-
-    saved = yaml.safe_load(target.read_text(encoding="utf-8"))
-    assert saved["evaluation"]["evaluator"] == "remote"

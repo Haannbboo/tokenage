@@ -715,6 +715,47 @@ def test_foreground_starts_proxy_and_stops_it_on_shutdown(
     assert events[0] == "start" and "check" in events and events[-1] == "stop"
 
 
+def test_foreground_starts_and_stops_the_evaluation_worker(
+    device_home: Path, monkeypatch
+) -> None:
+    from client import evaluation
+    from client.proxy import runtime
+
+    events: list[str] = []
+
+    class Handle:
+        def stop(self) -> None:
+            events.append("proxy-stop")
+
+    class Worker:
+        def __init__(self) -> None:
+            events.append("eval-new")
+
+        def start(self) -> None:
+            events.append("eval-start")
+
+        def stop(self) -> None:
+            events.append("eval-stop")
+
+    monkeypatch.setattr(
+        runtime, "start_proxy", lambda: events.append("proxy-start") or Handle()
+    )
+    monkeypatch.setattr(evaluation, "EvaluationWorker", Worker)
+    handlers: dict = {}
+    monkeypatch.setattr(service.signal, "signal", lambda n, h: handlers.update({n: h}))
+
+    def check(state):
+        events.append("check")
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+
+    monkeypatch.setattr(service, "_check_once", check)
+    monkeypatch.setattr(service.logging, "basicConfig", lambda **kw: None)
+    assert service.run_foreground() == 0
+    assert events[0] == "proxy-start"
+    assert "eval-start" in events and "check" in events
+    assert events[-2:] == ["eval-stop", "proxy-stop"]
+
+
 def test_service_keeps_running_when_proxy_cannot_bind(device_home: Path) -> None:
     blocker = socket.socket()
     blocker.bind(("127.0.0.1", 0))

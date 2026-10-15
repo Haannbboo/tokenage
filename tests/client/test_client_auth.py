@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import stat
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -195,7 +196,6 @@ def test_login_writes_credentials_0600(monkeypatch, capsys):
     code, fake, opened = _run_login(monkeypatch, inputs=["the-one-time-code"])
     assert code == 0
     assert opened == []
-
     # The login URL is always printed.
     captured = capsys.readouterr()
     assert "https://srv.example/auth/cli/start" in captured.out
@@ -229,6 +229,22 @@ def test_login_writes_credentials_0600(monkeypatch, capsys):
     assert "tokenage_cli" not in captured.err
     assert "tokenage_ingest" not in captured.out
     assert "tokenage_ingest" not in captured.err
+
+
+def test_login_initializes_the_evaluator_from_detected_agents(monkeypatch):
+    (Path.home() / ".codex").mkdir()
+    code, _, _ = _run_login(monkeypatch, inputs=["the-code"], agents=["codex"])
+
+    assert code == 0
+    config = paths.client_config_path().read_text(encoding="utf-8")
+    assert "evaluator: codex" in config
+
+
+def test_login_leaves_the_evaluator_unset_without_agent_clis(monkeypatch):
+    code, _, _ = _run_login(monkeypatch, inputs=["the-code"], agents=[])
+
+    assert code == 0
+    assert not paths.client_config_path().exists()
 
 
 def test_login_retries_on_400_then_succeeds(monkeypatch, capsys):

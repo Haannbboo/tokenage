@@ -12,33 +12,6 @@ def test_usage_daily_endpoint_exists(api_module):
     assert callable(api_module.usage_daily)
 
 
-def test_lifespan_shutdown_cancels_stuck_evaluation_worker(api_module, monkeypatch):
-    started = asyncio.Event()
-
-    async def stuck_worker(**kwargs):
-        started.set()
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(api_module, "init_db", lambda: None)
-    monkeypatch.setattr(api_module, "EVALUATION_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
-    monkeypatch.setattr(api_module, "run_evaluation_worker", stuck_worker)
-    monkeypatch.setattr(
-        api_module,
-        "load_evaluation_worker_config",
-        lambda: object(),
-    )
-
-    async def exercise_lifespan():
-        async with api_module.lifespan(api_module.app):
-            await asyncio.wait_for(started.wait(), timeout=1)
-
-    asyncio.run(asyncio.wait_for(exercise_lifespan(), timeout=1))
-
-
-def test_api_defines_bounded_evaluation_worker_shutdown(api_module):
-    assert hasattr(api_module, "_stop_evaluation_worker")
-
-
 def test_reprice_estimated_usage_endpoint_passes_filters(api_module, monkeypatch):
     async def fake_live_cost_maps():
         return {}, {}, {}
@@ -857,7 +830,7 @@ def test_put_session_evaluation_creates_evaluation(api_module, monkeypatch):
     monkeypatch.setattr(api_module, "upsert_session_evaluation", fake_upsert)
 
     response = TestClient(api_module.app).put(
-        "/local/sessions/sess-1/evaluation",
+        "/sessions/sess-1/evaluation",
         json={
             "outcome": "solved",
             "source": "manual",
@@ -877,7 +850,7 @@ def test_put_session_evaluation_invalid_outcome_returns_400(api_module, monkeypa
     monkeypatch.setattr(api_module, "upsert_session_evaluation", lambda **kw: None)
 
     response = TestClient(api_module.app).put(
-        "/local/sessions/sess-1/evaluation",
+        "/sessions/sess-1/evaluation",
         json={"outcome": "invalid_outcome"},
     )
 
@@ -888,7 +861,7 @@ def test_put_session_evaluation_invalid_source_returns_400(api_module, monkeypat
     monkeypatch.setattr(api_module, "upsert_session_evaluation", lambda **kw: None)
 
     response = TestClient(api_module.app).put(
-        "/local/sessions/sess-1/evaluation",
+        "/sessions/sess-1/evaluation",
         json={"outcome": "solved", "source": "bogus_source"},
     )
 
@@ -902,7 +875,7 @@ def test_put_session_evaluation_rejects_llm_source(api_module, monkeypatch):
     monkeypatch.setattr(api_module, "upsert_session_evaluation", fail_if_called)
 
     response = TestClient(api_module.app).put(
-        "/local/sessions/sess-1/evaluation",
+        "/sessions/sess-1/evaluation",
         json={
             "outcome": "solved",
             "source": "llm",
@@ -925,7 +898,7 @@ def test_put_session_evaluation_returns_404_when_session_not_found(
     monkeypatch.setattr(api_module, "upsert_session_evaluation", raise_not_found)
 
     response = TestClient(api_module.app).put(
-        "/local/sessions/nonexistent/evaluation",
+        "/sessions/nonexistent/evaluation",
         json={"outcome": "solved"},
     )
 
@@ -949,7 +922,7 @@ def test_get_session_evaluation_returns_evaluation(api_module, monkeypatch):
         api_module, "get_session_evaluation", lambda sid, **kw: fake_eval
     )
 
-    response = TestClient(api_module.app).get("/local/sessions/sess-1/evaluation")
+    response = TestClient(api_module.app).get("/sessions/sess-1/evaluation")
 
     assert response.status_code == 200
     data = response.json()
@@ -961,7 +934,7 @@ def test_get_session_evaluation_returns_evaluation(api_module, monkeypatch):
 def test_get_session_evaluation_returns_null_when_absent(api_module, monkeypatch):
     monkeypatch.setattr(api_module, "get_session_evaluation", lambda sid, **kw: None)
 
-    response = TestClient(api_module.app).get("/local/sessions/sess-1/evaluation")
+    response = TestClient(api_module.app).get("/sessions/sess-1/evaluation")
 
     assert response.status_code == 200
     assert response.json()["evaluation"] is None
@@ -970,7 +943,7 @@ def test_get_session_evaluation_returns_null_when_absent(api_module, monkeypatch
 def test_delete_session_evaluation_removes_evaluation(api_module, monkeypatch):
     monkeypatch.setattr(api_module, "delete_session_evaluation", lambda sid, **kw: True)
 
-    response = TestClient(api_module.app).delete("/local/sessions/sess-1/evaluation")
+    response = TestClient(api_module.app).delete("/sessions/sess-1/evaluation")
 
     assert response.status_code == 200
     assert response.json()["status"] == "deleted"
@@ -981,7 +954,7 @@ def test_delete_session_evaluation_returns_404_when_absent(api_module, monkeypat
         api_module, "delete_session_evaluation", lambda sid, **kw: False
     )
 
-    response = TestClient(api_module.app).delete("/local/sessions/sess-1/evaluation")
+    response = TestClient(api_module.app).delete("/sessions/sess-1/evaluation")
 
     assert response.status_code == 404
 
@@ -1111,418 +1084,6 @@ def test_daily_effectiveness_endpoint_rejects_invalid_date(api_module, monkeypat
 
 
 # ---------------------------------------------------------------------------
-# Slice 7: Session Evaluation Jobs API
-# ---------------------------------------------------------------------------
-
-
-def test_evaluate_with_llm_queues_job(api_module, monkeypatch):
-    captured = {}
-
-    monkeypatch.setattr(
-        api_module,
-        "require_available_evaluator_type",
-        lambda evaluator_type: evaluator_type,
-    )
-
-    def fake_start(session_id, **kwargs):
-        captured["session_id"] = session_id
-        captured.update(kwargs)
-        return {
-            "job_id": "job-1",
-            "kind": "session_evaluation",
-            "session_id": session_id,
-            "status": "queued",
-            "trigger": "manual",
-            "error": None,
-        }
-
-    monkeypatch.setattr(api_module, "start_session_evaluation_job", fake_start)
-
-    response = TestClient(api_module.app).post(
-        "/local/sessions/sess-1/evaluate-with-llm"
-    )
-
-    assert response.status_code == 202
-    assert response.json() == {
-        "job_id": "job-1",
-        "kind": "session_evaluation",
-        "session_id": "sess-1",
-        "status": "queued",
-        "trigger": "manual",
-        "error": None,
-    }
-    assert captured["session_id"] == "sess-1"
-    assert captured["trigger"] == "manual"
-    assert captured["evaluator_type"] == "codex"
-
-
-def test_evaluate_with_llm_accepts_evaluator_override(api_module, monkeypatch):
-    captured = {}
-
-    monkeypatch.setattr(
-        api_module,
-        "require_available_evaluator_type",
-        lambda evaluator_type: evaluator_type,
-    )
-
-    def fake_start(session_id, **kwargs):
-        captured["session_id"] = session_id
-        captured.update(kwargs)
-        return {
-            "job_id": "job-claude",
-            "kind": "session_evaluation",
-            "session_id": session_id,
-            "status": "queued",
-            "trigger": "manual",
-            "evaluator_type": kwargs["evaluator_type"],
-            "error": None,
-        }
-
-    monkeypatch.setattr(api_module, "start_session_evaluation_job", fake_start)
-
-    response = TestClient(api_module.app).post(
-        "/local/sessions/sess-1/evaluate-with-llm",
-        json={"evaluator_type": "claude"},
-    )
-
-    assert response.status_code == 202
-    assert response.json()["evaluator_type"] == "claude"
-    assert captured["evaluator_type"] == "claude"
-
-
-def test_evaluate_with_llm_rejects_unavailable_evaluator(api_module, monkeypatch):
-    def reject(evaluator_type):
-        raise ValueError(f"Evaluator not available: {evaluator_type}")
-
-    monkeypatch.setattr(api_module, "require_available_evaluator_type", reject)
-
-    response = TestClient(api_module.app).post(
-        "/local/sessions/sess-1/evaluate-with-llm",
-        json={"evaluator_type": "claude"},
-    )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Evaluator not available: claude"
-
-
-def test_evaluate_with_llm_returns_409_for_manual_evaluation(api_module, monkeypatch):
-    def raise_manual(session_id, **kwargs):
-        raise ValueError("Manual evaluation exists for session: sess-1")
-
-    monkeypatch.setattr(api_module, "start_session_evaluation_job", raise_manual)
-    monkeypatch.setattr(api_module, "require_available_evaluator_type", lambda t: t)
-
-    response = TestClient(api_module.app).post(
-        "/local/sessions/sess-1/evaluate-with-llm"
-    )
-
-    assert response.status_code == 409
-
-
-def test_evaluate_with_llm_rejects_unsupported_source(api_module, monkeypatch):
-    def raise_unsupported(session_id, **kwargs):
-        raise ValueError("Unsupported session source: unknown")
-
-    monkeypatch.setattr(api_module, "start_session_evaluation_job", raise_unsupported)
-    monkeypatch.setattr(api_module, "require_available_evaluator_type", lambda t: t)
-
-    response = TestClient(api_module.app).post(
-        "/local/sessions/sess-unsupported/evaluate-with-llm"
-    )
-
-    assert response.status_code == 400
-
-
-def test_poll_job_returns_progress_fields(api_module, monkeypatch):
-    monkeypatch.setattr(
-        api_module,
-        "get_evaluation_job_progress",
-        lambda job_id, **kw: {
-            "job_id": job_id,
-            "kind": "session_evaluation",
-            "session_id": "sess-1",
-            "status": "queued",
-            "trigger": "manual",
-            "ahead_count": 1,
-            "queue_position": 2,
-            "error": None,
-        },
-    )
-
-    response = TestClient(api_module.app).get("/local/poll/job-1")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "job_id": "job-1",
-        "kind": "session_evaluation",
-        "session_id": "sess-1",
-        "status": "queued",
-        "trigger": "manual",
-        "ahead_count": 1,
-        "queue_position": 2,
-        "error": None,
-    }
-
-
-def test_poll_job_returns_404_for_unknown_job(api_module, monkeypatch):
-    monkeypatch.setattr(
-        api_module, "get_evaluation_job_progress", lambda job_id, **kw: None
-    )
-
-    response = TestClient(api_module.app).get("/local/poll/missing")
-
-    assert response.status_code == 404
-
-
-def test_active_evaluation_jobs_returns_visible_session_jobs(api_module, monkeypatch):
-    monkeypatch.setattr(
-        api_module,
-        "list_evaluator_agents",
-        lambda: [
-            {"id": "codex", "label": "Codex", "available": True},
-            {"id": "claude", "label": "Claude Code", "available": False},
-        ],
-    )
-    monkeypatch.setattr(
-        api_module,
-        "list_active_evaluation_jobs_with_progress",
-        lambda session_ids=None, **kw: [
-            {
-                "job_id": "job-1",
-                "session_id": "sess-1",
-                "status": "running",
-                "trigger": "auto",
-                "ahead_count": 0,
-                "queue_position": 1,
-                "error": None,
-            }
-        ],
-    )
-
-    response = TestClient(api_module.app).get(
-        "/local/evaluation-jobs/active",
-        params={"session_ids": "sess-1,sess-2"},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["jobs"]["sess-1"]["status"] == "running"
-    assert response.json()["evaluators"][1]["label"] == "Claude Code"
-
-
-def test_session_evaluation_jobs_returns_history_and_evaluator_catalog(
-    api_module, monkeypatch
-):
-    monkeypatch.setattr(
-        api_module,
-        "list_session_evaluation_jobs_with_progress",
-        lambda session_id, **kw: [
-            {
-                "job_id": "job-failed",
-                "kind": "session_evaluation",
-                "session_id": session_id,
-                "status": "failed",
-                "trigger": "manual",
-                "evaluator_type": "codex",
-                "ahead_count": 0,
-                "queue_position": None,
-                "error": "Evaluator exited with code 1",
-            }
-        ],
-    )
-    monkeypatch.setattr(
-        api_module,
-        "list_evaluator_agents",
-        lambda: [
-            {"id": "codex", "label": "Codex", "available": True},
-            {"id": "claude", "label": "Claude Code", "available": True},
-        ],
-    )
-
-    response = TestClient(api_module.app).get("/local/sessions/sess-1/evaluation-jobs")
-
-    assert response.status_code == 200
-    assert response.json()["jobs"][0]["status"] == "failed"
-    assert response.json()["jobs"][0]["evaluator_type"] == "codex"
-    assert response.json()["evaluators"][1]["id"] == "claude"
-    assert response.json()["global_evaluator_type"] == "codex"
-
-
-def test_patch_evaluation_job_updates_queued_evaluator(api_module, monkeypatch):
-    stored = {"evaluator_type": "codex"}
-
-    monkeypatch.setattr(
-        api_module,
-        "require_available_evaluator_type",
-        lambda evaluator_type: evaluator_type,
-    )
-    monkeypatch.setattr(
-        api_module,
-        "get_evaluation_job_progress",
-        lambda job_id, **kw: {
-            "job_id": job_id,
-            "session_id": "sess-1",
-            "status": "queued",
-            "evaluator_type": stored["evaluator_type"],
-            "ahead_count": 1,
-            "queue_position": 2,
-            "error": None,
-        },
-    )
-
-    def fake_update(job_id, *, evaluator_type, user_id=None):
-        stored["evaluator_type"] = evaluator_type
-        return {
-            "job_id": job_id,
-            "session_id": "sess-1",
-            "status": "queued",
-            "evaluator_type": evaluator_type,
-            "ahead_count": 1,
-            "queue_position": 2,
-            "error": None,
-        }
-
-    monkeypatch.setattr(
-        api_module,
-        "update_queued_evaluation_job_evaluator",
-        fake_update,
-    )
-
-    response = TestClient(api_module.app).patch(
-        "/local/evaluation-jobs/job-1",
-        json={"evaluator_type": "claude"},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["evaluator_type"] == "claude"
-
-
-def test_patch_evaluation_job_rejects_running_evaluator_change(api_module, monkeypatch):
-    monkeypatch.setattr(
-        api_module,
-        "require_available_evaluator_type",
-        lambda evaluator_type: evaluator_type,
-    )
-    monkeypatch.setattr(
-        api_module,
-        "get_evaluation_job_progress",
-        lambda job_id, **kw: {
-            "job_id": job_id,
-            "session_id": "sess-1",
-            "status": "running",
-            "evaluator_type": "codex",
-            "ahead_count": 0,
-            "queue_position": 1,
-            "error": None,
-        },
-    )
-
-    response = TestClient(api_module.app).patch(
-        "/local/evaluation-jobs/job-1",
-        json={"evaluator_type": "claude"},
-    )
-
-    assert response.status_code == 409
-
-
-def test_patch_evaluation_job_returns_409_for_running_before_evaluator_validation(
-    api_module, monkeypatch
-):
-    monkeypatch.setattr(
-        api_module,
-        "get_evaluation_job_progress",
-        lambda job_id, **kw: {
-            "job_id": job_id,
-            "session_id": "sess-1",
-            "status": "running",
-            "evaluator_type": "codex",
-            "ahead_count": 0,
-            "queue_position": 1,
-            "error": None,
-        },
-    )
-
-    def reject(evaluator_type):
-        raise ValueError(f"Evaluator not available: {evaluator_type}")
-
-    monkeypatch.setattr(api_module, "require_available_evaluator_type", reject)
-
-    response = TestClient(api_module.app).patch(
-        "/local/evaluation-jobs/job-1",
-        json={"evaluator_type": "claude"},
-    )
-
-    assert response.status_code == 409
-
-
-def test_patch_evaluation_job_returns_404_for_missing_before_evaluator_validation(
-    api_module, monkeypatch
-):
-    monkeypatch.setattr(
-        api_module, "get_evaluation_job_progress", lambda job_id, **kw: None
-    )
-
-    def reject(evaluator_type):
-        raise ValueError(f"Unsupported evaluator agent: {evaluator_type}")
-
-    monkeypatch.setattr(api_module, "require_available_evaluator_type", reject)
-
-    response = TestClient(api_module.app).patch(
-        "/local/evaluation-jobs/missing",
-        json={"evaluator_type": "invalid"},
-    )
-
-    assert response.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# Slice 9: PATCH /config/evaluation endpoint
-# ---------------------------------------------------------------------------
-
-
-def test_update_evaluation_config(api_module, monkeypatch):
-    from unittest.mock import MagicMock
-
-    mock_set = MagicMock()
-    monkeypatch.setattr("src.api.set_evaluation_evaluator", mock_set)
-
-    response = TestClient(api_module.app).patch(
-        "/config/evaluation",
-        json={"evaluator": "claude"},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["global_evaluator_type"] == "claude"
-    mock_set.assert_called_once_with("claude")
-
-
-def test_update_evaluation_config_returns_500_on_set_evaluator_error(
-    api_module, monkeypatch
-):
-    def raise_error(evaluator):
-        raise RuntimeError("Failed to persist evaluator config")
-
-    monkeypatch.setattr("src.api.set_evaluation_evaluator", raise_error)
-
-    response = TestClient(api_module.app).patch(
-        "/config/evaluation",
-        json={"evaluator": "claude"},
-    )
-
-    assert response.status_code == 500
-    assert "Failed to persist evaluator config" in response.json()["detail"]
-
-
-def test_update_evaluation_config_rejects_invalid_evaluator(api_module, monkeypatch):
-    monkeypatch.setattr(api_module, "set_evaluation_evaluator", lambda **kw: None)
-
-    response = TestClient(api_module.app).patch(
-        "/config/evaluation",
-        json={"evaluator": "invalid-evaluator"},
-    )
-    assert response.status_code == 400
-
-
-# ---------------------------------------------------------------------------
 # SPA catch-all routing
 # ---------------------------------------------------------------------------
 
@@ -1556,6 +1117,15 @@ def test_spa_deep_links_do_not_hijack_api_routes(api_module, monkeypatch):
 
     assert response.status_code == 200
     assert "application/json" in response.headers.get("content-type", "")
+
+
+def test_spa_does_not_hijack_evaluation_jobs_routes(api_module, monkeypatch):
+    monkeypatch.setattr(api_module, "list_active_evaluation_jobs", lambda **kwargs: [])
+    response = TestClient(api_module.app).get("/evaluation-jobs/active")
+
+    assert response.status_code == 200
+    assert "application/json" in response.headers.get("content-type", "")
+    assert response.json() == {"jobs": {}}
 
 
 def test_spa_missing_asset_does_not_return_html(api_module):
@@ -1646,7 +1216,13 @@ def test_usage_count_passes_tool_name(api_module, monkeypatch):
 # (docs/design/specs/pr22-route-classification.md)
 # ---------------------------------------------------------------------------
 
-LOCAL_ONLY_ROUTES = [
+ADMIN_ONLY_ROUTES = [
+    ("PATCH", "/config"),
+]
+
+# Evaluation routes the server used to own. Evaluation runs on the client now;
+# these paths must never resolve to a handler again.
+REMOVED_EVALUATION_ROUTES = [
     ("PUT", "/local/sessions/sess-1/evaluation"),
     ("GET", "/local/sessions/sess-1/evaluation"),
     ("DELETE", "/local/sessions/sess-1/evaluation"),
@@ -1655,22 +1231,10 @@ LOCAL_ONLY_ROUTES = [
     ("GET", "/local/evaluation-jobs/active"),
     ("GET", "/local/sessions/sess-1/evaluation-jobs"),
     ("PATCH", "/local/evaluation-jobs/job-1"),
-]
-
-ADMIN_ONLY_ROUTES = [
-    ("PATCH", "/config"),
-    ("PATCH", "/config/evaluation"),
-]
-
-OLD_PRE_RENAME_PATHS = [
-    ("PUT", "/sessions/sess-1/evaluation"),
-    ("GET", "/sessions/sess-1/evaluation"),
-    ("DELETE", "/sessions/sess-1/evaluation"),
     ("POST", "/sessions/sess-1/evaluate-with-llm"),
     ("GET", "/poll/job-1"),
-    ("GET", "/evaluation-jobs/active"),
-    ("GET", "/sessions/sess-1/evaluation-jobs"),
     ("PATCH", "/evaluation-jobs/job-1"),
+    ("PATCH", "/config/evaluation"),
 ]
 
 
@@ -1687,8 +1251,8 @@ def _authenticated_client(api_module, fresh_db, monkeypatch):
     return client
 
 
-@pytest.mark.parametrize("method,path", LOCAL_ONLY_ROUTES + ADMIN_ONLY_ROUTES)
-def test_local_and_admin_routes_404_for_authenticated_user_under_google_provider(
+@pytest.mark.parametrize("method,path", ADMIN_ONLY_ROUTES)
+def test_admin_routes_404_for_authenticated_user_under_google_provider(
     api_module, fresh_db, monkeypatch, method, path
 ):
     client = _authenticated_client(api_module, fresh_db, monkeypatch)
@@ -1696,45 +1260,8 @@ def test_local_and_admin_routes_404_for_authenticated_user_under_google_provider
     assert response.status_code == 404
 
 
-@pytest.mark.parametrize("method,path", LOCAL_ONLY_ROUTES + ADMIN_ONLY_ROUTES)
-def test_local_and_admin_routes_unaffected_under_local_provider(
-    api_module, monkeypatch, method, path
-):
-    monkeypatch.setattr(api_module, "upsert_session_evaluation", lambda **kw: None)
-    monkeypatch.setattr(api_module, "get_session_evaluation", lambda *a, **kw: None)
-    monkeypatch.setattr(api_module, "delete_session_evaluation", lambda *a, **kw: True)
-    monkeypatch.setattr(
-        api_module, "get_evaluation_job_progress", lambda *a, **kw: {"status": "queued"}
-    )
-    monkeypatch.setattr(
-        api_module, "list_active_evaluation_jobs_with_progress", lambda *a, **kw: []
-    )
-    monkeypatch.setattr(
-        api_module, "list_session_evaluation_jobs_with_progress", lambda *a, **kw: []
-    )
-    monkeypatch.setattr(
-        api_module,
-        "update_queued_evaluation_job_evaluator",
-        lambda *a, **kw: {"status": "queued"},
-    )
-    monkeypatch.setattr(
-        api_module,
-        "require_available_evaluator_type",
-        lambda evaluator_type: evaluator_type,
-    )
-    monkeypatch.setattr(
-        api_module,
-        "start_session_evaluation_job",
-        lambda session_id, **kw: {
-            "job_id": "job-1",
-            "kind": "session_evaluation",
-            "session_id": session_id,
-            "status": "queued",
-            "trigger": "manual",
-            "error": None,
-        },
-    )
-
+@pytest.mark.parametrize("method,path", ADMIN_ONLY_ROUTES)
+def test_admin_routes_unaffected_under_local_provider(api_module, method, path):
     response = TestClient(api_module.app).request(method, path)
     assert response.status_code != 404
 
@@ -1760,14 +1287,16 @@ def _assert_route_removed(response):
     ), f"expected old route to be gone, got {response.status_code} {content_type}"
 
 
-@pytest.mark.parametrize("method,path", OLD_PRE_RENAME_PATHS)
-def test_old_pre_rename_paths_are_gone_under_local_provider(api_module, method, path):
+@pytest.mark.parametrize("method,path", REMOVED_EVALUATION_ROUTES)
+def test_removed_evaluation_routes_are_gone_under_local_provider(
+    api_module, method, path
+):
     response = TestClient(api_module.app).request(method, path)
     _assert_route_removed(response)
 
 
-@pytest.mark.parametrize("method,path", OLD_PRE_RENAME_PATHS)
-def test_old_pre_rename_paths_are_gone_under_google_provider(
+@pytest.mark.parametrize("method,path", REMOVED_EVALUATION_ROUTES)
+def test_removed_evaluation_routes_are_gone_under_google_provider(
     api_module, fresh_db, monkeypatch, method, path
 ):
     client = _authenticated_client(api_module, fresh_db, monkeypatch)

@@ -18,6 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from protocol import MAX_SUPPORTED_GENERATION, MIN_SUPPORTED_GENERATION
 from protocol.device_status import DeviceStatusReport
+from protocol.evaluation import EvaluationCompletedReport, EvaluationStartedReport
 from protocol.usage_report import UsageReport
 from src.config.app import (
     CONFIG,
@@ -25,7 +26,6 @@ from src.config.app import (
     _apply_patch,
     _config_lock,
     refresh_runtime_config,
-    set_evaluation_evaluator,
 )
 from src.config.server_config import (
     resolve_otlp_host_port,
@@ -58,13 +58,15 @@ from .database import (
     fetch_session_selector_rows,
     fetch_sessions,
     fetch_tool_calls,
-    get_evaluation_job_progress,
+    get_evaluation_job,
     get_session_evaluation,
     get_usage_high_watermark_ts,
     init_db,
-    list_active_evaluation_jobs_with_progress,
-    list_session_evaluation_jobs_with_progress,
+    list_active_evaluation_jobs,
+    list_session_evaluation_jobs,
     recalculate_usage_cost,
+    record_evaluation_completed,
+    record_evaluation_started,
     reprice_estimated_rows,
     summarize_session_tool_calls,
     summarize_sessions,
@@ -73,16 +75,8 @@ from .database import (
     summarize_usage_by_source,
     summarize_usage_daily,
     summarize_usage_window,
-    update_queued_evaluation_job_evaluator,
     upsert_session_evaluation,
 )
-from .evaluation import (
-    VALID_EVALUATOR_AGENTS,
-    list_evaluator_agents,
-    require_available_evaluator_type,
-    start_session_evaluation_job,
-)
-from .evaluation_worker import load_evaluation_worker_config, run_evaluation_worker
 from .pricing.costs import resolve_cost_match
 from .pricing.snapshots import enrich_rows
 from .ratelimit import rate_limit_hit, resolve_ingest_request
@@ -90,7 +84,6 @@ from .recorder import record_usage
 from .utils import normalize_model_name
 
 logger = logging.getLogger(__name__)
-EVALUATION_WORKER_SHUTDOWN_TIMEOUT_SECONDS = 5
 USAGE_QUERY_LIMIT_MAX = 1000
 LOCAL_CORS_ORIGIN_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$")
 
@@ -103,10 +96,10 @@ _SPA_API_PREFIXES = (
     "/usage",
     "/sessions",
     "/devices",
+    "/evaluation-jobs",
     "/model-effectiveness",
     "/config",
     "/pricing",
-    "/local/",
     "/version",
     "/install.sh",
     "/ingest/",
@@ -149,21 +142,6 @@ class ConfigPatchUpdate(BaseModel):
     patches: list[ConfigPatch]
 
 
-def _evaluation_metadata_payload() -> dict:
-    worker_config = load_evaluation_worker_config()
-    evaluators = list_evaluator_agents()
-    default_evaluator = worker_config.evaluator
-    default_available = any(
-        evaluator["id"] == default_evaluator and evaluator["available"]
-        for evaluator in evaluators
-    )
-    return {
-        "evaluators": evaluators,
-        "global_evaluator_type": default_evaluator,
-        "global_evaluator_available": default_available,
-    }
-
-
 class SessionEvaluationUpdate(BaseModel):
     outcome: str
     source: str = "manual"
@@ -176,18 +154,6 @@ class SessionEvaluationUpdate(BaseModel):
     project: str | None = None
 
 
-class EvaluateSessionWithLlmRequest(BaseModel):
-    evaluator_type: str | None = None
-
-
-class EvaluationJobUpdate(BaseModel):
-    evaluator_type: str
-
-
-class EvaluationConfigUpdate(BaseModel):
-    evaluator: str
-
-
 def _parse_device_status_json(raw: str | None) -> dict | None:
     if raw is None:
         return None
@@ -198,46 +164,10 @@ def _parse_device_status_json(raw: str | None) -> dict | None:
     return status if isinstance(status, dict) else None
 
 
-async def _stop_evaluation_worker(
-    worker_task: asyncio.Task,
-    *,
-    timeout_seconds: float | None = None,
-) -> None:
-    timeout = (
-        EVALUATION_WORKER_SHUTDOWN_TIMEOUT_SECONDS
-        if timeout_seconds is None
-        else timeout_seconds
-    )
-    done, _pending = await asyncio.wait({worker_task}, timeout=timeout)
-    if done:
-        try:
-            await worker_task
-        except asyncio.CancelledError:
-            pass
-        return
-
-    worker_task.cancel()
-    logger.warning("Evaluation worker shutdown timed out; cancelling worker task")
-    done, _pending = await asyncio.wait({worker_task}, timeout=timeout)
-    if done:
-        try:
-            await worker_task
-        except asyncio.CancelledError:
-            pass
-        return
-    logger.warning("Evaluation worker task did not finish after cancellation")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    stop_event = asyncio.Event()
-    worker_task = asyncio.create_task(run_evaluation_worker(stop_event=stop_event))
-    try:
-        yield
-    finally:
-        stop_event.set()
-        await _stop_evaluation_worker(worker_task)
+    yield
 
 
 app = FastAPI(title="tokenage-api", lifespan=lifespan)
@@ -774,10 +704,101 @@ def get_devices_status(user: User = Depends(get_current_user)):
     return {"devices": entries}
 
 
-@app.put(
-    "/local/sessions/{session_id}/evaluation",
-    dependencies=[Depends(_require_local_owner)],
-)
+def _require_device_cli_token(request: Request) -> tuple[str, str]:
+    """Report routes accept device-bound CLI credentials only.
+
+    The web token (browser cookie/bearer), ingest tokens, and the tokenless
+    loopback owner all authenticate the API gate but are not report
+    credentials. Returns (user_id, device_id).
+    """
+    auth_token = getattr(request.state, "auth_token", None)
+    if auth_token is None or auth_token.kind != "cli" or auth_token.device_id is None:
+        raise HTTPException(status_code=403, detail="device-bound cli token required")
+    return get_current_user(request).id, auth_token.device_id
+
+
+@app.post("/evaluation-jobs/started", status_code=204)
+def report_evaluation_started(request: Request, report: EvaluationStartedReport):
+    """Record a client run start. Informational: a completed report may create
+    the run on its own."""
+    user_id, device_id = _require_device_cli_token(request)
+    try:
+        outcome = record_evaluation_started(
+            job_id=report.job_id,
+            session_id=report.session_id,
+            client_source=report.client_source,
+            evaluator_type=report.evaluator_type,
+            started_at=report.started_at,
+            user_id=user_id,
+            device_id=device_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if outcome == "conflict":
+        raise HTTPException(
+            status_code=409, detail="job id conflicts with an existing run"
+        )
+    return Response(status_code=204)
+
+
+@app.post("/evaluation-jobs/completed", status_code=204)
+def report_evaluation_completed(request: Request, report: EvaluationCompletedReport):
+    """Record a client run outcome. A successful report writes the result onto
+    the session; the job row keeps run metadata only."""
+    user_id, device_id = _require_device_cli_token(request)
+    try:
+        outcome = record_evaluation_completed(
+            job_id=report.job_id,
+            session_id=report.session_id,
+            client_source=report.client_source,
+            evaluator_type=report.evaluator_type,
+            started_at=report.started_at,
+            finished_at=report.finished_at,
+            status=report.status,
+            result=report.result.model_dump(mode="json") if report.result else None,
+            error=report.error,
+            user_id=user_id,
+            device_id=device_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if outcome == "conflict":
+        raise HTTPException(
+            status_code=409, detail="job id conflicts with an existing run"
+        )
+    return Response(status_code=204)
+
+
+@app.get("/evaluation-jobs/active")
+async def active_evaluation_jobs(request: Request, session_ids: str | None = None):
+    """Running attempts for the caller, keyed by session. There is no server
+    queue, so a run never has a queue position."""
+    parsed_session_ids = [
+        item for item in (session_ids or "").split(",") if item
+    ] or None
+    jobs = list_active_evaluation_jobs(
+        session_ids=parsed_session_ids, user_id=_request_user_id(request)
+    )
+    # The query is newest-first; preserve that attempt if an earlier client
+    # start report for the same session has not received its completion yet.
+    return {"jobs": {job["session_id"]: job for job in reversed(jobs)}}
+
+
+@app.get("/evaluation-jobs/{job_id}")
+async def get_evaluation_job_route(request: Request, job_id: str):
+    job = get_evaluation_job(job_id, user_id=_request_user_id(request))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.get("/sessions/{session_id}/evaluation-jobs")
+async def session_evaluation_jobs(request: Request, session_id: str):
+    jobs = list_session_evaluation_jobs(session_id, user_id=_request_user_id(request))
+    return {"jobs": jobs}
+
+
+@app.put("/sessions/{session_id}/evaluation")
 async def put_session_evaluation(
     request: Request, session_id: str, update: SessionEvaluationUpdate
 ):
@@ -794,7 +815,7 @@ async def put_session_evaluation(
     if update.source != "manual":
         raise HTTPException(
             status_code=400,
-            detail="Manual evaluation endpoint only accepts source 'manual'. Use the LLM evaluation endpoint for LLM-sourced results.",
+            detail="Manual evaluation endpoint only accepts source 'manual'.",
         )
     try:
         upsert_session_evaluation(
@@ -817,138 +838,18 @@ async def put_session_evaluation(
     return {"status": "success"}
 
 
-@app.get(
-    "/local/sessions/{session_id}/evaluation",
-    dependencies=[Depends(_require_local_owner)],
-)
+@app.get("/sessions/{session_id}/evaluation")
 async def get_evaluation(request: Request, session_id: str):
     evaluation = get_session_evaluation(session_id, user_id=_request_user_id(request))
     return {"evaluation": evaluation}
 
 
-@app.delete(
-    "/local/sessions/{session_id}/evaluation",
-    dependencies=[Depends(_require_local_owner)],
-)
+@app.delete("/sessions/{session_id}/evaluation")
 async def delete_evaluation(request: Request, session_id: str):
     deleted = delete_session_evaluation(session_id, user_id=_request_user_id(request))
     if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "deleted"}
-
-
-@app.post(
-    "/local/sessions/{session_id}/evaluate-with-llm",
-    status_code=202,
-    dependencies=[Depends(_require_local_owner)],
-)
-async def evaluate_session_with_llm(
-    http_request: Request,
-    session_id: str,
-    request: EvaluateSessionWithLlmRequest | None = None,
-):
-    configured_evaluator = load_evaluation_worker_config().evaluator
-    evaluator_type = (
-        request.evaluator_type if request else None
-    ) or configured_evaluator
-    try:
-        evaluator_type = require_available_evaluator_type(evaluator_type)
-        return start_session_evaluation_job(
-            session_id,
-            trigger="manual",
-            evaluator_type=evaluator_type,
-            user_id=_request_user_id(http_request),
-        )
-    except ValueError as e:
-        message = str(e)
-        if "Session not found" in message:
-            raise HTTPException(status_code=404, detail=message)
-        if "Unsupported session source" in message:
-            raise HTTPException(status_code=400, detail=message)
-        if (
-            "Unsupported evaluator agent" in message
-            or "Evaluator not available" in message
-        ):
-            raise HTTPException(status_code=400, detail=message)
-        if "Manual evaluation exists" in message:
-            raise HTTPException(status_code=409, detail=message)
-        raise
-
-
-@app.get(
-    "/local/poll/{job_id}",
-    dependencies=[Depends(_require_local_owner)],
-)
-async def poll_job(request: Request, job_id: str):
-    job = get_evaluation_job_progress(job_id, user_id=_request_user_id(request))
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return job
-
-
-@app.get(
-    "/local/evaluation-jobs/active",
-    dependencies=[Depends(_require_local_owner)],
-)
-async def active_evaluation_jobs(request: Request, session_ids: str | None = None):
-    parsed_session_ids = [
-        item for item in (session_ids or "").split(",") if item
-    ] or None
-    user_id = _request_user_id(request)
-    jobs = list_active_evaluation_jobs_with_progress(
-        session_ids=parsed_session_ids, user_id=user_id
-    )
-    return {
-        "jobs": {job["session_id"]: job for job in jobs},
-        **_evaluation_metadata_payload(),
-    }
-
-
-@app.get(
-    "/local/sessions/{session_id}/evaluation-jobs",
-    dependencies=[Depends(_require_local_owner)],
-)
-async def session_evaluation_jobs(request: Request, session_id: str):
-    user_id = _request_user_id(request)
-    jobs = list_session_evaluation_jobs_with_progress(session_id, user_id=user_id)
-    return {
-        "jobs": jobs,
-        **_evaluation_metadata_payload(),
-    }
-
-
-@app.patch(
-    "/local/evaluation-jobs/{job_id}",
-    dependencies=[Depends(_require_local_owner)],
-)
-async def update_evaluation_job(
-    request: Request, job_id: str, update: EvaluationJobUpdate
-):
-    user_id = _request_user_id(request)
-    current = get_evaluation_job_progress(job_id, user_id=user_id)
-    if current is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if current["status"] != "queued":
-        raise HTTPException(
-            status_code=409,
-            detail="Only queued evaluation jobs can change evaluator",
-        )
-
-    try:
-        evaluator_type = require_available_evaluator_type(update.evaluator_type)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    updated = update_queued_evaluation_job_evaluator(
-        job_id, evaluator_type=evaluator_type, user_id=user_id
-    )
-    if updated is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Only queued evaluation jobs can change evaluator",
-        )
-    refreshed = get_evaluation_job_progress(job_id, user_id=user_id)
-    return refreshed or updated
 
 
 @app.get("/usage/{usage_id}/tool-calls")
@@ -1010,20 +911,6 @@ async def patch_config(update: ConfigPatchUpdate):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.patch("/config/evaluation", dependencies=[Depends(_require_local_owner)])
-async def update_evaluation_config(update: EvaluationConfigUpdate):
-    """Update the global evaluator type in config.yaml."""
-    if update.evaluator not in VALID_EVALUATOR_AGENTS:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid evaluator: {update.evaluator}"
-        )
-    try:
-        set_evaluation_evaluator(update.evaluator)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    return {"global_evaluator_type": update.evaluator}
 
 
 def _pricing_entry(resolved_cost) -> dict:

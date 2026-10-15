@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const dashboard = readFileSync(join(root, 'src/pages/DashboardPage.tsx'), 'utf8')
+const dashboard = readFileSync(join(root, 'src/pages/SessionsTab.tsx'), 'utf8')
 const types = readFileSync(join(root, 'src/types.ts'), 'utf8')
 const hook = readFileSync(join(root, 'src/hooks/useModelEffectivenessData.ts'), 'utf8')
 const css = readFileSync(join(root, 'src/App.css'), 'utf8')
@@ -40,11 +40,8 @@ describe('Model effectiveness types and data hook', () => {
 
 describe('Model effectiveness Sessions UI', () => {
   test('dashboard renders the model effectiveness panel before the sessions table', () => {
-    const sessionsStart = dashboard.indexOf("{dashboardTab === 'sessions' && (")
-    assert.ok(sessionsStart !== -1, 'sessions tab block not found')
-    const sessionsSection = dashboard.slice(sessionsStart)
-    const panelIndex = sessionsSection.indexOf('model-effectiveness-panel')
-    const tableIndex = sessionsSection.indexOf('<table className="table sessions-table">')
+    const panelIndex = dashboard.indexOf('model-effectiveness-panel')
+    const tableIndex = dashboard.indexOf('table sessions-table')
     assert.ok(panelIndex !== -1, 'model effectiveness panel not found')
     assert.ok(tableIndex !== -1, 'sessions table not found')
     assert.ok(panelIndex < tableIndex, 'model effectiveness should appear before sessions table')

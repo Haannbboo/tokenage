@@ -422,6 +422,18 @@ def run_foreground() -> int:
     from client.proxy.runtime import start_proxy
 
     proxy = start_proxy()
+
+    # Evaluation runs on its own daemon thread: a long evaluator subprocess
+    # must never block the device check or the proxy.
+    evaluation = None
+    try:
+        from client.evaluation import EvaluationWorker
+
+        evaluation = EvaluationWorker()
+        evaluation.start()
+    except Exception:
+        logger.exception("evaluation worker failed to start")
+
     try:
         while not stop:
             try:
@@ -434,6 +446,8 @@ def run_foreground() -> int:
             while not stop and time.monotonic() < deadline:
                 time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
     finally:
+        if evaluation is not None:
+            evaluation.stop()
         proxy.stop()
         logger.info("client service stopped (pid %s)", os.getpid())
     return 0

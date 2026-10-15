@@ -11,10 +11,10 @@ behavior — including exit codes, the banner and the removed commands — is in
 or both. They are installed separately and share only the launcher; the client
 never runs from the server clone, even on the same machine.
 
-- **Client** — the tracking wrapper, agent configuration, sign-in, the component
-  report. Reports to whichever collector it is pointed at.
-- **Server** — the API, the OTLP collector, the dashboard, the
-  evaluation worker. Reached through `tokenage server ...`.
+- **Client** — the tracking wrapper, agent configuration, sign-in, local proxy,
+  automatic session evaluation, and device reporting.
+- **Server** — the API, OTLP collector, dashboard, and evaluation result storage.
+  Reached through `tokenage server ...`.
 
 Anything that is not one of the subcommands below is run as a child command with
 usage tracking: the wrapper records the usage high-watermark, runs the child,
@@ -213,9 +213,9 @@ before the virtualenv exists. `restart`, `stop` and `status` accept program name
 ## Configuration
 
 Server config lives at `~/.tokenage/config.yaml` (override the path with
-`TOKENAGE_CONFIG`). A template is provided at `config.example.yaml`. The
-client reads only the `server:` section, so a config written by a different
-version cannot break it.
+`TOKENAGE_CONFIG`). A template is provided at `config.example.yaml`. The client
+uses its own `client.yaml` and the server URL saved at login; it never reads the
+server config.
 
 ```yaml
 models:
@@ -235,7 +235,8 @@ db:
   # url: postgresql+psycopg://user:pass@host:5432/db
 ```
 
-The local proxy is configured in `~/.tokenage/client.yaml`, not here (see the README, "Point clients at the proxy").
+The local proxy and automatic evaluation are configured in `~/.tokenage/client.yaml`,
+not here. See the README's proxy and automatic session evaluation sections.
 
 `tokenage server start` merges missing defaults from `config.example.yaml`
 into the user config without overwriting existing values. `tokenage server
@@ -248,6 +249,8 @@ Client state, all under `$TOKENAGE_HOME` (default `~/.tokenage`):
 | `current` | client | Symlink to the active client source snapshot. |
 | `versions/` | client | Previous client snapshots. |
 | `credentials.json` | client | Signed-in identity, CLI and ingest tokens, `otlp_logs_endpoint`. Mode `0600`. |
+| `client.yaml` | client | Local proxy and evaluation settings. |
+| `evaluations/` | client | One latest evaluation result per session, its covered revision, and submission status. |
 | `config.yaml` | server | Server config. |
 | `supervisord.conf` | server | Written by `server start`. |
 | `run/` | server | supervisord pid and socket. |

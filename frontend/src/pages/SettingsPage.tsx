@@ -2,7 +2,6 @@ import { Fragment, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { PricingPage } from './PricingPage'
 import { useApp } from '../contexts/AppContext'
-import { useSettingsData } from '../hooks/useSettingsData'
 import { useDevices } from '../hooks/useDevices'
 import { useDeviceStatuses } from '../hooks/useDeviceStatuses'
 import { t } from '../i18n/index.ts'
@@ -52,11 +51,6 @@ export function SettingsPage() {
     }
   }
 
-  const {
-    handleEvaluationEvaluatorChange,
-    evaluationEvaluator, evaluationEvaluators,
-  } = useSettingsData()
-
   return (
     <div className="settings-page" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <div className="panel" style={{ overflow: 'hidden' }}>
@@ -91,35 +85,6 @@ export function SettingsPage() {
 
       {activeSection === 'services' && (
         <>
-          <div className="panel evaluation-default-selector">
-            <div className="panel-tabs">
-              <div className="tab active">{t('Evaluator')}</div>
-            </div>
-            <div className="panel-body" style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{t('Global default')}</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>{t('Used for future automatic evaluator jobs.')}</div>
-              </div>
-              <select
-                className="input-plain"
-                value={evaluationEvaluator}
-                onChange={(event) => handleEvaluationEvaluatorChange(event.target.value as any)}
-              >
-                {evaluationEvaluators.map((evaluator) => (
-                  <option key={evaluator.id} value={evaluator.id} disabled={!evaluator.available}>
-                    {evaluator.label}{evaluator.available ? '' : ` (${t('Not found')})`}
-                  </option>
-                ))}
-                {evaluationEvaluators.length === 0 && (
-                  <>
-                    <option value="codex">Codex</option>
-                    <option value="claude">Claude Code</option>
-                  </>
-                )}
-              </select>
-            </div>
-          </div>
-
           <TimezoneSelector />
 
           {/* Service Version */}

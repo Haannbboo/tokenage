@@ -351,6 +351,9 @@ def login(
     print(f"Credentials saved to {credentials_path()}")
     print(f"Dashboard: {server}")
     detected = installed_agents()
+    from client.evaluation import ensure_evaluation_configured
+
+    ensure_evaluation_configured(available=detected)
     wired = wire_agents(logs_endpoint=endpoint, token=token, agents=detected)
     if wired:
         print("Wired agents: " + ", ".join(wired))

@@ -30,7 +30,7 @@ def shared_prices(monkeypatch):
 
     for key, cost in SHARED.items():
         monkeypatch.setitem(costs.MODEL_COSTS, key, cost)
-        monkeypatch.setitem(costs.MODEL_COST_SOURCES, key, "yaml")
+        monkeypatch.setitem(costs.MODEL_COST_SOURCES, key, "server")
         monkeypatch.setitem(costs.MODEL_SEGMENT_COSTS, key, (key, cost))
 
 
@@ -70,9 +70,9 @@ def test_resolve_pricing_prefers_override_with_segment_match():
     assert resolved.source == "user"
     assert resolved.cost.input == 9.0
     no_override = resolve_pricing(
-        "shared-model", TS, SHARED, {"shared-model": "yaml"}, {}
+        "shared-model", TS, SHARED, {"shared-model": "server"}, {}
     )
-    assert no_override.source == "yaml"
+    assert no_override.source == "server"
     assert resolve_pricing("other", TS, SHARED, {}, overrides).match is None
 
 
@@ -91,7 +91,7 @@ def test_record_usage_override_beats_shared_and_is_per_user(
     assert float(a.total_cost_usd) == pytest.approx(12.0)
     assert _snapshot_source(db, a.price_snapshot_id) == "user"
     assert float(b.total_cost_usd) == pytest.approx(3.0)
-    assert _snapshot_source(db, b.price_snapshot_id) == "yaml"
+    assert _snapshot_source(db, b.price_snapshot_id) == "server"
 
 
 def test_record_usage_override_prices_unknown_model(fresh_db, users):
@@ -203,8 +203,8 @@ def client(api_module, users, monkeypatch):
     async def live_maps():
         from src.pricing.models import ResolvedCost
 
-        resolved = {k: ResolvedCost(cost=c, source="yaml") for k, c in SHARED.items()}
-        return resolved, dict(SHARED), dict.fromkeys(SHARED, "yaml")
+        resolved = {k: ResolvedCost(cost=c, source="server") for k, c in SHARED.items()}
+        return resolved, dict(SHARED), dict.fromkeys(SHARED, "server")
 
     monkeypatch.setattr(api_module, "_resolve_live_cost_maps", live_maps)
     monkeypatch.setitem(
@@ -266,24 +266,28 @@ def test_override_body_rejects_non_finite(api_module):
         api_module.ModelPriceUpdate(input=float("inf"), output=1.0)
 
 
+def _pricing(c, **params) -> dict:
+    return {m["name"]: m for m in c.get("/pricing", params=params).json()["models"]}
+
+
 def test_get_pricing_merges_caller_overrides(client):
     a, b = client("a"), client("b")
     a.put("/pricing/overrides/shared-model", json={"input": 9, "output": 9})
     a.put("/pricing/overrides/vendor/unknown", json={"input": 3, "output": 4})
 
-    entries = a.get("/pricing").json()
+    entries = _pricing(a)
     assert entries["shared-model"]["source"] == "user"
     assert entries["shared-model"]["input"] == 9
     assert entries["vendor/unknown"]["tiers"] == []
     assert entries["vendor/unknown"]["time_rates"] == []
-    assert b.get("/pricing").json()["shared-model"]["source"] == "yaml"
-    assert "vendor/unknown" not in b.get("/pricing").json()
+    assert _pricing(b)["shared-model"]["source"] == "server"
+    assert "vendor/unknown" not in _pricing(b)
 
     single = a.get("/pricing/unknown").json()
     assert single["model"] == "vendor/unknown"
     assert single["source"] == "user"
     assert b.get("/pricing/unknown").json()["resolved"] is False
-    assert b.get("/pricing/shared-model").json()["source"] == "yaml"
+    assert b.get("/pricing/shared-model").json()["source"] == "server"
 
 
 def test_reprice_route_is_scoped_to_caller(client, fresh_db, users):
@@ -343,8 +347,32 @@ def test_get_pricing_overlays_segment_matched_overrides(client):
     a = client("a")
     a.put("/pricing/overrides/proxy/zen/shared-model", json={"input": 6, "output": 8})
 
-    entries = a.get("/pricing").json()
+    entries = _pricing(a)
     assert entries["shared-model"]["source"] == "user"
     assert entries["shared-model"]["input"] == 6
     assert entries["proxy/zen/shared-model"]["source"] == "user"
-    assert client("b").get("/pricing").json()["shared-model"]["source"] == "yaml"
+    assert _pricing(client("b"))["shared-model"]["source"] == "server"
+
+
+def test_get_pricing_filters_and_pages(client):
+    a = client("a")
+    a.put("/pricing/overrides/shared-model", json={"input": 9, "output": 9})
+    a.put("/pricing/overrides/vendor/zzz", json={"input": 1, "output": 1})
+
+    body = a.get("/pricing", params={"source": "user"}).json()
+    assert [m["name"] for m in body["models"]] == ["shared-model", "vendor/zzz"]
+    assert body["total"] == 2
+    assert body["counts"]["user"] == 2
+
+    page = a.get("/pricing", params={"source": "user", "limit": 1, "offset": 1}).json()
+    assert [m["name"] for m in page["models"]] == ["vendor/zzz"]
+    assert page["total"] == 2
+
+    found = a.get("/pricing", params={"q": "ZZZ"}).json()
+    assert [m["name"] for m in found["models"]] == ["vendor/zzz"]
+    assert found["counts"] == {"user": 1}
+
+    # Custom rows sort first; unfiltered lists every source.
+    everything = a.get("/pricing").json()["models"]
+    assert everything[0]["source"] == "user"
+    assert _pricing(client("b"), source="user") == {}

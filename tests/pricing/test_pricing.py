@@ -650,7 +650,7 @@ def test_resolve_all_costs_yaml_global(config_module, pricing_maps_module):
 
     resolved = pricing_maps_module.resolve_all_costs(config)
 
-    assert resolved["claude-sonnet-4-6"].source == "yaml"
+    assert resolved["claude-sonnet-4-6"].source == "server"
     assert resolved["claude-sonnet-4-6"].cost.input == 3.0
 
 
@@ -681,7 +681,7 @@ def test_resolve_all_costs_yaml_wins_over_litellm(config_module, pricing_maps_mo
     resolved = pricing_maps_module.resolve_all_costs(config, _litellm(remote))
 
     assert resolved["test-model"].cost.input == 1.0
-    assert resolved["test-model"].source == "yaml"
+    assert resolved["test-model"].source == "server"
 
 
 def test_resolve_all_costs_partial_yaml_merges_with_litellm(
@@ -704,7 +704,7 @@ def test_resolve_all_costs_partial_yaml_merges_with_litellm(
     resolved = pricing_maps_module.resolve_all_costs(config, _litellm(remote))
 
     cost = resolved["test-model"].cost
-    assert resolved["test-model"].source == "yaml"
+    assert resolved["test-model"].source == "server"
     assert cost.input == 9.0
     assert cost.output == 2.0
     assert cost.cache_read == 0.1
@@ -730,9 +730,9 @@ def test_pricing_lists_yaml_and_source_models(api_module, monkeypatch):
     response = TestClient(api_module.app).get("/pricing")
 
     assert response.status_code == 200
-    data = response.json()
+    data = {m["name"]: m for m in response.json()["models"]}
     assert data["test-model"]["input"] == 1.0
-    assert data["test-model"]["source"] == "yaml"
+    assert data["test-model"]["source"] == "server"
     assert data["remote-model"]["source"] == "litellm"
     assert "scope" not in data["test-model"]
     assert "multiplier" not in data["test-model"]
@@ -855,7 +855,7 @@ def test_single_model_pricing_yaml_override_beats_litellm(api_module, monkeypatc
     data = response.json()
     assert data["resolved"] is True
     assert data["model"] == "test-model"
-    assert data["source"] == "yaml"
+    assert data["source"] == "server"
     assert data["input"] == 2.0
     assert data["output"] == 4.0
 
@@ -905,7 +905,7 @@ def test_single_model_pricing_slashed_model_exact_yaml(api_module, monkeypatch):
     data = response.json()
     assert data["resolved"] is True
     assert data["model"] == "z-ai/glm-5.1-20260406"
-    assert data["source"] == "yaml"
+    assert data["source"] == "server"
     assert data["input"] == 0.98
 
 

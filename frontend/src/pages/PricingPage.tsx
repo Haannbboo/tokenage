@@ -2,14 +2,15 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent } from
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 import { formatNumber, getModelIcon } from '../utils'
-import { usePricingData, pricingSourceOrder, type Model, type PriceField } from '../hooks/usePricingData'
+import { usePricingData, pricingSourceOrder, DEFAULT_SOURCES, type Model, type PriceField } from '../hooks/usePricingData'
 import type { PricingEntry } from '../types'
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 const SOURCE_STYLES: Record<string, { bg: string; color: string; label: string }> = {
   user: { bg: 'rgba(22, 163, 74, 0.15)', color: '#16a34a', label: 'Custom' },
-  yaml: { bg: 'var(--icon-yellow-bg)', color: '#b8860b', label: 'Server' },
+  // Server config prices merge into Custom: users see one set of their prices.
+  server: { bg: 'rgba(22, 163, 74, 0.15)', color: '#16a34a', label: 'Custom' },
   new: { bg: 'var(--surface-hover)', color: 'var(--text-primary)', label: 'New' },
   litellm: { bg: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', label: 'LiteLLM' },
   openrouter: { bg: 'rgba(147, 51, 234, 0.15)', color: '#9333ea', label: 'OpenRouter' },
@@ -34,14 +35,18 @@ function formatDays(days: number[] | null): string {
   return days.map((day) => DAY_LABELS[day] ?? String(day)).join(', ')
 }
 
-const PAGE_SIZE = 200
-
 export function PricingPage() {
   const { configStatus, error } = useApp()
   const {
+    sources,
+    setSources,
     pricingSearch,
     setPricingSearch,
-    filteredPricingModels,
+    models: pricedModels,
+    counts,
+    total,
+    hasMore,
+    loadMore,
     newModels,
     drafts,
     hasPricingEdits,
@@ -52,48 +57,31 @@ export function PricingPage() {
     handleCostChange,
     handleSavePricing,
     handleResetPricing,
+    repricing,
+    handleRepriceModel,
   } = usePricingData()
 
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'user' | 'yaml' | 'litellm' | 'openrouter'>('all')
-  const [newModelName, setNewModelName] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
-  useEffect(() => {
-    setVisibleCount(PAGE_SIZE)
-  }, [sourceFilter, pricingSearch])
-
-  // Unsaved models added by name stay on top whatever the filter.
-  const models = useMemo(
-    () => [...newModels, ...(sourceFilter === 'all'
-      ? filteredPricingModels
-      : filteredPricingModels.filter((m) => m.source === sourceFilter))],
-    [newModels, filteredPricingModels, sourceFilter],
-  )
-
-  const visibleModels = models.slice(0, visibleCount)
+  // Unsaved models added by name stay on top whatever the view.
+  const visibleModels = useMemo(() => [...newModels, ...pricedModels], [newModels, pricedModels])
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
+  // The next page loads when the end of the list scrolls into view.
   useEffect(() => {
     const sentinel = sentinelRef.current
-    if (!sentinel || visibleCount >= models.length) return
+    if (!sentinel || !hasMore) return
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry?.isIntersecting) setVisibleCount((c) => Math.min(c + PAGE_SIZE, models.length))
+        if (entry?.isIntersecting) loadMore()
       },
       { root: scrollRef.current, rootMargin: '200px' },
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [visibleCount, models.length])
-
-  const counts = useMemo(() => {
-    const bySource: Record<string, number> = { user: 0, yaml: 0, litellm: 0, openrouter: 0 }
-    for (const m of filteredPricingModels) bySource[m.source] = (bySource[m.source] ?? 0) + 1
-    return bySource
-  }, [filteredPricingModels])
+  }, [hasMore, loadMore])
 
   const formatPrice = (v: number | null | undefined) => (typeof v === 'number' ? v.toFixed(3) : '—')
 
@@ -112,7 +100,7 @@ export function PricingPage() {
     // sources show their price as a placeholder.
     const value = draft
       ? draft[field]
-      : model.source === 'user' && price !== undefined && price !== null ? String(price) : ''
+      : (model.source === 'user' || model.source === 'server') && price !== undefined && price !== null ? String(price) : ''
     const active = value !== ''
     return {
       type: 'number' as const,
@@ -180,13 +168,22 @@ export function PricingPage() {
     </div>
   )
 
-  const toggleSourceFilter = (source: 'user' | 'yaml' | 'litellm' | 'openrouter') => {
-    setSourceFilter((prev) => (prev === source ? 'all' : source))
-  }
+  // Custom is the user's own prices merged with the server's, one card. A
+  // fetched-source card shows only that source; clicking it again returns
+  // to Custom.
+  const isOnly = (source: string) => sources.length === 1 && sources[0] === source
+  const toggleSource = (source: string) =>
+    setSources(source === 'user' || isOnly(source) ? DEFAULT_SOURCES : [source])
+  const cardCount = (key: string) => (key === 'user' ? (counts.user ?? 0) + (counts.server ?? 0) : counts[key] ?? 0)
+
+  // Searching the Custom view for a name nothing lists offers to price it.
+  const searchTerm = pricingSearch.trim().toLowerCase()
+  const canAdd = sources.includes('user') && searchTerm !== ''
+    && !drafts[searchTerm] && !visibleModels.some((m) => m.name.toLowerCase() === searchTerm)
 
   const sourceOrder = useMemo(
-    () => pricingSourceOrder(filteredPricingModels.map((m) => m.source)),
-    [filteredPricingModels],
+    () => pricingSourceOrder(Object.keys(counts)).filter((key) => ['user', 'litellm', 'openrouter'].includes(key)),
+    [counts],
   )
 
   return (
@@ -225,14 +222,12 @@ export function PricingPage() {
         </div>
         <div className="panel-body" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            {t('Precedence: your Custom prices win, then Server config; otherwise the configured price sources are checked in order (earlier wins), then a containing-name fallback.')}
+            {t('Precedence: your Custom prices win; otherwise the configured price sources are checked in order (earlier wins), then a containing-name fallback.')}
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
             {sourceOrder.map((key, index) => {
-              if (key !== 'user' && key !== 'yaml' && key !== 'litellm' && key !== 'openrouter') return null
               const style = sourceStyle(key)
-              const filter = key as 'user' | 'yaml' | 'litellm' | 'openrouter'
-              return statCard(t(style.label), counts[key] ?? 0, style.color, { key, active: sourceFilter === filter, onClick: () => toggleSourceFilter(filter), rank: index + 1 })
+              return statCard(t(style.label), cardCount(key), style.color, { key, active: sources.includes(key), onClick: () => toggleSource(key), rank: index + 1 })
             })}
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -252,39 +247,16 @@ export function PricingPage() {
                 outline: 'none',
               }}
             />
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                if (!addModel(newModelName)) setSourceFilter('all')
-                setNewModelName('')
-              }}
-              style={{ display: 'flex', gap: '6px', flex: '1 1 240px' }}
-            >
-              <input
-                type="text"
-                placeholder={t('Model name to price...')}
-                value={newModelName}
-                onChange={(e) => setNewModelName(e.target.value)}
-                style={{
-                  flex: 1,
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid var(--border-color)',
-                  fontSize: '13px',
-                  background: 'var(--input-bg)',
-                  color: 'var(--text-primary)',
-                  outline: 'none',
-                }}
-              />
+            {canAdd && (
               <button
-                type="submit"
+                type="button"
                 className="nav-item"
-                disabled={!newModelName.trim()}
+                onClick={() => void addModel(searchTerm)}
                 style={{ fontSize: '12px', fontWeight: 600, padding: '6px 14px', borderRadius: '6px' }}
               >
-                {t('Add model')}
+                {t('Add')} “{searchTerm}”
               </button>
-            </form>
+            )}
           </div>
         </div>
       </div>
@@ -301,7 +273,7 @@ export function PricingPage() {
                 <th>{t('Cache Read (per 1M)')}</th>
                 <th>{t('Cache Write (per 1M)')}</th>
                 <th style={{ width: '80px' }}>{t('Details')}</th>
-                <th style={{ width: '80px' }} />
+                <th style={{ width: '150px' }} />
               </tr>
             </thead>
             <tbody>
@@ -358,6 +330,19 @@ export function PricingPage() {
                         )}
                       </td>
                       <td>
+                        <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                        {model.source !== 'new' && !drafts[model.name] && (
+                          <button
+                            type="button"
+                            className="nav-item"
+                            disabled={saving || repricing === model.name}
+                            title={t('Reprice your unpriced usage of this model at its current price')}
+                            onClick={() => void handleRepriceModel(model.name)}
+                            style={{ fontSize: '12px', padding: '4px 8px' }}
+                          >
+                            {t('Reprice')}
+                          </button>
+                        )}
                         {drafts[model.name] ? (
                           <button
                             type="button"
@@ -380,6 +365,7 @@ export function PricingPage() {
                             {t('Reset')}
                           </button>
                         )}
+                        </div>
                       </td>
                     </tr>
                     {showDetails && (hasTiers || hasWindows) && (
@@ -451,13 +437,11 @@ export function PricingPage() {
                   <td colSpan={8} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
                     {pricingSearch
                       ? t('No models match your search.')
-                      : sourceFilter !== 'all'
-                        ? t('No models for this source yet.')
-                        : t('No pricing data available.')}
+                      : t('No models for this source yet.')}
                   </td>
                 </tr>
               )}
-              {visibleCount < models.length && (
+              {hasMore && (
                 <tr>
                   <td colSpan={8} style={{ padding: '0', border: 'none' }}>
                     <div ref={sentinelRef} style={{ height: '1px' }} />
@@ -467,9 +451,9 @@ export function PricingPage() {
             </tbody>
           </table>
         </div>
-        {models.length > 0 && (
+        {total > 0 && (
           <div style={{ padding: '8px 16px', fontSize: '11px', color: 'var(--text-muted)', borderTop: '1px solid var(--border-color)' }}>
-            {t('Showing')} {visibleModels.length} / {models.length} {t('models')}
+            {t('Showing')} {pricedModels.length} / {total} {t('models')}
           </div>
         )}
       </div>

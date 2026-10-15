@@ -61,7 +61,7 @@ def test_aliases_preserve_price_override_precedence():
     for name in ("Space-Bunny-Free", " STEALTH/SPACE-BUNNY-ALPHA "):
         match = resolve_cost_match(name, costs)
         assert match is not None
-        assert (match.key, match.source) == (key, "yaml")
+        assert (match.key, match.source) == (key, "server")
         assert match.cost == ModelCost(input=1, output=2, cache_read=0.5)
 
 
@@ -87,7 +87,7 @@ def test_snapshot_enrichment_resolves_alias(fresh_db):
     ensure_price_snapshot(
         date="2026-05-19",
         model="stealth/space-bunny-alpha",
-        source="yaml",
+        source="server",
         cost=ModelCost(input=1, output=2, cache_read=0),
         db_path=fresh_db.db_path,
     )
@@ -103,7 +103,7 @@ def test_snapshot_enrichment_resolves_alias(fresh_db):
         db_path=fresh_db.db_path,
     )[0]
     assert row["normal_input_cost_usd"] == 0.001
-    assert row["pricing"]["source"] == "yaml"
+    assert row["pricing"]["source"] == "server"
 
 
 def test_snapshot_writes_and_lookups_share_model_normalization(fresh_db):
@@ -116,7 +116,7 @@ def test_snapshot_writes_and_lookups_share_model_normalization(fresh_db):
             ensure_price_snapshot(
                 date="2026-05-19",
                 model=name,
-                source="yaml",
+                source="server",
                 cost=ModelCost(input=0, output=0, cache_read=0),
                 db_path=fresh_db.db_path,
             )

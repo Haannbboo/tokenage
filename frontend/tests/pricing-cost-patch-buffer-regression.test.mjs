@@ -21,12 +21,12 @@ const savePricingSource = extractCallback(pricingHook, 'handleSavePricing')
 const resetPricingSource = extractCallback(pricingHook, 'handleResetPricing')
 
 test('pricing source order ranks custom overrides before server config', () => {
-  assert.match(pricingHook, /const order = \['user', 'yaml'\]/)
+  assert.match(pricingHook, /const order = \['user', 'server'\]/)
 })
 
 test('pricing cost edits prefill the full effective flat rate on first edit', () => {
   assert.doesNotMatch(pricingHook, /costPatches|CostPatch/)
-  assert.match(costChangeSource, /prev\[model\.name\] \?\? draftFrom\(pricingData\?\.\[model\.name\]\)/)
+  assert.match(costChangeSource, /prev\[model\.name\] \?\? draftFrom\(model\)/)
 })
 
 test('pricing override body requires input/output and nulls blank cache fields', () => {
@@ -60,6 +60,6 @@ test('pricing reset deletes the override without repricing and refetches', () =>
 
 test('adding a listed model matches its existing key case-insensitively', () => {
   assert.match(pricingHook, /name\.trim\(\)\.toLowerCase\(\)/)
-  assert.match(pricingHook, /key\.toLowerCase\(\) === model/)
-  assert.match(pricingHook, /setPricingSearch\(existing\)/)
+  assert.match(pricingHook, /m\.name\.toLowerCase\(\) === model/)
+  assert.match(pricingHook, /setPricingSearch\(existing\.name\)/)
 })

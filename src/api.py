@@ -909,16 +909,28 @@ async def _resolve_live_cost_maps():
     return resolved, model_costs, model_cost_sources
 
 
+# Listing order: the caller's overrides, server config, then the fetched
+# sources in resolution priority; anything else sorts after, by name.
+_PRICING_SOURCE_ORDER = ("user", "server", "openrouter", "litellm")
+
+
 @app.get("/pricing")
-async def get_pricing(request: Request):
-    """Return all models with resolved pricing and source metadata, with the
-    caller's own overrides on top (source "user")."""
+async def get_pricing(
+    request: Request,
+    source: str = Query("", description="comma-separated sources; empty = all"),
+    q: str = "",
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """One page of models with resolved pricing, the caller's own overrides on
+    top (source "user"). ``counts`` covers every source matching ``q``;
+    ``total`` is the match count for ``source`` + ``q``."""
     overrides = await asyncio.to_thread(
         load_model_price_overrides, user_id=_request_user_id(request)
     )
     resolved, _costs, _sources = await _resolve_live_cost_maps()
     override_sources = dict.fromkeys(overrides, "user")
-    entries = {}
+    entries: dict[str, ResolvedCost] = {}
     for key, rc in resolved.items():
         # Same segment matching as record time, so e.g. an override for
         # "proxy/zen/gpt-4o" shows on "gpt-4o" too.
@@ -927,12 +939,34 @@ async def get_pricing(request: Request):
         match = (
             resolve_cost_match(key, overrides, override_sources) if overrides else None
         )
-        if match is not None:
-            rc = ResolvedCost(cost=match.cost, source="user")
-        entries[key] = _pricing_entry(rc)
+        entries[key] = (
+            rc if match is None else ResolvedCost(cost=match.cost, source="user")
+        )
     for key, cost in overrides.items():
-        entries[key] = _pricing_entry(ResolvedCost(cost=cost, source="user"))
-    return entries
+        entries[key] = ResolvedCost(cost=cost, source="user")
+
+    needle = q.strip().lower()
+    wanted = {s for s in source.split(",") if s}
+    counts: dict[str, int] = {}
+    matched = []
+    for key, rc in entries.items():
+        if needle and needle not in key.lower():
+            continue
+        counts[rc.source] = counts.get(rc.source, 0) + 1
+        if not wanted or rc.source in wanted:
+            matched.append((key, rc))
+    order = {name: i for i, name in enumerate(_PRICING_SOURCE_ORDER)}
+    matched.sort(
+        key=lambda kv: (order.get(kv[1].source, len(order)), kv[1].source, kv[0])
+    )
+    return {
+        "models": [
+            {"name": key, **_pricing_entry(rc)}
+            for key, rc in matched[offset : offset + limit]
+        ],
+        "total": len(matched),
+        "counts": counts,
+    }
 
 
 Price = Annotated[float, Field(ge=0, allow_inf_nan=False, strict=True)]

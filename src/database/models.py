@@ -98,7 +98,7 @@ class PriceSnapshot(Base):
 
     Written lazily at record time so the cost split of any usage row can be
     recomputed exactly later, even after config/LiteLLM prices change.
-    ``source`` records where the pricing came from ("litellm", "yaml", or a
+    ``source`` records where the pricing came from ("litellm", "server" for config.yaml, or a
     future source like "openrouter").
     """
 

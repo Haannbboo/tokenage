@@ -4637,7 +4637,7 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
     assert result.new_costs["output_cost_usd"] == Decimal("4")
     assert result.new_costs["total_cost_usd"] == Decimal("6")
     assert result.pricing is not None
-    assert result.pricing["source"] == "yaml"
+    assert result.pricing["source"] == "server"
     assert result.pricing["input"] == 2.0
     assert result.pricing["output"] == 4.0
     assert result.pricing["tier"] is None

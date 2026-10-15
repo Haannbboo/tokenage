@@ -5,12 +5,19 @@ import type { PricingEntry, PricingSource } from '../types.ts'
 
 export type PriceField = 'input' | 'output' | 'cacheRead' | 'cacheWrite'
 type PriceDraft = Record<PriceField, string>
+/** isNew marks a model added by name that no source lists. */
+type Draft = PriceDraft & { isNew?: boolean }
 /** A listed row; source 'new' marks an unsaved model added by name. */
 export type Model = { name: string } & Omit<PricingEntry, 'source'> & { source: PricingSource | 'new' }
 
+/** The first page shows only what the caller and the server price; the large
+ *  fetched sources load when their card is picked. */
+export const DEFAULT_SOURCES = ['user', 'server']
+const PAGE_SIZE = 200
+
 /** The model's current effective flat rate as editable strings. */
-function draftFrom(model?: PricingEntry): PriceDraft {
-  if (!model) return { input: '', output: '', cacheRead: '', cacheWrite: '' }
+function draftFrom(model?: Model): PriceDraft {
+  if (!model || model.source === 'new') return { input: '', output: '', cacheRead: '', cacheWrite: '' }
   return {
     input: String(model.input),
     output: String(model.output),
@@ -41,7 +48,7 @@ export function overrideBody(draft: PriceDraft): Record<string, any> | string {
  *  overrides, then server config, then the sources seen in the pricing data. */
 export function pricingSourceOrder(seenSources?: string[]): string[] {
   const seen = new Set(seenSources ?? [])
-  const order = ['user', 'yaml']
+  const order = ['user', 'server']
   for (const name of ['openrouter', 'litellm']) {
     if (seen.size === 0 || seen.has(name)) order.push(name)
   }
@@ -51,80 +58,80 @@ export function pricingSourceOrder(seenSources?: string[]): string[] {
   return order
 }
 
-export function usePricingData() {
-  const {
-    setConfigStatus,
-    setError,
-    showToast,
-    pricingData,
-    setPricingData,
-  } = useApp()
+function pricingUrl(sources: string[], q: string, offset: number, limit = PAGE_SIZE) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (sources.length) params.set('source', sources.join(','))
+  if (q) params.set('q', q)
+  return `/pricing?${params}`
+}
 
+export function usePricingData() {
+  const { setConfigStatus, setError, showToast } = useApp()
+
+  const [sources, setSources] = useState<string[]>(DEFAULT_SOURCES)
   const [pricingSearch, setPricingSearch] = useState('')
-  const [drafts, setDrafts] = useState<Record<string, PriceDraft>>({})
+  const [query, setQuery] = useState('')
+  const [models, setModels] = useState<Model[]>([])
+  const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState<Record<string, number>>({})
+  const [loading, setLoading] = useState(false)
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({})
   const [repricePast, setRepricePast] = useState(true)
-  // Monotonic id: only the latest pricing response may update state, so a
-  // slow earlier fetch (or the save refetch) can't overwrite newer data.
-  const pricingSeqRef = useRef(0)
+  const [repricing, setRepricing] = useState<string | null>(null)
+  // Monotonic id: only the latest view's response may update state, so a
+  // slow earlier page can't land in a newer filter or search.
+  const seqRef = useRef(0)
 
   useEffect(() => {
-    const controller = new AbortController()
-    const seq = ++pricingSeqRef.current
+    const timer = setTimeout(() => setQuery(pricingSearch.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [pricingSearch])
 
-    async function fetchPricing() {
-      try {
-        const response = await fetch('/pricing', {
-          signal: controller.signal,
-        })
-        if (response.ok && seq === pricingSeqRef.current) {
-          const data = await response.json()
-          setPricingData(data)
-        }
-      } catch (err) {
-        if (!(err instanceof DOMException && err.name === 'AbortError')) {
-          console.error('Failed to load pricing:', err)
-        }
-      }
+  /** Fetch one page of the current view; offset 0 replaces the list. */
+  const fetchPage = useCallback(async (offset: number) => {
+    const seq = offset === 0 ? ++seqRef.current : seqRef.current
+    setLoading(true)
+    try {
+      const response = await fetch(pricingUrl(sources, query, offset))
+      if (!response.ok || seq !== seqRef.current) return
+      const data = await response.json()
+      setModels((prev) => (offset === 0 ? data.models : [...prev, ...data.models]))
+      setTotal(data.total)
+      setCounts(data.counts)
+    } catch (err) {
+      console.error('Failed to load pricing:', err)
+    } finally {
+      if (seq === seqRef.current) setLoading(false)
     }
+  }, [sources, query])
 
-    void fetchPricing()
-    return () => controller.abort()
-  }, [setPricingData])
+  useEffect(() => {
+    void fetchPage(0)
+  }, [fetchPage])
 
-  const filteredPricingModels = useMemo(() => {
-    if (!pricingData) return []
-    const search = pricingSearch.toLowerCase()
-    const models: Model[] = []
-    for (const [name, data] of Object.entries(pricingData)) {
-      if (search && !name.toLowerCase().includes(search)) continue
-      models.push({ name, ...data })
-    }
-    // Custom overrides first, then server config, then sources in resolution priority order.
-    const order = pricingSourceOrder(models.map((m) => m.source))
-    const rank = (source: string) => {
-      const i = order.indexOf(source)
-      return i === -1 ? order.length : i
-    }
-    models.sort((a, b) => rank(a.source) - rank(b.source) || a.name.localeCompare(b.name))
-    return models
-  }, [pricingData, pricingSearch])
+  const hasMore = models.length < total
+  const loadMore = useCallback(() => {
+    if (!loading && hasMore) void fetchPage(models.length)
+  }, [fetchPage, hasMore, loading, models.length])
+
+  const refetchPricing = useCallback(() => fetchPage(0), [fetchPage])
 
   /** Draft-only rows: models added by name that no source prices yet. */
   const newModels = useMemo(
-    () => Object.keys(drafts)
-      .filter((name) => !pricingData?.[name])
-      .map((name): Model => ({ name, input: 0, output: 0, cache_read: 0, cache_write: null, source: 'new' })),
-    [drafts, pricingData],
+    () => Object.entries(drafts)
+      .filter(([, draft]) => draft.isNew)
+      .map(([name]): Model => ({ name, input: 0, output: 0, cache_read: 0, cache_write: null, source: 'new' })),
+    [drafts],
   )
 
   const handleCostChange = useCallback((model: Model, field: PriceField, val: string) => {
     setDrafts((prev) => {
       // The first edit prefills the model's effective prices so the user
       // edits the full flat rate, not one field of it.
-      const draft = prev[model.name] ?? draftFrom(pricingData?.[model.name])
+      const draft = prev[model.name] ?? draftFrom(model)
       return { ...prev, [model.name]: { ...draft, [field]: val } }
     })
-  }, [pricingData])
+  }, [])
 
   const dropDraft = useCallback((model: string) => {
     setDrafts((prev) => {
@@ -134,32 +141,30 @@ export function usePricingData() {
     })
   }, [])
 
-  /** Start a draft for a model by name. Returns false when the model is
-   *  already listed (the search is narrowed to it instead). */
-  const addModel = useCallback((name: string) => {
+  /** Start a draft for a model by name. When a source already lists it, the
+   *  view switches to that model instead. */
+  const addModel = useCallback(async (name: string) => {
     // The server stores override names lowercased, so match and key the same way.
     const model = name.trim().toLowerCase()
-    if (!model) return true
-    const existing = Object.keys(pricingData ?? {}).find((key) => key.toLowerCase() === model)
-    if (existing) {
-      setPricingSearch(existing)
-      return false
-    }
-    setDrafts((prev) => (prev[model] ? prev : { ...prev, [model]: draftFrom() }))
-    return true
-  }, [pricingData])
-
-  const refetchPricing = useCallback(async () => {
+    if (!model || drafts[model]) return
     try {
-      const seq = ++pricingSeqRef.current
-      const pricingResp = await fetch('/pricing')
-      if (pricingResp.ok && seq === pricingSeqRef.current) {
-        setPricingData(await pricingResp.json())
+      const response = await fetch(pricingUrl([], model, 0, 1000))
+      if (response.ok) {
+        const data = await response.json()
+        const existing = (data.models as Model[]).find((m) => m.name.toLowerCase() === model)
+        if (existing) {
+          // Server prices live in the merged Custom view, never on their own.
+          setSources(DEFAULT_SOURCES.includes(existing.source) ? DEFAULT_SOURCES : [existing.source])
+          setPricingSearch(existing.name)
+          return
+        }
       }
     } catch {
-      /* non-critical */
+      /* fall through: price it as a new model */
     }
-  }, [setPricingData])
+    setDrafts((prev) => (prev[model] ? prev : { ...prev, [model]: { ...draftFrom(), isNew: true } }))
+    setPricingSearch('')
+  }, [drafts])
 
   const handleSavePricing = useCallback(async () => {
     const entries = Object.entries(drafts)
@@ -204,6 +209,8 @@ export function usePricingData() {
         dropDraft(model)
       }
       setConfigStatus('saved')
+      // Saved rows are Custom now; show them rather than a view that hides them.
+      setSources((prev) => (prev.includes('user') ? prev : DEFAULT_SOURCES))
       showToast(repricePast
         ? `${t('Pricing saved; repriced usage rows:')} ${repriced}`
         : t('Pricing saved'))
@@ -243,10 +250,34 @@ export function usePricingData() {
     await refetchPricing()
   }, [dropDraft, refetchPricing, setError, showToast])
 
+  /** Price the caller's unpriced usage of one model at its current price. */
+  const handleRepriceModel = useCallback(async (model: string) => {
+    setError(null)
+    setRepricing(model)
+    try {
+      const response = await fetch(`/usage/reprice?model=${encodeURIComponent(model)}`, { method: 'POST' })
+      if (!response.ok) {
+        setError(`${model}: ${t('Failed to reprice unpriced usage')}`)
+        return
+      }
+      showToast(`${model}: ${t('repriced usage rows:')} ${(await response.json()).repriced ?? 0}`)
+    } catch {
+      setError(t('Connection error while repricing'))
+    } finally {
+      setRepricing(null)
+    }
+  }, [setError, showToast])
+
   return {
+    sources,
+    setSources,
     pricingSearch,
     setPricingSearch,
-    filteredPricingModels,
+    models,
+    counts,
+    total,
+    hasMore,
+    loadMore,
     newModels,
     drafts,
     hasPricingEdits: Object.keys(drafts).length > 0,
@@ -257,5 +288,7 @@ export function usePricingData() {
     handleCostChange,
     handleSavePricing,
     handleResetPricing,
+    repricing,
+    handleRepriceModel,
   }
 }

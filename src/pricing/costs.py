@@ -22,7 +22,7 @@ from .models import (
 class CostMatch:
     cost: ModelCost
     key: str
-    source: str  # "litellm", "yaml", or future sources (e.g. "openrouter")
+    source: str  # "litellm", "server" (config.yaml models:), or future sources (e.g. "openrouter")
 
 
 def resolve_cost_match(
@@ -48,7 +48,7 @@ def resolve_cost_match(
         return CostMatch(
             cost=cost,
             key=normalized_model,
-            source=sources.get(normalized_model, "yaml"),
+            source=sources.get(normalized_model, "server"),
         )
 
     # Hot record path: use the prebuilt segment index to avoid a full scan of
@@ -59,7 +59,7 @@ def resolve_cost_match(
     segment_match = segments.get(normalized_model)
     if segment_match is not None:
         key, cost = segment_match
-        return CostMatch(cost=cost, key=key, source=sources.get(key, "yaml"))
+        return CostMatch(cost=cost, key=key, source=sources.get(key, "server"))
 
     return None
 

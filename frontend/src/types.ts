@@ -247,7 +247,7 @@ export type OnboardingCopiedCommand = {
   command: string
 }
 
-export type PricingSource = 'user' | 'yaml' | 'litellm' | 'openrouter'
+export type PricingSource = 'user' | 'server' | 'litellm' | 'openrouter'
 
 export type PricingTier = {
   min_tokens: number
@@ -277,8 +277,6 @@ export type PricingEntry = {
   tiers?: PricingTier[]
   time_rates?: PricingTimeRate[]
 }
-
-export type PricingMap = Record<string, PricingEntry>
 
 export type AuthUser = {
   id: string

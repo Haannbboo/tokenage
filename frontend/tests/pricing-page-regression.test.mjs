@@ -15,7 +15,7 @@ test('app context initial load does not write pricing data', () => {
 })
 
 test('pricing page fetches model-only pricing', () => {
-  assert.match(hookSource, /fetch\('\/pricing', \{/)
+  assert.match(hookSource, /fetch\(pricingUrl\(sources, query, offset\)\)/)
   assert.doesNotMatch(hookSource, /provider/i)
   assert.doesNotMatch(pageSource, /multiplier|\.scope|effective_/i)
 })
@@ -46,16 +46,18 @@ test('pricing empty state spans all pricing columns', () => {
   assert.match(pageSource, /colSpan=\{8\}/)
 })
 
-test('pricing page lists Custom overrides first and defaults to all sources', () => {
+test('pricing page merges server prices into Custom and opens on them', () => {
   assert.match(pageSource, /user: \{[^}]*label: 'Custom' \}/)
-  assert.match(pageSource, /yaml: \{[^}]*label: 'Server' \}/)
-  assert.match(pageSource, /useState<'all' \| 'user' \| 'yaml' \| 'litellm' \| 'openrouter'>\('all'\)/)
+  assert.match(pageSource, /server: \{[^}]*label: 'Custom' \}/)
+  assert.match(hookSource, /DEFAULT_SOURCES = \['user', 'server'\]/)
+  assert.match(hookSource, /useState<string\[\]>\(DEFAULT_SOURCES\)/)
 })
 
 test('pricing page offers reprice, add model and reset for custom rows', () => {
   assert.match(pageSource, /checked=\{repricePast\}/)
   assert.match(pageSource, /t\('Reprice unpriced usage'\)/)
-  assert.match(pageSource, /addModel\(newModelName\)/)
+  assert.match(pageSource, /addModel\(searchTerm\)/)
+  assert.match(pageSource, /handleRepriceModel\(model\.name\)/)
   assert.match(pageSource, /model\.source === 'user' && \(/)
   assert.match(pageSource, /handleResetPricing\(model\.name\)/)
 })

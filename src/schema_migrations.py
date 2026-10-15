@@ -132,35 +132,6 @@ def migrate_database(db_path: str | None = None) -> list[str]:
         if result.rowcount:  # type: ignore[attr-defined]
             applied.append("evaluation_jobs.fail_legacy_active")
 
-    # Config prices were recorded as source 'yaml' before being renamed
-    # 'server'. A 'yaml' snapshot whose 'server' twin (same date, model and
-    # rates) already exists can't be renamed past the unique key: repoint its
-    # usage rows at the twin and drop it, then rename the rest.
-    twin = (
-        "SELECT s.id FROM price_snapshots s WHERE s.source = 'server' "
-        "AND s.date = y.date AND s.model = y.model AND s.rates_hash = y.rates_hash"
-    )
-    with engine.begin() as connection:
-        connection.execute(
-            text(
-                f"UPDATE usage SET price_snapshot_id = (SELECT ({twin}) "
-                "FROM price_snapshots y WHERE y.id = usage.price_snapshot_id) "
-                "WHERE price_snapshot_id IN (SELECT y.id FROM price_snapshots y "
-                f"WHERE y.source = 'yaml' AND EXISTS ({twin}))"
-            )
-        )
-        connection.execute(
-            text(
-                "DELETE FROM price_snapshots WHERE id IN (SELECT y.id FROM "
-                f"price_snapshots y WHERE y.source = 'yaml' AND EXISTS ({twin}))"
-            )
-        )
-        result = connection.execute(
-            text("UPDATE price_snapshots SET source = 'server' WHERE source = 'yaml'")
-        )
-        if result.rowcount:  # type: ignore[attr-defined]
-            applied.append("price_snapshots.rename_yaml_source")
-
     # The pre-NOT-NULL pair of partial unique indexes (NULL-user / real-user).
     legacy = [
         name

@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { toggleTheme, getTheme } from '../theme'
 import { useLang } from '../i18n/index.ts'
 import { getSavedTimezone, saveTimezone } from '../utils'
-import type { ActiveFilter, AuthUser, DateRangeOption, PricingMap } from '../types.ts'
+import type { ActiveFilter, AuthUser, DateRangeOption } from '../types.ts'
 
 export type AuthState = {
   status: 'loading' | 'ready'
@@ -24,9 +24,6 @@ type AppContextType = {
 
   configStatus: 'idle' | 'saving' | 'saved' | 'error'
   setConfigStatus: (s: 'idle' | 'saving' | 'saved' | 'error') => void
-
-  pricingData: PricingMap | null
-  setPricingData: (p: PricingMap | null) => void
 
   showToast: (message: string) => void
 
@@ -65,8 +62,6 @@ export function isApiPath(pathname: string): boolean {
     pathname.startsWith('/sessions/') ||
     pathname === '/model-effectiveness' ||
     pathname === '/devices/status' ||
-    pathname === '/config' ||
-    pathname.startsWith('/config/') ||
     pathname === '/pricing' ||
     pathname.startsWith('/pricing/') ||
     pathname === '/evaluation-jobs' ||
@@ -80,7 +75,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { lang, setLang } = useLang()
   const [auth, setAuth] = useState<AuthState>({ status: 'loading', provider: null, user: null })
   const [configStatus, setConfigStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
-  const [pricingData, setPricingData] = useState<PricingMap | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
 
@@ -177,7 +171,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       lang, setLang,
       auth, signOut,
       configStatus, setConfigStatus,
-      pricingData, setPricingData,
       showToast,
       error, setError,
       refreshTrigger, requestUsageRefresh,

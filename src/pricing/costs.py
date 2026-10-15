@@ -22,7 +22,7 @@ from .models import (
 class CostMatch:
     cost: ModelCost
     key: str
-    source: str  # "litellm", "yaml", or future sources (e.g. "openrouter")
+    source: str  # "litellm", "server" (config.yaml models:), or future sources (e.g. "openrouter")
 
 
 def resolve_cost_match(
@@ -48,7 +48,7 @@ def resolve_cost_match(
         return CostMatch(
             cost=cost,
             key=normalized_model,
-            source=sources.get(normalized_model, "yaml"),
+            source=sources.get(normalized_model, "server"),
         )
 
     # Hot record path: use the prebuilt segment index to avoid a full scan of
@@ -59,7 +59,7 @@ def resolve_cost_match(
     segment_match = segments.get(normalized_model)
     if segment_match is not None:
         key, cost = segment_match
-        return CostMatch(cost=cost, key=key, source=sources.get(key, "yaml"))
+        return CostMatch(cost=cost, key=key, source=sources.get(key, "server"))
 
     return None
 
@@ -86,6 +86,7 @@ def resolve_pricing(
     ts_micros: int,
     model_costs: dict[str, ModelCost] | None = None,
     model_cost_sources: dict[str, str] | None = None,
+    overrides: dict[str, ModelCost] | None = None,
 ) -> ResolvedPricing:
     """Resolve a model to a time-resolved flat cost.
 
@@ -93,9 +94,16 @@ def resolve_pricing(
     use its output. The maps lock is held for the whole resolution so a
     concurrent config refresh (which swaps the maps under the same lock) is
     never observed half-applied.
+
+    ``overrides`` are the row owner's own prices; a match there (same exact
+    then last-segment matching) beats every shared source.
     """
-    with MAPS_LOCK:
-        match = resolve_cost_match(model, model_costs, model_cost_sources)
+    match = None
+    if overrides:
+        match = resolve_cost_match(model, overrides, dict.fromkeys(overrides, "user"))
+    if match is None:
+        with MAPS_LOCK:
+            match = resolve_cost_match(model, model_costs, model_cost_sources)
     if match is None:
         return ResolvedPricing(
             match=None,

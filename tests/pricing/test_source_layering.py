@@ -47,4 +47,4 @@ def test_yaml_overrides_sources_and_records_provenance():
     resolved = resolve_all_costs(config, [low])
 
     assert resolved["m"].cost.input == 9.0
-    assert resolved["m"].source == "yaml"
+    assert resolved["m"].source == "server"

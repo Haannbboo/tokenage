@@ -167,7 +167,7 @@ def resolve_all_costs(
             base_cost.cost if base_cost is not None else None,
         )
         if model_cost is not None:
-            costs[normalized_model] = ResolvedCost(cost=model_cost, source="yaml")
+            costs[normalized_model] = ResolvedCost(cost=model_cost, source="server")
 
     return costs
 

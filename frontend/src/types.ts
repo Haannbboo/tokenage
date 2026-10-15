@@ -247,7 +247,7 @@ export type OnboardingCopiedCommand = {
   command: string
 }
 
-export type PricingSource = 'yaml' | 'litellm' | 'openrouter'
+export type PricingSource = 'user' | 'server' | 'litellm' | 'openrouter'
 
 export type PricingTier = {
   min_tokens: number
@@ -274,11 +274,11 @@ export type PricingEntry = {
   cache_read: number
   cache_write: number | null
   source: PricingSource
+  /** The stored override that priced this row (Custom rows only). */
+  override?: string | null
   tiers?: PricingTier[]
   time_rates?: PricingTimeRate[]
 }
-
-export type PricingMap = Record<string, PricingEntry>
 
 export type AuthUser = {
   id: string

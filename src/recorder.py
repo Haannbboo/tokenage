@@ -15,6 +15,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from .database.base_url import resolve_base_url_id
+from .database.model_prices import load_model_price_overrides
 from .database.models import ToolCall, Usage
 from .database.usage import log_usage, merge_duplicate_usage
 from .pricing.costs import ResolvedPricing, calculate_costs, resolve_pricing
@@ -104,7 +105,9 @@ def record_usage(
             )
         return duplicate
 
-    resolved = resolve_pricing(model, usage_ts)
+    # ponytail: one overrides query per recorded row; cache per user if it shows up.
+    overrides = load_model_price_overrides(user_id=user_id, db_path=db_path)
+    resolved = resolve_pricing(model, usage_ts, overrides=overrides)
     costs = calculate_costs(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,

@@ -759,6 +759,7 @@ def test_reprice_estimated_rows_rebinds_and_updates_costs(
 
     model_costs = {"test-model": ModelCost(input=2.0, output=4.0, cache_read=0.5)}
     summary = database_module.reprice_estimated_rows(
+        user_id="test-user",
         model_costs=model_costs,
         model_cost_sources={},
         db_path=db_path,
@@ -774,6 +775,7 @@ def test_reprice_estimated_rows_rebinds_and_updates_costs(
 
     # Already bound: a second pass has nothing to do.
     again = database_module.reprice_estimated_rows(
+        user_id="test-user",
         model_costs=model_costs,
         model_cost_sources={},
         db_path=db_path,
@@ -812,6 +814,7 @@ def test_reprice_estimated_rows_respects_filters_and_skips_unresolvable(
 
     model_costs = {"m1": ModelCost(input=2.0, output=4.0, cache_read=0.5)}
     common = {
+        "user_id": "test-user",
         "model_costs": model_costs,
         "model_cost_sources": {},
         "db_path": db_path,
@@ -836,54 +839,6 @@ def test_reprice_estimated_rows_respects_filters_and_skips_unresolvable(
     by_provider = {row["provider"]: row for row in rows}
     assert by_provider["p1"]["price_snapshot_id"] is not None
     assert by_provider["p2"]["price_snapshot_id"] is None
-
-
-def test_reprice_limit_scans_past_unresolvable_rows(database_module, isolated_home):
-    from src.pricing.models import ModelCost
-
-    db_path = str(isolated_home / "reprice-limit.db")
-    database_module.init_db(db_path)
-    # Earlier row has no pricing match; the later row must still be repriced
-    # even though `limit=1` only allows one successful row.
-    for ts, model in (
-        (TS_2026_05_03_18, "missing-model"),
-        (TS_2026_05_03_18 + 1, "m1"),
-    ):
-        database_module.log_usage(
-            database_module.Usage(
-                device_id="test-device",
-                ts=ts,
-                provider="p1",
-                model=model,
-                client_source="codex",
-                endpoint="otlp",
-                prompt_tokens=1000,
-                completion_tokens=0,
-                cached_tokens=0,
-                total_tokens=1000,
-                input_cost_usd=0.0,
-                output_cost_usd=0.0,
-                total_cost_usd=0.0,
-                status=200,
-                user_id="test-user",
-            ),
-            db_path=db_path,
-        )
-
-    summary = database_module.reprice_estimated_rows(
-        limit=1,
-        model_costs={"m1": ModelCost(input=2.0, output=4.0, cache_read=0.5)},
-        model_cost_sources={},
-        db_path=db_path,
-    )
-
-    assert summary == {"candidates": 2, "repriced": 1, "skipped": 1}
-    rows = database_module.fetch_recent_usage(
-        limit=10, db_path=db_path, user_id="test-user"
-    )
-    by_model = {row["model"]: row for row in rows}
-    assert by_model["m1"]["price_snapshot_id"] is not None
-    assert by_model["missing-model"]["price_snapshot_id"] is None
 
 
 def test_reprice_counts_snapshot_failure_as_skipped(
@@ -921,6 +876,7 @@ def test_reprice_counts_snapshot_failure_as_skipped(
     monkeypatch.setattr(snapshots, "ensure_price_snapshot", boom)
 
     summary = database_module.reprice_estimated_rows(
+        user_id="test-user",
         model_costs={"m1": ModelCost(input=2.0, output=4.0, cache_read=0.5)},
         model_cost_sources={},
         db_path=db_path,
@@ -932,6 +888,269 @@ def test_reprice_counts_snapshot_failure_as_skipped(
         limit=1, db_path=db_path, user_id="test-user"
     )
     assert rows[0]["price_snapshot_id"] is None
+
+
+def _batch_prices():
+    from src.pricing.models import ModelCost, ModelTier, TimeRate
+
+    return {
+        "m-flat": ModelCost(input=2.0, output=4.0, cache_read=0.5),
+        "m-tier": ModelCost(
+            input=1.0,
+            output=1.0,
+            cache_read=0.0,
+            tiers=(
+                ModelTier(
+                    min_tokens=0, max_tokens=1000, input=1.0, output=1.0, cache_read=0.0
+                ),
+                ModelTier(
+                    min_tokens=1000,
+                    max_tokens=None,
+                    input=3.0,
+                    output=3.0,
+                    cache_read=0.0,
+                ),
+            ),
+        ),
+        "m-tod": ModelCost(
+            input=1.0,
+            output=1.0,
+            cache_read=0.0,
+            time_rates=(
+                TimeRate(
+                    days=None,
+                    start_minute=9 * 60,
+                    end_minute=12 * 60,
+                    cost=ModelCost(input=5.0, output=5.0, cache_read=0.0),
+                ),
+            ),
+        ),
+    }
+
+
+# (ts, model, session suffix, prompt_tokens): two dates, two sessions plus a
+# session-less row, a tier boundary, a time-of-day window and unresolvable rows.
+_BATCH_ROWS = (
+    (TS_2026_05_05_10, "m-flat", "s1", 500),
+    (TS_2026_05_05_10_01, "m-tier", "s1", 5000),
+    (TS_2026_05_05_10_02, "m-missing", "s1", 100),
+    (TS_2026_05_05_10_15, "m-flat", "s2", 800),
+    (TS_2026_05_05_10_30, "m-tod", "s2", 300),
+    (TS_2026_05_05_11_45, "m-flat", "s1", 200),
+    (TS_2026_05_07_10, "m-tier", "s1", 400),
+    (TS_2026_05_07_10, "m-tod", "s2", 700),
+    (TS_2026_05_08_10, "m-flat", None, 900),
+    (TS_2026_05_08_10, "m-missing", "s2", 50),
+)
+
+
+def _batch_user(database_module, db_path, user_id):
+    """Real users and devices rows (device id ``<user>-device``), so the
+    usage/session foreign keys hold on Postgres."""
+    from sqlalchemy.orm import Session
+
+    from src.database.models import Device, User
+
+    with Session(database_module.get_engine(db_path)) as session:
+        if session.get(User, user_id) is None:
+            session.add(User(id=user_id, email=f"{user_id}@example.com", created_at=0))
+            session.flush()
+            session.add(
+                Device(
+                    id=f"{user_id}-device",
+                    user_id=user_id,
+                    installation_hash=user_id,
+                    device_name=user_id,
+                    created_at=0,
+                )
+            )
+            session.commit()
+
+
+def _log_batch_rows(database_module, db_path, user_id):
+    _batch_user(database_module, db_path, user_id)
+    for i, (ts, model, session, prompt) in enumerate(_BATCH_ROWS):
+        database_module.log_usage(
+            database_module.Usage(
+                id=f"{user_id}-{i}",
+                device_id=f"{user_id}-device",
+                ts=ts,
+                provider="p-" + model,
+                model=model,
+                client_source="codex",
+                session_id=f"{user_id}-{session}" if session else None,
+                endpoint="otlp",
+                prompt_tokens=prompt,
+                completion_tokens=100,
+                cached_tokens=0,
+                total_tokens=prompt + 100,
+                input_cost_usd=0.25,
+                output_cost_usd=0.75,
+                total_cost_usd=1.0,
+                status=200,
+                user_id=user_id,
+            ),
+            db_path=db_path,
+        )
+
+
+def _batch_state(database_module, db_path, user_id):
+    """Usage, usage_daily and session state with the user id stripped out."""
+    import json
+
+    from sqlalchemy import select
+
+    from src.database.models import SessionRecord, UsageDaily
+
+    with database_module.Session(database_module.get_engine(db_path)) as session:
+        usage = {
+            u.id.removeprefix(user_id): (
+                float(u.input_cost_usd),
+                float(u.output_cost_usd),
+                float(u.total_cost_usd),
+                u.price_snapshot_id,
+            )
+            for u in session.scalars(
+                select(database_module.Usage).where(
+                    database_module.Usage.user_id == user_id
+                )
+            )
+        }
+        daily = {
+            (d.date, d.model): (
+                float(d.input_cost_usd),
+                float(d.output_cost_usd),
+                float(d.total_cost_usd),
+            )
+            for d in session.scalars(
+                select(UsageDaily).where(UsageDaily.user_id == user_id)
+            )
+        }
+        sessions = {
+            s.session_id.removeprefix(user_id): (
+                float(s.total_cost_usd),
+                json.loads(s.models_json),
+                json.loads(s.providers_json),
+                s.primary_model,
+                s.primary_provider,
+            )
+            for s in session.scalars(
+                select(SessionRecord).where(SessionRecord.user_id == user_id)
+            )
+        }
+    return usage, daily, sessions
+
+
+def test_reprice_batches_match_per_row_recalculation(fresh_db, monkeypatch):
+    """Chunked repricing ends in the same state as one row per transaction
+    (the old path), and that state is internally consistent."""
+    from src.database import usage as usage_module
+    from src.pricing.costs import calculate_costs, resolve_pricing
+
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+    prices = _batch_prices()
+    common = {"model_costs": prices, "model_cost_sources": {}, "db_path": db_path}
+    states = {}
+    for user_id, chunk in (("per-row", 1), ("chunked", 3), ("one-chunk", 500)):
+        _log_batch_rows(database_module, db_path, user_id)
+        monkeypatch.setattr(usage_module, "_REPRICE_CHUNK", chunk)
+        summary = database_module.reprice_estimated_rows(user_id=user_id, **common)
+        assert summary == {"candidates": 10, "repriced": 8, "skipped": 2}
+        states[user_id] = _batch_state(database_module, db_path, user_id)
+
+    usage, daily, sessions = states["per-row"]
+    for other in ("chunked", "one-chunk"):
+        o_usage, o_daily, o_sessions = states[other]
+        assert o_usage == usage
+        assert o_daily == pytest.approx(daily)
+        # Cost maps are applied row by row in order, so they match exactly.
+        assert {k: v[1:] for k, v in o_sessions.items()} == {
+            k: v[1:] for k, v in sessions.items()
+        }
+        assert {k: v[0] for k, v in o_sessions.items()} == pytest.approx(
+            {k: v[0] for k, v in sessions.items()}
+        )
+
+    # Independent check of the end state against the pricing functions.
+    expected_daily: dict = {}
+    expected_sessions: dict = {}
+    for i, (ts, model, session, prompt) in enumerate(_BATCH_ROWS):
+        resolved = resolve_pricing(model, ts, prices, {}, {})
+        if resolved.match is None:
+            assert usage[f"-{i}"] == (0.25, 0.75, 1.0, None)
+            total = 1.0
+        else:
+            costs = calculate_costs(
+                prompt_tokens=prompt,
+                completion_tokens=100,
+                cached_tokens=0,
+                cache_creation_tokens=None,
+                model_cost=resolved.cost,
+            )
+            total = float(costs["total_cost_usd"])
+            assert usage[f"-{i}"][:3] == pytest.approx(
+                (float(costs["input_cost_usd"]), float(costs["output_cost_usd"]), total)
+            )
+            assert usage[f"-{i}"][3] is not None
+        date = usage_module._usage_date(database_module.Usage(ts=ts))
+        expected_daily[(date, model)] = expected_daily.get((date, model), 0) + total
+        if session:
+            models = expected_sessions.setdefault(f"-{session}", {})
+            models[model] = models.get(model, 0) + total
+    # The time-of-day window prices the 10:30 m-tod row at 5/M, not 1/M.
+    assert usage["-4"][2] == pytest.approx((300 + 100) * 5 / 1e6)
+    assert {k: v[2] for k, v in daily.items()} == pytest.approx(expected_daily)
+    assert set(sessions) == set(expected_sessions)
+    for key, models in expected_sessions.items():
+        total, models_json, providers_json, primary_model, primary_provider = sessions[
+            key
+        ]
+        assert total == pytest.approx(sum(models.values()))
+        assert models_json == pytest.approx(models)
+        assert providers_json == pytest.approx(
+            {"p-" + m: cost for m, cost in models.items()}
+        )
+        assert primary_model == max(models, key=models.get)
+        assert primary_provider == "p-" + primary_model
+
+    # A second run finds only the unresolvable rows and changes nothing.
+    for user_id in states:
+        again = database_module.reprice_estimated_rows(user_id=user_id, **common)
+        assert again == {"candidates": 2, "repriced": 0, "skipped": 2}
+        assert _batch_state(database_module, db_path, user_id) == states[user_id]
+
+
+def test_reprice_batch_snapshot_failure_still_updates_costs(fresh_db, monkeypatch):
+    from src.database import usage as usage_module
+    from src.pricing import snapshots
+
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+    _log_batch_rows(database_module, db_path, "u")
+    monkeypatch.setattr(usage_module, "_REPRICE_CHUNK", 3)
+
+    def boom(**_kwargs):
+        raise RuntimeError("snapshot store unavailable")
+
+    monkeypatch.setattr(snapshots, "ensure_price_snapshot", boom)
+
+    summary = database_module.reprice_estimated_rows(
+        user_id="u",
+        model_costs=_batch_prices(),
+        model_cost_sources={},
+        db_path=db_path,
+    )
+
+    assert summary == {"candidates": 10, "repriced": 0, "skipped": 10}
+    usage, _daily, sessions = _batch_state(database_module, db_path, "u")
+    assert all(row[3] is None for row in usage.values())
+    # m-flat row 0: 500*2/1e6 + 100*4/1e6, written despite the unbound snapshot.
+    assert usage["-0"][2] == pytest.approx(0.0014)
+    s1_rows = [i for i, row in enumerate(_BATCH_ROWS) if row[2] == "s1"]
+    assert sessions["-s1"][0] == pytest.approx(sum(usage[f"-{i}"][2] for i in s1_rows))
 
 
 def test_summarize_usage_window_groups_by_session_source_and_model(fresh_db):
@@ -4632,7 +4851,7 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
     assert result.new_costs["output_cost_usd"] == Decimal("4")
     assert result.new_costs["total_cost_usd"] == Decimal("6")
     assert result.pricing is not None
-    assert result.pricing["source"] == "yaml"
+    assert result.pricing["source"] == "server"
     assert result.pricing["input"] == 2.0
     assert result.pricing["output"] == 4.0
     assert result.pricing["tier"] is None
@@ -5488,6 +5707,22 @@ def test_migrate_database_creates_missing_model_indexes(fresh_db):
     )
 
 
+def test_migrate_database_creates_missing_user_model_prices(fresh_db):
+    """An install from before price overrides gets the table on upgrade."""
+    from sqlalchemy import inspect
+
+    schema_migrations = fresh_db.schema_migrations_module
+    database_module = fresh_db.database_module
+    engine = database_module.get_engine(fresh_db.db_path)
+    with engine.begin() as conn:
+        conn.execute(database_module.text("DROP TABLE user_model_prices"))
+    assert "user_model_prices" not in inspect(engine).get_table_names()
+
+    schema_migrations.migrate_database(fresh_db.db_path)
+
+    assert "user_model_prices" in inspect(engine).get_table_names()
+
+
 def test_sqlite_pragmas_enable_wal_and_busy_timeout(tmp_path):
     import sqlite3
 
@@ -5551,3 +5786,128 @@ def _upsert_daily(usage, db_path=None):
     with Session(get_engine(db_path)) as session:
         upsert_daily_aggregate(session, usage)
         session.commit()
+
+
+def test_reprice_batch_rounds_like_per_row_updates(fresh_db, monkeypatch):
+    """Sub-cent-scale costs: each row's change is rounded to the columns'
+    8 decimals before grouping, so the daily and session totals equal the sum
+    of the stored rows whatever the chunk size."""
+    from decimal import Decimal
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from src.database import usage as usage_module
+    from src.database.models import SessionRecord, UsageDaily
+    from src.pricing.models import ModelCost
+
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+    # One input token at $0.006/M costs 0.000000006: stored as 0.00000001.
+    prices = {"m-tiny": ModelCost(input=0.006, output=0.0, cache_read=0.0)}
+    for user_id, chunk in (("tiny-row", 1), ("tiny-chunk", 500)):
+        _batch_user(database_module, db_path, user_id)
+        for i in range(3):
+            database_module.log_usage(
+                database_module.Usage(
+                    id=f"{user_id}-{i}",
+                    device_id=f"{user_id}-device",
+                    ts=TS_2026_05_05_10 + i,
+                    provider="p",
+                    model="m-tiny",
+                    client_source="codex",
+                    session_id=f"{user_id}-s",
+                    endpoint="otlp",
+                    prompt_tokens=1,
+                    completion_tokens=0,
+                    cached_tokens=0,
+                    total_tokens=1,
+                    status=200,
+                    user_id=user_id,
+                ),
+                db_path=db_path,
+            )
+        monkeypatch.setattr(usage_module, "_REPRICE_CHUNK", chunk)
+        database_module.reprice_estimated_rows(
+            user_id=user_id, model_costs=prices, model_cost_sources={}, db_path=db_path
+        )
+        with Session(database_module.get_engine(db_path)) as session:
+            rows = sum(
+                Decimal(str(u.total_cost_usd))
+                for u in session.scalars(
+                    select(database_module.Usage).where(
+                        database_module.Usage.user_id == user_id
+                    )
+                )
+            )
+            daily = session.scalar(
+                select(UsageDaily.total_cost_usd).where(UsageDaily.user_id == user_id)
+            )
+            total = session.scalar(
+                select(SessionRecord.total_cost_usd).where(
+                    SessionRecord.user_id == user_id
+                )
+            )
+        assert rows == Decimal("0.00000003")
+        assert Decimal(str(daily)) == rows
+        assert Decimal(str(total)) == rows
+
+
+def test_reprice_statement_count_does_not_grow_per_row(fresh_db, monkeypatch):
+    """Batched: the statement count depends on chunks and rollup keys, not on
+    how many rows a chunk reprices (no per-row reloads after commit)."""
+    from sqlalchemy import event
+
+    from src.database import usage as usage_module
+    from src.pricing.models import ModelCost
+
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+    prices = {"m-flat": ModelCost(input=1.0, output=1.0, cache_read=0.0)}
+    monkeypatch.setattr(usage_module, "_REPRICE_CHUNK", 500)
+    engine = database_module.get_engine(db_path)
+    counts = {}
+    for user_id, n in (("few", 5), ("many", 60)):
+        _batch_user(database_module, db_path, user_id)
+        for i in range(n):
+            database_module.log_usage(
+                database_module.Usage(
+                    id=f"{user_id}-{i}",
+                    device_id=f"{user_id}-device",
+                    ts=TS_2026_05_05_10 + i,
+                    provider="p",
+                    model="m-flat",
+                    client_source="codex",
+                    session_id=f"{user_id}-s",
+                    endpoint="otlp",
+                    prompt_tokens=100,
+                    completion_tokens=10,
+                    cached_tokens=0,
+                    total_tokens=110,
+                    status=200,
+                    user_id=user_id,
+                ),
+                db_path=db_path,
+            )
+        statements = []
+
+        def count(*args, **kwargs):
+            statements.append(1)
+
+        event.listen(engine, "before_cursor_execute", count)
+        try:
+            summary = database_module.reprice_estimated_rows(
+                user_id=user_id,
+                model_costs=prices,
+                model_cost_sources={},
+                db_path=db_path,
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", count)
+        assert summary["repriced"] == n
+        counts[user_id] = len(statements)
+    # 12x the rows: a per-row reload would add ~55 statements. Small
+    # differences come from the first run creating the shared snapshot.
+    assert counts["many"] - counts["few"] < 10, counts

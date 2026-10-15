@@ -39,7 +39,7 @@ def test_bound_row_uses_its_own_snapshot_not_the_newest(fresh_db):
     db = fresh_db.db_path
     bound = _insert(db, cost=ModelCost(2.0, 6.0, 0.5, 3.0), source="litellm")
     # A newer snapshot for the same day/model/source must not affect the bound row.
-    _insert(db, cost=ModelCost(10.0, 20.0, 5.0), source="yaml")
+    _insert(db, cost=ModelCost(10.0, 20.0, 5.0), source="server")
 
     row = {
         "ts": TS,

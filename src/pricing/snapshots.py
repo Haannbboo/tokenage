@@ -179,6 +179,8 @@ def get_price_snapshot(
             .where(
                 PriceSnapshot.date == date,
                 PriceSnapshot.model == model,
+                # User-override snapshots carry no user_id; never borrow them.
+                PriceSnapshot.source != "user",
             )
             .order_by(PriceSnapshot.recorded_at.desc(), PriceSnapshot.id.desc())
             .limit(1)
@@ -231,7 +233,11 @@ def _load_snapshot_cache(
                 PriceSnapshot.rates_json,
                 PriceSnapshot.source,
             )
-            .where(tuple_(PriceSnapshot.date, PriceSnapshot.model).in_(list(keys)))
+            .where(
+                tuple_(PriceSnapshot.date, PriceSnapshot.model).in_(list(keys)),
+                # User-override snapshots carry no user_id; never borrow them.
+                PriceSnapshot.source != "user",
+            )
             .order_by(PriceSnapshot.recorded_at.desc(), PriceSnapshot.id.desc())
         )
         cache: dict[tuple[str, str], tuple[ModelCost, str]] = {}

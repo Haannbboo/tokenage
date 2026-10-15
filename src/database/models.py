@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -97,7 +98,7 @@ class PriceSnapshot(Base):
 
     Written lazily at record time so the cost split of any usage row can be
     recomputed exactly later, even after config/LiteLLM prices change.
-    ``source`` records where the pricing came from ("litellm", "yaml", or a
+    ``source`` records where the pricing came from ("litellm", "server" for config.yaml, or a
     future source like "openrouter").
     """
 
@@ -119,6 +120,27 @@ class PriceSnapshot(Base):
     rates_hash: Mapped[str] = mapped_column(String, nullable=False)
     rates_json: Mapped[str] = mapped_column(Text, nullable=False)
     recorded_at: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class UserModelPrice(Base):
+    """A user's own flat price for a model, USD per million tokens.
+
+    Beats every shared pricing source for that user's rows.
+    """
+
+    __tablename__ = "user_model_prices"
+    __table_args__ = (
+        UniqueConstraint("user_id", "model", name="uq_user_model_prices"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    input: Mapped[float] = mapped_column(Float, nullable=False)
+    output: Mapped[float] = mapped_column(Float, nullable=False)
+    cache_read: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cache_write: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class Usage(Base):

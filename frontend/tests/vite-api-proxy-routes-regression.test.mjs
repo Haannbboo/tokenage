@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { shouldProxyApiRequest } from '../vite-api-proxy.js'
 
 const proxiedRoutes = [
-  '/config',
   '/usage',
   '/usage/count',
   '/usage/logs?limit=1',
@@ -16,6 +15,9 @@ const proxiedRoutes = [
   '/sessions/session-123/evaluation-jobs',
   '/pricing',
   '/pricing/z-ai/glm-5.1-20260406',
+  '/pricing/overrides',
+  '/pricing/overrides/z-ai%2Fglm-5.1',
+  '/usage/reprice?model=z-ai%2Fglm-5.1',
   '/auth/devices',
   '/auth/devices/device-123/revoke',
 ]
@@ -35,6 +37,7 @@ const frontendRoutes = [
   '/assets/index.js',
   '/favicon.ico',
   '/local/evaluation-jobs/active',
+  '/config/evaluation',
   '/local/sessions/session-123/evaluation-jobs',
   '/local/poll/job-123',
 ]

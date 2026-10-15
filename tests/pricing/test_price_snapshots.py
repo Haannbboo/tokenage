@@ -22,7 +22,7 @@ def _insert_snapshot(
     model="test-model",
     cost=COST,
     date="2026-05-19",
-    source="yaml",
+    source="server",
 ):
     _snapshots_module().ensure_price_snapshot(
         date=date,
@@ -125,7 +125,7 @@ def test_get_snapshot_prefers_latest_when_sources_change_mid_day(fresh_db):
     _insert_snapshot(db_path, source="litellm")
     _insert_snapshot(
         db_path,
-        source="yaml",
+        source="server",
         cost=ModelCost(input=5.0, output=10.0, cache_read=1.0, cache_write=6.0),
     )
 
@@ -343,7 +343,7 @@ def test_ensure_price_snapshot_caches_ids_per_engine(fresh_db, request):
     kwargs = dict(
         date="2026-05-19",
         model="test-model",
-        source="yaml",
+        source="server",
         db_path=fresh_db.db_path,
     )
 

@@ -282,45 +282,6 @@ def test_parse_model_cost_skips_malformed_tiers(config_module, pricing_maps_modu
     assert cost.tiers[0].min_tokens == 256000
 
 
-def test_apply_patch_set_creates_nested_dicts_with_literal_keys(config_module):
-    config = {"models": {}}
-
-    config_module._apply_patch(
-        config,
-        ["models", "vendor/model.v1", "cost", "cacheRead"],
-        "set",
-        0.25,
-    )
-
-    assert config["models"]["vendor/model.v1"]["cost"]["cacheRead"] == 0.25
-
-
-def test_apply_patch_delete_missing_leaf_is_noop(config_module):
-    config = {"models": {"test-model": {"cost": {"input": 1.0}}}}
-
-    config_module._apply_patch(
-        config,
-        ["models", "test-model", "cost", "cacheRead"],
-        "delete",
-        None,
-    )
-
-    assert config == {"models": {"test-model": {"cost": {"input": 1.0}}}}
-
-
-def test_apply_patch_delete_missing_nested_path_is_noop(config_module):
-    config = {"models": {}}
-
-    config_module._apply_patch(
-        config,
-        ["models", "missing-model", "cost", "input"],
-        "delete",
-        None,
-    )
-
-    assert config == {"models": {}}
-
-
 def test_is_chat_model_chat_mode():
     assert _is_chat_model({"mode": "chat"}) is True
 
@@ -689,7 +650,7 @@ def test_resolve_all_costs_yaml_global(config_module, pricing_maps_module):
 
     resolved = pricing_maps_module.resolve_all_costs(config)
 
-    assert resolved["claude-sonnet-4-6"].source == "yaml"
+    assert resolved["claude-sonnet-4-6"].source == "server"
     assert resolved["claude-sonnet-4-6"].cost.input == 3.0
 
 
@@ -720,7 +681,7 @@ def test_resolve_all_costs_yaml_wins_over_litellm(config_module, pricing_maps_mo
     resolved = pricing_maps_module.resolve_all_costs(config, _litellm(remote))
 
     assert resolved["test-model"].cost.input == 1.0
-    assert resolved["test-model"].source == "yaml"
+    assert resolved["test-model"].source == "server"
 
 
 def test_resolve_all_costs_partial_yaml_merges_with_litellm(
@@ -743,7 +704,7 @@ def test_resolve_all_costs_partial_yaml_merges_with_litellm(
     resolved = pricing_maps_module.resolve_all_costs(config, _litellm(remote))
 
     cost = resolved["test-model"].cost
-    assert resolved["test-model"].source == "yaml"
+    assert resolved["test-model"].source == "server"
     assert cost.input == 9.0
     assert cost.output == 2.0
     assert cost.cache_read == 0.1
@@ -769,9 +730,9 @@ def test_pricing_lists_yaml_and_source_models(api_module, monkeypatch):
     response = TestClient(api_module.app).get("/pricing")
 
     assert response.status_code == 200
-    data = response.json()
+    data = {m["name"]: m for m in response.json()["models"]}
     assert data["test-model"]["input"] == 1.0
-    assert data["test-model"]["source"] == "yaml"
+    assert data["test-model"]["source"] == "server"
     assert data["remote-model"]["source"] == "litellm"
     assert "scope" not in data["test-model"]
     assert "multiplier" not in data["test-model"]
@@ -894,7 +855,7 @@ def test_single_model_pricing_yaml_override_beats_litellm(api_module, monkeypatc
     data = response.json()
     assert data["resolved"] is True
     assert data["model"] == "test-model"
-    assert data["source"] == "yaml"
+    assert data["source"] == "server"
     assert data["input"] == 2.0
     assert data["output"] == 4.0
 
@@ -944,7 +905,7 @@ def test_single_model_pricing_slashed_model_exact_yaml(api_module, monkeypatch):
     data = response.json()
     assert data["resolved"] is True
     assert data["model"] == "z-ai/glm-5.1-20260406"
-    assert data["source"] == "yaml"
+    assert data["source"] == "server"
     assert data["input"] == 0.98
 
 
@@ -1004,139 +965,6 @@ def test_single_model_pricing_rejects_empty_model(api_module, monkeypatch):
     response = TestClient(api_module.app).get("/pricing/")
 
     assert response.status_code == 422
-
-
-def test_patch_config_applies_patches_and_refreshes_runtime(
-    api_module, isolated_home, monkeypatch
-):
-    config_path = isolated_home / ".tokenage" / "config.yaml"
-    config_path.write_text(
-        """# tracker config
-server:
-  host: 127.0.0.1
-db:
-  path: ~/.tokenage/usage.db
-models:
-  test-model:
-    cost:
-      input: 1.0
-      output: 2.0
-      cacheRead: 0.1
-""",
-        encoding="utf-8",
-    )
-    api_module.CONFIG_PATH = str(config_path)
-    refreshed_paths = []
-    monkeypatch.setattr(
-        api_module,
-        "refresh_runtime_config",
-        lambda path: refreshed_paths.append(path),
-    )
-
-    response = TestClient(api_module.app).patch(
-        "/config",
-        json={
-            "patches": [
-                {
-                    "path": ["models", "test-model", "cost", "input"],
-                    "op": "set",
-                    "value": 3.5,
-                },
-                {
-                    "path": ["models", "test-model", "cost", "cacheRead"],
-                    "op": "delete",
-                    "value": None,
-                },
-            ]
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "success"}
-    content = config_path.read_text(encoding="utf-8")
-    assert "# tracker config" in content
-    assert "input: 3.5" in content
-    assert "cacheRead" not in content
-    assert refreshed_paths == [str(config_path)]
-
-
-def test_patch_config_rejects_non_numeric_set_value(api_module, isolated_home):
-    response = TestClient(api_module.app).patch(
-        "/config",
-        json={
-            "patches": [
-                {
-                    "path": ["models", "test-model", "cost", "input"],
-                    "op": "set",
-                    "value": "not-a-number",
-                },
-            ]
-        },
-    )
-
-    assert response.status_code == 422
-
-
-def test_patch_config_rejects_numeric_string_set_value(api_module, isolated_home):
-    response = TestClient(api_module.app).patch(
-        "/config",
-        json={
-            "patches": [
-                {
-                    "path": ["models", "test-model", "cost", "input"],
-                    "op": "set",
-                    "value": "1.2",
-                },
-            ]
-        },
-    )
-
-    assert response.status_code == 422
-
-
-def test_patch_config_rejects_null_set_value_without_persisting(
-    api_module, isolated_home
-):
-    config_path = isolated_home / ".tokenage" / "config.yaml"
-    original_content = config_path.read_text(encoding="utf-8")
-
-    response = TestClient(api_module.app).patch(
-        "/config",
-        json={
-            "patches": [
-                {
-                    "path": ["models", "test-model", "cost", "input"],
-                    "op": "set",
-                    "value": None,
-                },
-            ]
-        },
-    )
-
-    assert response.status_code == 422
-    assert config_path.read_text(encoding="utf-8") == original_content
-
-
-def test_patch_config_rejects_missing_set_value_without_persisting(
-    api_module, isolated_home
-):
-    config_path = isolated_home / ".tokenage" / "config.yaml"
-    original_content = config_path.read_text(encoding="utf-8")
-
-    response = TestClient(api_module.app).patch(
-        "/config",
-        json={
-            "patches": [
-                {
-                    "path": ["models", "test-model", "cost", "input"],
-                    "op": "set",
-                },
-            ]
-        },
-    )
-
-    assert response.status_code == 422
-    assert config_path.read_text(encoding="utf-8") == original_content
 
 
 # --- Claude 3.x alias ---

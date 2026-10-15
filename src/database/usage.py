@@ -451,6 +451,192 @@ class CostRecalcResult:
     pricing: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class _RowReprice:
+    """One examined row: ``resolved`` is None when its model has no price
+    match (row untouched); otherwise its costs were rewritten."""
+
+    usage: Usage
+    resolved: Any = None
+    old_costs: dict[str, Decimal] | None = None
+    new_costs: dict[str, Decimal] | None = None
+
+
+# Rows per transaction in reprice_estimated_rows.
+_REPRICE_CHUNK = 500
+
+
+def _reprice_usage_rows(
+    session: Session,
+    usages: Sequence[Usage],
+    *,
+    model_costs: dict[str, Any] | None,
+    model_cost_sources: dict[str, str] | None,
+    overrides: dict[str, Any] | None,
+    db_path: str | None,
+    limit: int | None = None,
+) -> list[_RowReprice]:
+    """Recompute *usages*' costs against current pricing, rebind their price
+    snapshots and delta-adjust the usage_daily and sessions rollups, all on
+    *session* (the caller loads the rows and owns the commit).
+
+    Rows are examined in order; ``limit`` stops after that many rows end up
+    bound to a snapshot. Returns one entry per examined row.
+    """
+    from ..pricing.snapshots import ensure_price_snapshot, serialize_rates
+    from .sessions import (
+        _add_usage_to_cost_maps,
+        _load_cost_map,
+        _primary_by_cost,
+        get_session_record,
+    )
+
+    # Price everything and bind snapshots before the first write: the
+    # snapshot insert uses its own connection, which on SQLite would block
+    # behind this session's write lock.
+    examined: list[_RowReprice] = []
+    snapshot_ids: dict[tuple[str, str, str, str], int | None] = {}
+    bound = 0
+    for usage in usages:
+        if limit is not None and bound >= limit:
+            break
+        resolved = resolve_pricing(
+            usage.model, usage.ts, model_costs, model_cost_sources, overrides
+        )
+        if resolved.match is None:
+            examined.append(_RowReprice(usage))
+            continue
+        old_costs = {
+            "input_cost_usd": Decimal(str(usage.input_cost_usd)),
+            "output_cost_usd": Decimal(str(usage.output_cost_usd)),
+            "total_cost_usd": Decimal(str(usage.total_cost_usd)),
+        }
+        new_costs = calculate_costs(
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            cached_tokens=usage.cached_tokens,
+            cache_creation_tokens=usage.cache_creation_tokens,
+            model_cost=resolved.cost,
+        )
+        # Rebind the row to the exact rates just used so the displayed split
+        # matches the recalculated totals. Best-effort: a snapshot failure
+        # clears the binding (reads then mark the row estimated) but the
+        # costs are still recalculated.
+        date = _usage_date(usage)
+        source = resolved.source or "unknown"
+        key = (date, usage.model, source, serialize_rates(resolved.cost))
+        if key not in snapshot_ids:
+            try:
+                snapshot_ids[key] = ensure_price_snapshot(
+                    date=date,
+                    model=usage.model,
+                    source=source,
+                    cost=resolved.cost,
+                    db_path=db_path,
+                )
+            except Exception:
+                snapshot_ids[key] = None
+                logger.warning(
+                    "reprice: failed to record price snapshot for model=%s",
+                    usage.model,
+                )
+        usage.price_snapshot_id = snapshot_ids[key]
+        if usage.price_snapshot_id is not None:
+            bound += 1
+        examined.append(_RowReprice(usage, resolved, old_costs, new_costs))
+
+    daily: dict[tuple[Any, ...], tuple[Usage, str, dict[str, Decimal]]] = {}
+    session_rows: dict[tuple[str, str], list[tuple[Usage, Decimal]]] = {}
+    for row in examined:
+        if row.resolved is None:
+            continue
+        usage = row.usage
+        assert row.old_costs is not None and row.new_costs is not None
+        deltas = {f: row.new_costs[f] - row.old_costs[f] for f in row.old_costs}
+        date = _usage_date(usage)
+        daily_key = (
+            date,
+            usage.provider,
+            usage.model,
+            usage.client_source or "",
+            usage.user_id,
+            usage.device_id,
+        )
+        if daily_key in daily:
+            sums = daily[daily_key][2]
+            for field, delta in deltas.items():
+                sums[field] += delta
+        else:
+            daily[daily_key] = (usage, date, dict(deltas))
+        if usage.session_id and deltas["total_cost_usd"] != 0:
+            session_rows.setdefault((usage.session_id, usage.user_id), []).append(
+                (usage, deltas["total_cost_usd"])
+            )
+        usage.input_cost_usd = row.new_costs["input_cost_usd"]
+        usage.output_cost_usd = row.new_costs["output_cost_usd"]
+        usage.total_cost_usd = row.new_costs["total_cost_usd"]
+
+    # Atomic `col = col + delta` UPDATEs rather than a select-mutate-commit
+    # round trip: correct even under concurrent recalculations on SQLite,
+    # where with_for_update() is a silent no-op (same caveat as
+    # merge_duplicate_usage's row lock, elsewhere in this module). Keys are
+    # sorted so concurrent reprices lock rollup rows in the same order.
+    for daily_key in sorted(daily, key=repr):
+        usage, date, sums = daily[daily_key]
+        daily_result = session.execute(
+            update(UsageDaily)
+            .where(_usage_daily_match(usage, date))
+            .values(
+                input_cost_usd=UsageDaily.input_cost_usd + sums["input_cost_usd"],
+                output_cost_usd=UsageDaily.output_cost_usd + sums["output_cost_usd"],
+                total_cost_usd=UsageDaily.total_cost_usd + sums["total_cost_usd"],
+            )
+        )
+        if daily_result.rowcount == 0:  # type: ignore[attr-defined]
+            logger.warning(
+                "reprice: no usage_daily row for date=%s "
+                "provider=%s model=%s client_source=%s, rollup left as-is",
+                date,
+                usage.provider,
+                usage.model,
+                usage.client_source or "",
+            )
+
+    # sessions.total_cost_usd/models_json/providers_json are a JSON blob
+    # that can only be read-modify-written (no SQL-level atomic increment
+    # for a JSON map), so this part keeps the same SQLite race caveat as
+    # above; harmless in practice since recalculation is a rare manual
+    # action, not a hot ingest path. Deltas are applied row by row, in
+    # order, so the float cost maps match a per-row recalculation exactly.
+    for session_id, user_id in sorted(session_rows):
+        session_row = get_session_record(
+            session, session_id, user_id=user_id, with_for_update=True
+        )
+        if session_row is None:
+            logger.warning(
+                "reprice: no session row for session_id=%s, "
+                "session cost rollup left as-is",
+                session_id,
+            )
+            continue
+        models_costs = _load_cost_map(session_row.models_json)
+        providers_costs = _load_cost_map(session_row.providers_json)
+        for usage, delta in session_rows[(session_id, user_id)]:
+            session_row.total_cost_usd += delta
+            _add_usage_to_cost_maps(
+                usage,
+                total_cost=delta,
+                models_costs=models_costs,
+                providers_costs=providers_costs,
+            )
+        session_row.models_json = json.dumps(models_costs)
+        session_row.providers_json = json.dumps(providers_costs)
+        session_row.primary_model = _primary_by_cost(models_costs)
+        session_row.primary_provider = _primary_by_cost(providers_costs)
+        session_row.updated_at = datetime.now(UTC).isoformat()
+    return examined
+
+
 def recalculate_usage_cost(
     usage_id: str,
     *,
@@ -469,13 +655,6 @@ def recalculate_usage_cost(
     overwritten with a zeroed fallback cost — callers should surface
     `result.skipped` to the user instead of treating it as success.
     """
-    from .sessions import (
-        _add_usage_to_cost_maps,
-        _load_cost_map,
-        _primary_by_cost,
-        get_session_record,
-    )
-
     if overrides is None:
         overrides = load_model_price_overrides(user_id=user_id, db_path=db_path)
     engine = get_engine(db_path)
@@ -485,122 +664,30 @@ def recalculate_usage_cost(
         if usage is None:
             return None
 
-        resolved = resolve_pricing(
-            usage.model, usage.ts, model_costs, model_cost_sources, overrides
+        [row] = _reprice_usage_rows(
+            session,
+            [usage],
+            model_costs=model_costs,
+            model_cost_sources=model_cost_sources,
+            overrides=overrides,
+            db_path=db_path,
         )
-        if resolved.match is None:
+        if row.resolved is None:
             return CostRecalcResult(skipped=True, reason="no pricing match for model")
-
-        old_costs = {
-            "input_cost_usd": Decimal(str(usage.input_cost_usd)),
-            "output_cost_usd": Decimal(str(usage.output_cost_usd)),
-            "total_cost_usd": Decimal(str(usage.total_cost_usd)),
-        }
-        new_costs = calculate_costs(
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            cached_tokens=usage.cached_tokens,
-            cache_creation_tokens=usage.cache_creation_tokens,
-            model_cost=resolved.cost,
-        )
-        deltas = {field: new_costs[field] - old_costs[field] for field in old_costs}
-
-        date = _usage_date(usage)
-
-        # Rebind the row to the exact rates just used so the displayed split
-        # matches the recalculated totals. Best-effort: a snapshot failure must
-        # not fail the recalculation.
-        try:
-            from ..pricing.snapshots import ensure_price_snapshot
-
-            usage.price_snapshot_id = ensure_price_snapshot(
-                date=date,
-                model=usage.model,
-                source=resolved.source or "unknown",
-                cost=resolved.cost,
-                db_path=db_path,
-            )
-        except Exception:
-            # Keep the row consistent: costs were recalculated but no snapshot
-            # was written, so clear the binding and let reads mark it estimated.
-            usage.price_snapshot_id = None
-            logger.warning(
-                "recalculate_usage_cost: failed to record price snapshot for model=%s",
-                usage.model,
-            )
-        # Atomic `col = col + delta` UPDATE rather than a select-mutate-commit
-        # round trip: correct even under concurrent recalculations on SQLite,
-        # where with_for_update() below is a silent no-op (same caveat as
-        # merge_duplicate_usage's row lock, elsewhere in this module).
-        daily_result = session.execute(
-            update(UsageDaily)
-            .where(_usage_daily_match(usage, date))
-            .values(
-                input_cost_usd=UsageDaily.input_cost_usd + deltas["input_cost_usd"],
-                output_cost_usd=UsageDaily.output_cost_usd + deltas["output_cost_usd"],
-                total_cost_usd=UsageDaily.total_cost_usd + deltas["total_cost_usd"],
-            )
-        )
-        if daily_result.rowcount == 0:  # type: ignore[attr-defined]
-            logger.warning(
-                "recalculate_usage_cost: no usage_daily row for date=%s "
-                "provider=%s model=%s client_source=%s, rollup left as-is",
-                date,
-                usage.provider,
-                usage.model,
-                usage.client_source or "",
-            )
-
-        # sessions.total_cost_usd/models_json/providers_json are a JSON blob
-        # that can only be read-modify-written (no SQL-level atomic increment
-        # for a JSON map), so this part keeps the same SQLite race caveat as
-        # above; harmless in practice since recalculation is a rare manual
-        # action, not a hot ingest path.
-        if usage.session_id and deltas["total_cost_usd"] != 0:
-            session_row = get_session_record(
-                session,
-                usage.session_id,
-                user_id=usage.user_id,
-                with_for_update=True,
-            )
-            if session_row is None:
-                logger.warning(
-                    "recalculate_usage_cost: no session row for session_id=%s, "
-                    "session cost rollup left as-is",
-                    usage.session_id,
-                )
-            else:
-                session_row.total_cost_usd += deltas["total_cost_usd"]
-                models_costs = _load_cost_map(session_row.models_json)
-                providers_costs = _load_cost_map(session_row.providers_json)
-                _add_usage_to_cost_maps(
-                    usage,
-                    total_cost=deltas["total_cost_usd"],
-                    models_costs=models_costs,
-                    providers_costs=providers_costs,
-                )
-                session_row.models_json = json.dumps(models_costs)
-                session_row.providers_json = json.dumps(providers_costs)
-                session_row.primary_model = _primary_by_cost(models_costs)
-                session_row.primary_provider = _primary_by_cost(providers_costs)
-                session_row.updated_at = datetime.now(UTC).isoformat()
-
-        usage.input_cost_usd = new_costs["input_cost_usd"]
-        usage.output_cost_usd = new_costs["output_cost_usd"]
-        usage.total_cost_usd = new_costs["total_cost_usd"]
+        assert row.new_costs is not None
         session.commit()
 
         components = compute_input_split(
             prompt_tokens=usage.prompt_tokens,
             cached_tokens=usage.cached_tokens,
             cache_creation_tokens=usage.cache_creation_tokens,
-            cost=resolved.cost,
+            cost=row.resolved.cost,
         )
         from ..pricing.snapshots import build_pricing_detail
 
         pricing = build_pricing_detail(
-            resolved.cost,
-            resolved.source,
+            row.resolved.cost,
+            row.resolved.source,
             {
                 "prompt_tokens": usage.prompt_tokens,
                 "cached_tokens": usage.cached_tokens,
@@ -610,8 +697,8 @@ def recalculate_usage_cost(
         )
         return CostRecalcResult(
             skipped=False,
-            old_costs=old_costs,
-            new_costs={**new_costs, **components},
+            old_costs=row.old_costs,
+            new_costs={**row.new_costs, **components},
             price_snapshot_id=usage.price_snapshot_id,
             pricing=pricing,
         )
@@ -658,18 +745,20 @@ def reprice_estimated_rows(
     """Rebind and recompute the user's estimated (unbound) rows to current
     pricing, honoring the user's own price overrides.
 
-    Only rows with ``price_snapshot_id IS NULL`` are touched. Each row goes
-    through ``recalculate_usage_cost`` so stored costs, session/daily rollups,
-    and the snapshot binding stay consistent. Rows whose provider/model no
-    longer resolves are left untouched and counted as skipped. Pass explicit
-    ``model_costs`` / source maps to price every row from one pricing
-    generation; otherwise the runtime maps are used.
+    Only rows with ``price_snapshot_id IS NULL`` are touched. Rows are
+    repriced in chunks of ``_REPRICE_CHUNK``, one transaction per chunk, by
+    the same ``_reprice_usage_rows`` core as ``recalculate_usage_cost`` so
+    stored costs, session/daily rollups, and the snapshot binding stay
+    consistent. Rows whose provider/model no longer resolves are left
+    untouched and counted as skipped. Pass explicit ``model_costs`` / source
+    maps to price every row from one pricing generation; otherwise the
+    runtime maps are used.
 
     ``limit`` caps the number of *successfully repriced* rows, not the number
     scanned: unresolvable or unbound rows are skipped and the scan continues,
     so an early stuck row can't stop later ones from being repriced.
     """
-    rows = fetch_estimated_usage_rows(
+    ids = fetch_estimated_usage_rows(
         user_id=user_id,
         provider=provider,
         model=model,
@@ -678,26 +767,56 @@ def reprice_estimated_rows(
         db_path=db_path,
     )
     overrides = load_model_price_overrides(user_id=user_id, db_path=db_path)
-    repriced = skipped = examined = 0
-    for usage_id in rows:
+    engine = get_engine(db_path)
+    repriced = examined = 0
+    for start in range(0, len(ids), _REPRICE_CHUNK):
         if limit is not None and repriced >= limit:
             break
-        examined += 1
-        result = recalculate_usage_cost(
-            usage_id,
-            model_costs=model_costs,
-            model_cost_sources=model_cost_sources,
-            user_id=user_id,
-            db_path=db_path,
-            overrides=overrides,
-        )
-        # A snapshot failure leaves the row unbound, so don't report it as
-        # repriced; it stays eligible for a later run.
-        if result is None or result.skipped or result.price_snapshot_id is None:
-            skipped += 1
-        else:
-            repriced += 1
-    return {"candidates": examined, "repriced": repriced, "skipped": skipped}
+        chunk = ids[start : start + _REPRICE_CHUNK]
+        with Session(engine) as session:
+            # skip_locked: a concurrent reprice can't take the same row (a
+            # no-op on SQLite, same caveat as the rollup updates). Rows gone
+            # or already bound since the scan are counted as skipped.
+            loaded = {
+                usage.id: usage
+                for usage in session.scalars(
+                    select(Usage)
+                    .where(
+                        Usage.id.in_(chunk),
+                        Usage.user_id == user_id,
+                        Usage.price_snapshot_id.is_(None),
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            }
+            results = _reprice_usage_rows(
+                session,
+                [loaded[i] for i in chunk if i in loaded],
+                model_costs=model_costs,
+                model_cost_sources=model_cost_sources,
+                overrides=overrides,
+                db_path=db_path,
+                limit=None if limit is None else limit - repriced,
+            )
+            session.commit()
+            # A snapshot failure leaves the row unbound, so don't report it as
+            # repriced; it stays eligible for a later run.
+            repriced += sum(
+                1
+                for r in results
+                if r.resolved is not None and r.usage.price_snapshot_id is not None
+            )
+            if limit is not None and repriced >= limit:
+                # Stopped at the row that reached the limit; later ids in
+                # this chunk were not examined.
+                examined += chunk.index(results[-1].usage.id) + 1
+            else:
+                examined += len(chunk)
+    return {
+        "candidates": examined,
+        "repriced": repriced,
+        "skipped": examined - repriced,
+    }
 
 
 # === Reporting / Query Helpers ===

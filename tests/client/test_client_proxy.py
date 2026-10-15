@@ -697,7 +697,9 @@ def test_shutdown_closes_the_shared_upstream_client(cfg):
         async def aclose(self):
             closed.append(True)
 
-    with TestClient(create_app(cfg, transport=Transport(Upstream(ok_json)))) as c:
+    # A list sink: the default sink posts to the real server in ~/.tokenage.
+    app = create_app(cfg, sink=[].append, transport=Transport(Upstream(ok_json)))
+    with TestClient(app) as c:
         c.post("/v1/chat/completions", json={"model": "test-model"})
         c.post("/v1/chat/completions", json={"model": "test-model"})
         assert not closed

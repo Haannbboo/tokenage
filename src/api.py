@@ -1099,14 +1099,13 @@ async def reprice_estimated_usage(
     model: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    limit: int | None = None,
 ):
     """Reprice the caller's estimated (unbound) usage rows against current
     pricing, honoring the caller's overrides.
 
     Recomputes stored costs, session/daily rollups, and the snapshot binding for
     every row with no ``price_snapshot_id``, optionally filtered by
-    provider/model/date range and capped with ``limit``. ``model`` selects the
+    provider/model/date range. ``model`` selects the
     rows a price keyed by that name would match (full name or last segment). Rows whose
     model no longer resolves are left untouched and reported as
     skipped. Bulk work runs in a worker thread; an unfiltered run over a large
@@ -1122,7 +1121,6 @@ async def reprice_estimated_usage(
         model=model,
         since=since,
         until=until,
-        limit=limit,
         model_costs=model_costs,
         model_cost_sources=model_cost_sources,
     )

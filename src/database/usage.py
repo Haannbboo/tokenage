@@ -476,14 +476,12 @@ def _reprice_usage_rows(
     model_cost_sources: dict[str, str] | None,
     overrides: dict[str, Any] | None,
     db_path: str | None,
-    limit: int | None = None,
 ) -> list[_RowReprice]:
     """Recompute *usages*' costs against current pricing, rebind their price
     snapshots and delta-adjust the usage_daily and sessions rollups, all on
     *session* (the caller loads the rows and owns the commit).
 
-    Rows are examined in order; ``limit`` stops after that many rows end up
-    bound to a snapshot. Returns one entry per examined row.
+    Returns one entry per row.
     """
     from ..pricing.snapshots import ensure_price_snapshot, serialize_rates
     from .sessions import (
@@ -498,10 +496,7 @@ def _reprice_usage_rows(
     # behind this session's write lock.
     examined: list[_RowReprice] = []
     snapshot_ids: dict[tuple[str, str, str, str], int | None] = {}
-    bound = 0
     for usage in usages:
-        if limit is not None and bound >= limit:
-            break
         resolved = resolve_pricing(
             usage.model, usage.ts, model_costs, model_cost_sources, overrides
         )
@@ -543,8 +538,6 @@ def _reprice_usage_rows(
                     usage.model,
                 )
         usage.price_snapshot_id = snapshot_ids[key]
-        if usage.price_snapshot_id is not None:
-            bound += 1
         examined.append(_RowReprice(usage, resolved, old_costs, new_costs))
 
     daily: dict[tuple[Any, ...], tuple[Usage, str, dict[str, Decimal]]] = {}
@@ -747,7 +740,6 @@ def reprice_estimated_rows(
     model: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    limit: int | None = None,
     model_costs: dict[str, Any] | None = None,
     model_cost_sources: dict[str, str] | None = None,
     db_path: str | None = None,
@@ -763,10 +755,6 @@ def reprice_estimated_rows(
     untouched and counted as skipped. Pass explicit ``model_costs`` / source
     maps to price every row from one pricing generation; otherwise the
     runtime maps are used.
-
-    ``limit`` caps the number of *successfully repriced* rows, not the number
-    scanned: unresolvable or unbound rows are skipped and the scan continues,
-    so an early stuck row can't stop later ones from being repriced.
     """
     ids = fetch_estimated_usage_rows(
         user_id=user_id,
@@ -778,10 +766,8 @@ def reprice_estimated_rows(
     )
     overrides = load_model_price_overrides(user_id=user_id, db_path=db_path)
     engine = get_engine(db_path)
-    repriced = examined = 0
+    repriced = 0
     for start in range(0, len(ids), _REPRICE_CHUNK):
-        if limit is not None and repriced >= limit:
-            break
         chunk = ids[start : start + _REPRICE_CHUNK]
         with Session(engine) as session:
             # skip_locked: a concurrent reprice can't take the same row (a
@@ -806,7 +792,6 @@ def reprice_estimated_rows(
                 model_cost_sources=model_cost_sources,
                 overrides=overrides,
                 db_path=db_path,
-                limit=None if limit is None else limit - repriced,
             )
             # Counted before commit: commit expires the ORM rows, and reading
             # them afterwards would reload each one with its own SELECT. A
@@ -817,19 +802,12 @@ def reprice_estimated_rows(
                 for r in results
                 if r.resolved is not None and r.usage.price_snapshot_id is not None
             )
-            last_id = results[-1].usage.id if results else None
             session.commit()
             repriced += bound
-            if limit is not None and repriced >= limit and last_id is not None:
-                # Stopped at the row that reached the limit; later ids in
-                # this chunk were not examined.
-                examined += chunk.index(last_id) + 1
-            else:
-                examined += len(chunk)
     return {
-        "candidates": examined,
+        "candidates": len(ids),
         "repriced": repriced,
-        "skipped": examined - repriced,
+        "skipped": len(ids) - repriced,
     }
 
 

@@ -28,7 +28,7 @@ def test_reprice_estimated_usage_endpoint_passes_filters(api_module, monkeypatch
 
     result = asyncio.run(
         api_module.reprice_estimated_usage(
-            None, provider="prov", model="mod", since=None, until=None, limit=10
+            None, provider="prov", model="mod", since=None, until=None
         )
     )
 
@@ -36,7 +36,6 @@ def test_reprice_estimated_usage_endpoint_passes_filters(api_module, monkeypatch
     assert captured["user_id"] == "u1"
     assert captured["provider"] == "prov"
     assert captured["model"] == "mod"
-    assert captured["limit"] == 10
 
 
 def test_pricing_entry_includes_tiers_and_time_rates(api_module):

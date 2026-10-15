@@ -841,55 +841,6 @@ def test_reprice_estimated_rows_respects_filters_and_skips_unresolvable(
     assert by_provider["p2"]["price_snapshot_id"] is None
 
 
-def test_reprice_limit_scans_past_unresolvable_rows(database_module, isolated_home):
-    from src.pricing.models import ModelCost
-
-    db_path = str(isolated_home / "reprice-limit.db")
-    database_module.init_db(db_path)
-    # Earlier row has no pricing match; the later row must still be repriced
-    # even though `limit=1` only allows one successful row.
-    for ts, model in (
-        (TS_2026_05_03_18, "missing-model"),
-        (TS_2026_05_03_18 + 1, "m1"),
-    ):
-        database_module.log_usage(
-            database_module.Usage(
-                device_id="test-device",
-                ts=ts,
-                provider="p1",
-                model=model,
-                client_source="codex",
-                endpoint="otlp",
-                prompt_tokens=1000,
-                completion_tokens=0,
-                cached_tokens=0,
-                total_tokens=1000,
-                input_cost_usd=0.0,
-                output_cost_usd=0.0,
-                total_cost_usd=0.0,
-                status=200,
-                user_id="test-user",
-            ),
-            db_path=db_path,
-        )
-
-    summary = database_module.reprice_estimated_rows(
-        user_id="test-user",
-        limit=1,
-        model_costs={"m1": ModelCost(input=2.0, output=4.0, cache_read=0.5)},
-        model_cost_sources={},
-        db_path=db_path,
-    )
-
-    assert summary == {"candidates": 2, "repriced": 1, "skipped": 1}
-    rows = database_module.fetch_recent_usage(
-        limit=10, db_path=db_path, user_id="test-user"
-    )
-    by_model = {row["model"]: row for row in rows}
-    assert by_model["m1"]["price_snapshot_id"] is not None
-    assert by_model["missing-model"]["price_snapshot_id"] is None
-
-
 def test_reprice_counts_snapshot_failure_as_skipped(
     database_module, isolated_home, monkeypatch
 ):
@@ -1169,55 +1120,6 @@ def test_reprice_batches_match_per_row_recalculation(fresh_db, monkeypatch):
         again = database_module.reprice_estimated_rows(user_id=user_id, **common)
         assert again == {"candidates": 2, "repriced": 0, "skipped": 2}
         assert _batch_state(database_module, db_path, user_id) == states[user_id]
-
-
-def test_reprice_limit_spans_chunks(fresh_db, monkeypatch):
-    from src.database import usage as usage_module
-
-    database_module = fresh_db.database_module
-    db_path = fresh_db.db_path
-    database_module.init_db(db_path)
-    models = ("m-missing", "m-flat", "m-flat", "m-missing", "m-flat", "m-flat")
-    _batch_user(database_module, db_path, "test-user")
-    for i, model in enumerate(models):
-        database_module.log_usage(
-            database_module.Usage(
-                id=f"row-{i}",
-                device_id="test-user-device",
-                ts=TS_2026_05_05_10 + i,
-                provider="p",
-                model=model,
-                client_source="codex",
-                endpoint="otlp",
-                prompt_tokens=1000,
-                completion_tokens=0,
-                cached_tokens=0,
-                total_tokens=1000,
-                status=200,
-                user_id="test-user",
-            ),
-            db_path=db_path,
-        )
-    monkeypatch.setattr(usage_module, "_REPRICE_CHUNK", 4)
-
-    summary = database_module.reprice_estimated_rows(
-        user_id="test-user",
-        limit=3,
-        model_costs=_batch_prices(),
-        model_cost_sources={},
-        db_path=db_path,
-    )
-
-    # Same as the per-row scan: stop right after the third repriced row.
-    assert summary == {"candidates": 5, "repriced": 3, "skipped": 2}
-    bound = {
-        r["id"]
-        for r in database_module.fetch_recent_usage(
-            limit=10, db_path=db_path, user_id="test-user"
-        )
-        if r["price_snapshot_id"] is not None
-    }
-    assert bound == {"row-1", "row-2", "row-4"}
 
 
 def test_reprice_batch_snapshot_failure_still_updates_costs(fresh_db, monkeypatch):
@@ -5819,6 +5721,77 @@ def test_migrate_database_creates_missing_user_model_prices(fresh_db):
     schema_migrations.migrate_database(fresh_db.db_path)
 
     assert "user_model_prices" in inspect(engine).get_table_names()
+
+
+def test_migrate_database_renames_yaml_snapshots_to_server(fresh_db):
+    """Old 'yaml' snapshots become 'server'; one whose 'server' twin already
+    exists is merged into it, with its usage rows repointed."""
+    schema_migrations = fresh_db.schema_migrations_module
+    database_module = fresh_db.database_module
+    text = database_module.text
+    engine = database_module.get_engine(fresh_db.db_path)
+    _batch_user(database_module, fresh_db.db_path, "u")
+    snap = (
+        "INSERT INTO price_snapshots (id, date, model, source, rates_hash, "
+        "rates_json, recorded_at) VALUES (:id, '2026-05-05', :model, :source, "
+        ":hash, '{}', 0)"
+    )
+    with engine.begin() as conn:
+        for sid, model, source, rates in (
+            (901, "m-dup", "server", "h1"),
+            (902, "m-dup", "yaml", "h1"),
+            (903, "m-solo", "yaml", "h2"),
+        ):
+            conn.execute(
+                text(snap), {"id": sid, "model": model, "source": source, "hash": rates}
+            )
+    for row_id, sid in (("r-dup", 902), ("r-solo", 903)):
+        database_module.log_usage(
+            database_module.Usage(
+                id=row_id,
+                device_id="u-device",
+                ts=TS_2026_05_05_10,
+                provider="p",
+                model="m",
+                client_source="codex",
+                endpoint="otlp",
+                prompt_tokens=1,
+                completion_tokens=0,
+                cached_tokens=0,
+                total_tokens=1,
+                status=200,
+                user_id="u",
+            ),
+            db_path=fresh_db.db_path,
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text("UPDATE usage SET price_snapshot_id = :sid WHERE id = :id"),
+                {"sid": sid, "id": row_id},
+            )
+
+    changes = schema_migrations.migrate_database(fresh_db.db_path)
+
+    assert "price_snapshots.rename_yaml_source" in changes
+    with engine.connect() as conn:
+        snaps = dict(
+            conn.execute(
+                text("SELECT id, source FROM price_snapshots WHERE id > 900")
+            ).all()
+        )
+        bound = dict(
+            conn.execute(
+                text(
+                    "SELECT id, price_snapshot_id FROM usage "
+                    "WHERE id IN ('r-dup', 'r-solo')"
+                )
+            ).all()
+        )
+    assert snaps == {901: "server", 903: "server"}
+    assert bound == {"r-dup": 901, "r-solo": 903}
+    assert "price_snapshots.rename_yaml_source" not in (
+        schema_migrations.migrate_database(fresh_db.db_path)
+    )
 
 
 def test_sqlite_pragmas_enable_wal_and_busy_timeout(tmp_path):

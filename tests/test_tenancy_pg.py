@@ -1,7 +1,7 @@
 """Postgres tests for the tenancy schema (docs/quick/postgres-testing.md).
 
-Local-only: every test in this module skips unless TOKENAGE_TEST_PG_URL
-points at a dedicated scratch database. CI stays SQLite-only.
+Every test in this module skips unless TOKENAGE_TEST_PG_URL points at a
+dedicated scratch database. The CI "Postgres" job sets it.
 """
 
 from __future__ import annotations

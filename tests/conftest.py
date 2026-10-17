@@ -205,9 +205,10 @@ _TRUNCATE_TABLES = [
 ]
 
 
-# Postgres test harness (docs/quick/postgres-testing.md): local-only, gated on
-# TOKENAGE_TEST_PG_URL. Every PG test skips when the env var is unset; CI
-# never sets it.
+# Postgres test harness (docs/quick/postgres-testing.md): gated on
+# TOKENAGE_TEST_PG_URL. Every PG test skips when the env var is unset, which is
+# the default locally. The CI "Postgres" job sets it when the database layer
+# changed.
 
 PG_URL_ENV_VAR = "TOKENAGE_TEST_PG_URL"
 
@@ -236,8 +237,18 @@ def _session_db(request, tmp_path_factory):
         # Reuse pg_engine's skip-on-unset/unreachable guard instead of
         # connecting directly.
         engine = request.getfixturevalue("pg_engine")
-        url = _pg_test_url()
         models.Base.metadata.drop_all(engine)
+        # SQLite does not enforce foreign keys, and these tests insert rows
+        # for users and devices they never create. Skip FK triggers on this
+        # backend so they exercise the same logic; FK behaviour itself is
+        # covered by the pg_db tests. Needs a superuser role.
+        from sqlalchemy.engine import make_url
+
+        url = (
+            make_url(_pg_test_url())
+            .update_query_dict({"options": "-c session_replication_role=replica"})
+            .render_as_string(hide_password=False)
+        )
         sm.migrate_database(url)
         return url
 

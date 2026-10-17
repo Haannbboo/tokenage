@@ -5662,6 +5662,8 @@ def test_migrate_database_swaps_legacy_usage_daily_indexes(fresh_db):
 def test_migrate_database_rejects_sqlite_with_nullable_user_id(fresh_db):
     import pytest
 
+    if "://" in fresh_db.db_path:
+        pytest.skip("SQLite-only: rebuilds tool_calls with a SQLite-shaped schema")
     schema_migrations = fresh_db.schema_migrations_module
     database_module = fresh_db.database_module
     engine = database_module.get_engine(fresh_db.db_path)

@@ -1,6 +1,6 @@
 # Docker Deployment
 
-Run both servers (API, OTLP) in a single container. Useful for NAS or remote server deployment so you don't need to keep your development machine on.
+Run the server (API, dashboard, and the OTLP collector at `/otlp`) in a single container. Useful for NAS or remote server deployment so you don't need to keep your development machine on.
 
 ## Prerequisites
 
@@ -46,7 +46,7 @@ server:
   base_url: http://your-nas.tailnet.ts.net
 ```
 
-Then re-run `start.sh` on your local machine to update agent OTLP endpoints, or set them manually:
+Then sign your local machine in to it (`tokenage login --server http://your-nas.tailnet.ts.net:4001`), which points detected agents at its OTLP endpoint, or set them manually:
 
 ```bash
 # OTLP (for Claude Code, Codex)
@@ -71,6 +71,6 @@ Install the Docker Compose Manager plugin from Community Applications, then use 
 | File | Purpose |
 | --- | --- |
 | `Dockerfile` | Python 3.13-slim image, installs deps, copies code |
-| `docker-compose.yml` | Single service, 2 ports, config volume mount |
+| `docker-compose.yml` | Single service, one port, config volume mount |
 | `docker/entrypoint.sh` | Patches host, runs migrations, starts supervisord |
-| `docker/supervisord.conf` | Runs both gunicorn processes |
+| `docker/supervisord.conf` | Runs the API gunicorn process (OTLP mounted at `/otlp`) |

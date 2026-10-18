@@ -54,7 +54,7 @@ as a wrapper option.
 | `tokenage server bootstrap` | server | Install, build the dashboard, start, verify, restart the API. |
 | `tokenage server start` | server | Turn the services on. |
 | `tokenage server stop [program...]` | server | Stop all services, or the named ones. |
-| `tokenage server restart [--otlp-port N]` | server | Migrate, then reload the running services. |
+| `tokenage server restart [program...]` | server | Migrate, then reload all running services, or the named ones. |
 | `tokenage server status [program...]` | server | Supervisord table, ports, port check. |
 | `tokenage server update [--check\|--dry-run]` | server | Fast-forward the server clone, bootstrap, restart. |
 | `tokenage server token create --email EMAIL [--kind cli\|ingest\|web] [--name NAME]` | server | Mint an operator token on the server box. |
@@ -185,15 +185,14 @@ tokenage server status                              # supervisord table, ports, 
 tokenage server status tokenage-api              # one program
 tokenage server start                               # services on; refuses if src/pyproject.toml changed
 tokenage server stop                                # all services
-tokenage server stop tokenage-otlp               # one program
+tokenage server stop tokenage-api                # one program
 tokenage server restart                             # migrate, then SIGHUP the running services
-tokenage server restart --otlp-port 5002            # persist a new OTLP port, then restart the collector
 tokenage server bootstrap                           # install, build, start, verify, restart the API
 tokenage server token create --email ops@example.com
 tokenage server login-link                          # open the printed URL in a remote browser
 ```
 
-Valid program names: `tokenage-api`, `tokenage-otlp`.
+Valid program name: `tokenage-api` (the OTLP collector is mounted in it at `/otlp`).
 `tokenage server <command>` runs `python -m src.cli <command>` (`src/ops.py`);
 `bootstrap` goes through `src/scripts/bootstrap.sh` first, because it must run
 before the virtualenv exists. `restart`, `stop` and `status` accept program names.
@@ -227,8 +226,7 @@ models:
 
 server:
   host: 127.0.0.1
-  api_port: 4001    # API port
-  otlp_port: 4002   # OTLP collector port
+  api_port: 4001    # API, dashboard and OTLP collector (at /otlp)
 
 db:
   path: ~/.tokenage/usage.db   # SQLite (default)
@@ -240,7 +238,7 @@ not here. See the README's proxy and automatic session evaluation sections.
 
 `tokenage server start` merges missing defaults from `config.example.yaml`
 into the user config without overwriting existing values. `tokenage server
-restart` does not touch config at all, except to persist `--otlp-port`.
+restart` does not touch config at all.
 
 Client state, all under `$TOKENAGE_HOME` (default `~/.tokenage`):
 
@@ -264,8 +262,7 @@ Client state, all under `$TOKENAGE_HOME` (default `~/.tokenage`):
 | `TOKENAGE_CONFIG` | Override the config file path. |
 | `TOKENAGE_BIN_DIR` | Where the launcher is installed (default `~/.local/bin`). |
 | `TOKENAGE_CLIENT_COMMIT` | Commit to report for the client, when the snapshot has no `COMMIT` file. |
-| `TOKENAGE_SKIP_BANNER` | Set by the launcher so a script it calls does not print a second banner. `bootstrap.sh` and `start.sh` honor it; `restart.sh`, `status.sh` and `update.sh` do not. |
-| `TOKENAGE_SKIP_INSTALL` | `1` makes `bootstrap` skip dependency installation and record the requirements stamp anyway. |
+| `TOKENAGE_SKIP_BANNER` | Set by the launcher (and the client service) so a nested `tokenage` call does not print a second banner. |
 | `TOKENAGE_SERVER` | Fallback server URL for `tokenage login` when `--server` is absent; passed by `tokenage update` to `install.sh`, which reads it instead of its baked-in server URL. |
 | `TOKENAGE_DB_URL` | Override the database URL at runtime (server side). |
 | `TOKENAGE_API_URL` | Frontend-only: override the API base URL used by the Vite dev server. |
@@ -283,7 +280,6 @@ curl http://127.0.0.1:4001/usage/summary
 curl http://127.0.0.1:4001/usage/daily
 curl http://127.0.0.1:4001/usage/high-watermark
 curl http://127.0.0.1:4001/usage/run-summary?after_ts=0
-curl http://127.0.0.1:4001/config
 curl http://127.0.0.1:4001/version
 ```
 
@@ -317,4 +313,3 @@ sends only `after_ts`, plus `until_ts` on the re-anchor pass.
 |---|---|
 | `python -m src.cli sync-config` | Merge missing defaults from `config.example.yaml` into the user config. Run by `server start` and the Docker entrypoint. |
 | `python -m src.cli migrate` | Apply database schema migrations (`TOKENAGE_DB_URL` overrides the target). Run by `server start`, `server restart`, Docker and the dev scripts. |
-| `src/scripts/check-otlp-ready.py` | Pre-commit hook: the collector answers and detected agents are wired. |

@@ -381,7 +381,6 @@ curl http://127.0.0.1:4001/usage?limit=20
 curl http://127.0.0.1:4001/usage/summary
 curl http://127.0.0.1:4001/usage/daily
 curl http://127.0.0.1:4001/usage/high-watermark
-curl http://127.0.0.1:4001/config
 ```
 
 Device status and agent wiring live on the client, not the API:

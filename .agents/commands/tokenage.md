@@ -131,8 +131,8 @@ Do not casually rewrite bootstrap scripts. They are the user-facing install path
 Architecture:
 
 ```txt
-install.sh (root; --client / --server / both) → bootstrap.sh → start.sh   (server)
-                                             → client snapshot + venv    (client)
+install.sh (root; --client / --server / both) → bootstrap.sh → python -m src.cli bootstrap (src/ops.py)   (server)
+                                             → client snapshot + venv                                  (client)
 ```
 
 Quick backend restart:

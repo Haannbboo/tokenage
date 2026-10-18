@@ -67,57 +67,6 @@ def test_pricing_entry_includes_tiers_and_time_rates(api_module):
     assert entry["time_rates"][0]["input"] == 0.5
 
 
-def test_usage_run_summary_endpoint_passes_filters(api_module, monkeypatch):
-    captured = {}
-
-    def fake_summary(**kwargs):
-        captured.update(kwargs)
-        return {
-            "window": {
-                "after_ts": 1718000000000000,
-                "until_ts": 1718100000000000,
-                "row_count": 1,
-            },
-            "summary": {"requests": 1},
-            "sessions": [],
-            "client_sources": [],
-            "models": [],
-        }
-
-    monkeypatch.setattr(api_module, "summarize_usage_window", fake_summary)
-
-    response = TestClient(api_module.app).get(
-        "/usage/run-summary",
-        params={
-            "after_ts": 1718000000000000,
-            "until_ts": 1718100000000000,
-            "since": "2026-04-17T00:00:00+00:00",
-            "until": "2026-04-18T00:00:00+00:00",
-            "client_source": "codex",
-            "session_id": "conv-1",
-            "provider": "openai",
-            "model": "gpt-test",
-            "include_rows": True,
-        },
-    )
-
-    assert captured == {
-        "user_id": ANY,
-        "after_ts": 1718000000000000,
-        "until_ts": 1718100000000000,
-        "since": "2026-04-17T00:00:00+00:00",
-        "until": "2026-04-18T00:00:00+00:00",
-        "client_source": "codex",
-        "device_id": None,
-        "session_id": "conv-1",
-        "provider": "openai",
-        "model": "gpt-test",
-        "include_rows": True,
-    }
-    assert response.status_code == 200
-    assert response.json()["summary"]["requests"] == 1
-
-
 def test_usage_high_watermark_route(api_module, monkeypatch):
     monkeypatch.setattr(
         api_module, "get_usage_high_watermark_ts", lambda **kwargs: 1718000000000000

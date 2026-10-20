@@ -890,10 +890,6 @@ def _usage_filters(
     tool_name: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    only_failed: bool = False,
-    status_429: bool = False,
-    status_4xx: bool = False,
-    status_5xx: bool = False,
     device_id: str | None = None,
 ) -> list[Any]:
     filters: list[Any] = [Usage.user_id == user_id]
@@ -918,16 +914,6 @@ def _usage_filters(
         filters.append(Usage.ts >= _iso_to_micros(since))
     if until:
         filters.append(Usage.ts <= _iso_to_micros(until))
-    if only_failed:
-        filters.append(Usage.status >= 400)
-    if status_429:
-        filters.append(Usage.status == 429)
-    if status_4xx:
-        filters.append(
-            and_(Usage.status >= 400, Usage.status < 500, Usage.status != 429)
-        )
-    if status_5xx:
-        filters.append(Usage.status >= 500)
     return filters
 
 
@@ -1077,10 +1063,6 @@ def fetch_recent_usage(
     tool_name: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    only_failed: bool = False,
-    status_429: bool = False,
-    status_4xx: bool = False,
-    status_5xx: bool = False,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return recent usage rows plus the resolved base URL when available."""
@@ -1094,10 +1076,6 @@ def fetch_recent_usage(
         tool_name=tool_name,
         since=since,
         until=until,
-        only_failed=only_failed,
-        status_429=status_429,
-        status_4xx=status_4xx,
-        status_5xx=status_5xx,
     )
     # Subquery: aggregate tool names per usage_id into a comma-separated string.
     dialect = get_engine(db_path).dialect.name
@@ -1471,10 +1449,6 @@ def summarize_tool_calls(
     model: str | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
-    only_failed: bool = False,
-    status_429: bool = False,
-    status_4xx: bool = False,
-    status_5xx: bool = False,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate tool call counts and durations by tool_name, filtered like the usage log.
@@ -1490,10 +1464,6 @@ def summarize_tool_calls(
         device_id=device_id,
         since=since,
         until=until,
-        only_failed=only_failed,
-        status_429=status_429,
-        status_4xx=status_4xx,
-        status_5xx=status_5xx,
     )
     filters.append(ToolCall.user_id == user_id)
     query = (

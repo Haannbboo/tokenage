@@ -8,23 +8,14 @@ import type { EvaluationJob, SessionEvaluation, SessionOutcome, SessionSummary }
 
 // ─── Shared session detail content (used by both inline and panel) ─────────────
 
-type SessionLogFilters = {
-  onlyFailed?: boolean
-  status429?: boolean
-  status5xx?: boolean
-  status4xx?: boolean
-}
-
 export function SessionDetailContent({
   session,
-  onNavigateToLogs,
   showToast,
   onEvaluationUpdate,
   onEvaluationPersisted,
   activeEvaluationJob,
 }: {
   session: SessionSummary
-  onNavigateToLogs: (session: SessionSummary, filters?: SessionLogFilters) => void
   showToast?: (msg: string) => void
   onEvaluationUpdate?: (evaluation: SessionEvaluation | null) => void
   onEvaluationPersisted?: () => void
@@ -224,22 +215,14 @@ export function SessionDetailContent({
             <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>{t('Requests')}</div>
             <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{formatNumber(session.request_count)}</div>
             {session.failed_requests > 0 && (
-              <div
-                style={{ fontSize: '10px', color: 'var(--color-red)', marginTop: '2px', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}
-                onClick={(e) => { e.stopPropagation(); onNavigateToLogs(session, { onlyFailed: true }); }}
-                title={t('View failed requests in logs')}
-              >
+              <div style={{ fontSize: '10px', color: 'var(--color-red)', marginTop: '2px', fontWeight: 600 }}>
                 {session.failed_requests} {t('failed')}
               </div>
             )}
           </div>
           <div>
             <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>{t('Success Rate')}</div>
-            <div
-              style={{ fontSize: '14px', fontWeight: 700, color: session.failed_requests === 0 ? 'var(--color-green)' : 'var(--color-orange)', cursor: session.failed_requests > 0 ? 'pointer' : 'default', textDecoration: session.failed_requests > 0 ? 'underline' : 'none' }}
-              onClick={(e) => { if (session.failed_requests > 0) { e.stopPropagation(); onNavigateToLogs(session, { onlyFailed: true }); } }}
-              title={session.failed_requests > 0 ? t('View failed requests in logs') : undefined}
-            >
+            <div style={{ fontSize: '14px', fontWeight: 700, color: session.failed_requests === 0 ? 'var(--color-green)' : 'var(--color-orange)' }}>
               {session.request_count > 0 ? Math.round((session.successful_requests / session.request_count) * 100) : 0}%
             </div>
             {session.failed_requests > 0 && (
@@ -248,26 +231,17 @@ export function SessionDetailContent({
                 style={{ marginTop: '4px', display: 'flex', gap: '6px', textTransform: 'none' }}
               >
                 {value(session.status_429) > 0 && (
-                  <span
-                    className="status-link"
-                    onClick={(e) => { e.stopPropagation(); onNavigateToLogs(session, { status429: true }); }}
-                  >
+                  <span>
                     429: {session.status_429}
                   </span>
                 )}
                 {value(session.status_5xx) > 0 && (
-                  <span
-                    className="status-link"
-                    onClick={(e) => { e.stopPropagation(); onNavigateToLogs(session, { status5xx: true }); }}
-                  >
+                  <span>
                     5xx: {session.status_5xx}
                   </span>
                 )}
                 {value(session.status_4xx) > 0 && (
-                  <span
-                    className="status-link"
-                    onClick={(e) => { e.stopPropagation(); onNavigateToLogs(session, { status4xx: true }); }}
-                  >
+                  <span>
                     4xx: {session.status_4xx}
                   </span>
                 )}

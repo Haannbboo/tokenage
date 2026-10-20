@@ -263,17 +263,7 @@ export function SessionsTab({
     document.addEventListener('mouseup', handleMouseUp)
   }
 
-  const handleViewInLogs = (session: SessionSummary, filters?: { onlyFailed?: boolean; status429?: boolean; status4xx?: boolean; status5xx?: boolean }) => {
-    if (filters) {
-      setActiveFilter({
-        provider: '',
-        model: null,
-        only_failed: filters.onlyFailed,
-        status_429: filters.status429,
-        status_4xx: filters.status4xx,
-        status_5xx: filters.status5xx,
-      })
-    }
+  const handleViewInLogs = (session: SessionSummary) => {
     onNavigateToLogs({ sessionFilter: session.session_id })
   }
 
@@ -319,7 +309,7 @@ export function SessionsTab({
                 <button
                   type="button"
                   className="btn-ghost session-insight-action"
-                  onClick={() => handleViewInLogs(insight.session, { onlyFailed: insight.onlyFailed })}
+                  onClick={() => { setActiveFilter(null); handleViewInLogs(insight.session) }}
                 >
                   {t('View in Logs')}
                 </button>
@@ -754,7 +744,7 @@ function SessionDetailInline({
   activeEvaluationJob,
 }: {
   session: SessionSummary
-  onNavigateToLogs: (session: SessionSummary, filters?: any) => void
+  onNavigateToLogs: (session: SessionSummary) => void
   showToast: (msg: string) => void
   onEvaluationUpdate: (evalData: any | null) => void
   onEvaluationPersisted: () => void
@@ -762,7 +752,7 @@ function SessionDetailInline({
 }) {
   return (
     <div className="session-detail-expanded" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', flexWrap: 'wrap', gap: '20px' }}>
-      <SessionDetailContent session={session} onNavigateToLogs={onNavigateToLogs} showToast={showToast} onEvaluationUpdate={onEvaluationUpdate} onEvaluationPersisted={onEvaluationPersisted} activeEvaluationJob={activeEvaluationJob} />
+      <SessionDetailContent session={session} showToast={showToast} onEvaluationUpdate={onEvaluationUpdate} onEvaluationPersisted={onEvaluationPersisted} activeEvaluationJob={activeEvaluationJob} />
       <div style={{ display: 'flex', gap: '8px' }}>
         <button
           style={{ padding: '8px 18px', background: 'var(--color-blue)', color: 'white', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', border: 'none', boxShadow: '0 2px 4px rgba(59, 130, 246, 0.3)', display: 'flex', alignItems: 'center', gap: '6px' }}

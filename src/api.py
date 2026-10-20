@@ -253,10 +253,6 @@ async def get_usage(
     tool_name: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    only_failed: bool = False,
-    status_429: bool = False,
-    status_4xx: bool = False,
-    status_5xx: bool = False,
 ):
     user_id = _request_user_id(request)
     return await asyncio.to_thread(
@@ -273,10 +269,6 @@ async def get_usage(
                 tool_name=tool_name,
                 since=since,
                 until=until,
-                only_failed=only_failed,
-                status_429=status_429,
-                status_4xx=status_4xx,
-                status_5xx=status_5xx,
             )
         )
     )
@@ -416,10 +408,6 @@ def usage_by_tool(
     model: str | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
-    only_failed: bool = False,
-    status_429: bool = False,
-    status_4xx: bool = False,
-    status_5xx: bool = False,
 ):
     return summarize_tool_calls(
         user_id=_request_user_id(request),
@@ -429,10 +417,6 @@ def usage_by_tool(
         model=model,
         client_source=client_source,
         device_id=device_id,
-        only_failed=only_failed,
-        status_429=status_429,
-        status_4xx=status_4xx,
-        status_5xx=status_5xx,
     )
 
 

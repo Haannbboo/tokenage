@@ -463,7 +463,6 @@ export type SessionInsight = {
   value: string
   detail: string
   tone?: 'warning' | 'danger' | 'success'
-  onlyFailed?: boolean
 }
 
 export function buildSessionInsights(sessions: import('./types').SessionSummary[]): SessionInsight[] {
@@ -531,7 +530,6 @@ export function buildSessionInsights(sessions: import('./types').SessionSummary[
       value: `${formatNumber(reliabilityWatch.failed_requests)} failed`,
       detail: `${reliabilityWatch.request_count > 0 ? Math.round((reliabilityWatch.successful_requests / reliabilityWatch.request_count) * 100) : 0}% success rate`,
       tone: 'danger',
-      onlyFailed: true,
     })
   }
 

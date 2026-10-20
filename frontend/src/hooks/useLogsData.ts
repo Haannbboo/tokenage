@@ -88,10 +88,6 @@ export function useLogsData(opts: {
         if (opts.activeFilter) {
           if (opts.activeFilter.provider) usageUrl.searchParams.set('provider', opts.activeFilter.provider)
           if (opts.activeFilter.model) usageUrl.searchParams.set('model', opts.activeFilter.model)
-          if (opts.activeFilter.only_failed) usageUrl.searchParams.set('only_failed', 'true')
-          if (opts.activeFilter.status_429) usageUrl.searchParams.set('status_429', 'true')
-          if (opts.activeFilter.status_4xx) usageUrl.searchParams.set('status_4xx', 'true')
-          if (opts.activeFilter.status_5xx) usageUrl.searchParams.set('status_5xx', 'true')
         }
         if (opts.activeSource) usageUrl.searchParams.set('client_source', opts.activeSource)
         if (opts.sessionFilter) usageUrl.searchParams.set('session_id', opts.sessionFilter)
@@ -104,10 +100,6 @@ export function useLogsData(opts: {
         if (opts.activeFilter) {
           if (opts.activeFilter.provider) countUrl.searchParams.set('provider', opts.activeFilter.provider)
           if (opts.activeFilter.model) countUrl.searchParams.set('model', opts.activeFilter.model)
-          if (opts.activeFilter.only_failed) countUrl.searchParams.set('only_failed', 'true')
-          if (opts.activeFilter.status_429) countUrl.searchParams.set('status_429', 'true')
-          if (opts.activeFilter.status_4xx) countUrl.searchParams.set('status_4xx', 'true')
-          if (opts.activeFilter.status_5xx) countUrl.searchParams.set('status_5xx', 'true')
         }
         if (opts.activeSource) countUrl.searchParams.set('client_source', opts.activeSource)
         if (opts.sessionFilter) countUrl.searchParams.set('session_id', opts.sessionFilter)

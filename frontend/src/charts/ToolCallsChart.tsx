@@ -23,10 +23,6 @@ export function ToolCallsChart({
     device_id?: string | null
     since?: string | null
     until?: string | null
-    only_failed?: boolean
-    status_429?: boolean
-    status_4xx?: boolean
-    status_5xx?: boolean
   }
 }) {
   const [rows, setRows] = useState<ToolCallRow[]>([])
@@ -43,10 +39,6 @@ export function ToolCallsChart({
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
         if (filterParams.until) url.searchParams.set('until', filterParams.until)
-        if (filterParams.only_failed) url.searchParams.set('only_failed', 'true')
-        if (filterParams.status_429) url.searchParams.set('status_429', 'true')
-        if (filterParams.status_4xx) url.searchParams.set('status_4xx', 'true')
-        if (filterParams.status_5xx) url.searchParams.set('status_5xx', 'true')
 
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (res.ok) {

@@ -45,10 +45,6 @@ export function useDashboardData() {
     if (activeFilter) {
       if (activeFilter.provider) url.searchParams.set('provider', activeFilter.provider)
       if (activeFilter.model) url.searchParams.set('model', activeFilter.model)
-      if (activeFilter.only_failed) url.searchParams.set('only_failed', 'true')
-      if (activeFilter.status_429) url.searchParams.set('status_429', 'true')
-      if (activeFilter.status_4xx) url.searchParams.set('status_4xx', 'true')
-      if (activeFilter.status_5xx) url.searchParams.set('status_5xx', 'true')
     }
     if (activeSource) url.searchParams.set('client_source', activeSource)
     if (activeDevice) url.searchParams.set('device_id', activeDevice)
@@ -64,10 +60,6 @@ export function useDashboardData() {
     device_id: activeDevice,
     since: dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange),
     until: dateRange === 'custom' ? customBound(customUntil) : null,
-    only_failed: activeFilter?.only_failed,
-    status_429: activeFilter?.status_429,
-    status_4xx: activeFilter?.status_4xx,
-    status_5xx: activeFilter?.status_5xx
   }), [activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil])
 
   // Dashboard fetch
@@ -96,10 +88,6 @@ export function useDashboardData() {
         if (activeFilter) {
           if (activeFilter.provider) heatmapUrl.searchParams.set('provider', activeFilter.provider)
           if (activeFilter.model) heatmapUrl.searchParams.set('model', activeFilter.model)
-          if (activeFilter.only_failed) heatmapUrl.searchParams.set('only_failed', 'true')
-          if (activeFilter.status_429) heatmapUrl.searchParams.set('status_429', 'true')
-          if (activeFilter.status_4xx) heatmapUrl.searchParams.set('status_4xx', 'true')
-          if (activeFilter.status_5xx) heatmapUrl.searchParams.set('status_5xx', 'true')
         }
         if (activeSource) heatmapUrl.searchParams.set('client_source', activeSource)
         if (activeDevice) heatmapUrl.searchParams.set('device_id', activeDevice)

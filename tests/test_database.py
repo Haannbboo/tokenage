@@ -3207,50 +3207,6 @@ def test_summarize_sessions(fresh_db):
     assert result["avg_duration_s"] == 60
 
 
-def test_fetch_recent_usage_only_failed_filter(fresh_db):
-    database_module = fresh_db.database_module
-    db_path = fresh_db.db_path
-    database_module.init_db(db_path)
-
-    with database_module.Session(database_module.get_engine(db_path)) as session:
-        session.add(
-            database_module.Usage(
-                device_id="test-device",
-                ts=TS_2024_01_01_00,
-                provider="p1",
-                model="m1",
-                endpoint="/chat",
-                status=200,
-                user_id="test-user",
-            )
-        )
-        session.add(
-            database_module.Usage(
-                device_id="test-device",
-                ts=TS_2024_01_01_01,
-                provider="p1",
-                model="m1",
-                endpoint="/chat",
-                status=500,
-                user_id="test-user",
-            )
-        )
-        session.commit()
-
-    # When: fetch all
-    all_rows = database_module.fetch_recent_usage(
-        limit=10, db_path=db_path, user_id="test-user"
-    )
-    assert len(all_rows) == 2
-
-    # When: fetch only failed
-    failed_rows = database_module.fetch_recent_usage(
-        limit=10, only_failed=True, db_path=db_path, user_id="test-user"
-    )
-    assert len(failed_rows) == 1
-    assert failed_rows[0]["status"] == 500
-
-
 def test_usage_hourly_status_breakdown(database_module, isolated_home):
     db_path = str(isolated_home / "usage_status.db")
     database_module.init_db(db_path)

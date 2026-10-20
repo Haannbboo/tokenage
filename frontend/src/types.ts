@@ -93,10 +93,6 @@ export type DailyUsage = {
 export type ActiveFilter = {
   provider: string;
   model: string | null;
-  only_failed?: boolean;
-  status_429?: boolean;
-  status_4xx?: boolean;
-  status_5xx?: boolean;
 } | null
 export type DateRangeOption = '24h' | '7d' | '30d' | 'all' | 'custom'
 

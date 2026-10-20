@@ -445,7 +445,6 @@ def test_usage_by_tool_endpoint(api_module, monkeypatch):
         params={
             "since": "2026-01-01",
             "client_source": "claude-code",
-            "status_429": "true",
         },
     )
     assert response.status_code == 200
@@ -456,9 +455,6 @@ def test_usage_by_tool_endpoint(api_module, monkeypatch):
     ]
     assert captured["since"] == "2026-01-01"
     assert captured["client_source"] == "claude-code"
-    assert captured["status_429"] is True
-    assert captured["status_4xx"] is False
-    assert captured["status_5xx"] is False
 
 
 def test_usage_by_provider_endpoint_includes_avg_effective_price_per_million(

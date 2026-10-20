@@ -62,7 +62,6 @@ export function TopUsageChart({
     device_id?: string | null
     since?: string | null
     until?: string | null
-    only_failed?: boolean
   }
 }) {
   const [dimension, setDimension] = useState<Dimension>('model')
@@ -84,7 +83,6 @@ export function TopUsageChart({
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
         if (filterParams.until) url.searchParams.set('until', filterParams.until)
-        if (filterParams.only_failed) url.searchParams.set('only_failed', 'true')
 
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (res.ok) {

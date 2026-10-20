@@ -5,10 +5,56 @@ from sqlalchemy import inspect, text
 from .database import get_engine, init_db
 from .database.models import metadata
 
-TENANT_TABLES = ("usage", "usage_daily", "sessions", "tool_calls", "evaluation_jobs")
-LEGACY_USAGE_DAILY_INDEXES = ("uq_usage_daily_local", "uq_usage_daily_user")
-DEVICE_ID_TABLES = ("usage", "usage_daily", "evaluation_jobs")
+TENANT_TABLES = ("usage", "usage_hourly", "sessions", "tool_calls", "evaluation_jobs")
+DEVICE_ID_TABLES = ("usage", "usage_hourly", "evaluation_jobs")
 LEGACY_EVALUATION_JOB_INDEX = "ix_evaluation_jobs_one_active_per_session"
+
+# Run in one transaction. Rebuild the rollup from raw usage, which is kept, so
+# the backfill is exact even if ingest already wrote hourly rows. Old
+# opencode/kilo latency includes tool time (the plugin no longer reports it);
+# the rollup takes it out per row, raw usage.latency_ms stays as recorded.
+HOURLY_BACKFILL = (
+    "DELETE FROM usage_hourly",
+    """
+    INSERT INTO usage_hourly (
+        user_id, hour, provider, model, client_source, device_id,
+        request_count, prompt_tokens, completion_tokens, reasoning_tokens,
+        cached_tokens, total_tokens, tool_tokens, cache_creation_tokens,
+        prompt_length, input_cost_usd, output_cost_usd, total_cost_usd,
+        successful_requests, failed_requests, latency_sum_ms,
+        status_429, status_4xx, status_5xx, status_unknown
+    )
+    SELECT
+        user_id, ts / 3600000000 * 3600, provider, model,
+        COALESCE(client_source, ''), device_id,
+        COUNT(*),
+        COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0),
+        COALESCE(SUM(reasoning_tokens), 0), COALESCE(SUM(cached_tokens), 0),
+        COALESCE(SUM(total_tokens), 0), COALESCE(SUM(tool_tokens), 0),
+        COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(prompt_length), 0),
+        SUM(input_cost_usd), SUM(output_cost_usd), SUM(total_cost_usd),
+        SUM(CASE WHEN status IS NULL OR status < 400 THEN 1 ELSE 0 END),
+        SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END),
+        COALESCE(SUM(CASE
+            WHEN client_source IN ('opencode', 'kilo')
+                AND latency_ms > COALESCE(tools.ms, 0)
+            THEN latency_ms - COALESCE(tools.ms, 0)
+            WHEN client_source IN ('opencode', 'kilo') THEN 0
+            ELSE latency_ms END), 0),
+        SUM(CASE WHEN status = 429 THEN 1 ELSE 0 END),
+        SUM(CASE WHEN status >= 400 AND status < 500 AND status <> 429
+            THEN 1 ELSE 0 END),
+        SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END),
+        0
+    FROM usage
+    LEFT JOIN (
+        SELECT usage_id, SUM(duration_ms) AS ms FROM tool_calls GROUP BY usage_id
+    ) tools ON tools.usage_id = usage.id
+    GROUP BY user_id, ts / 3600000000 * 3600, provider, model,
+        COALESCE(client_source, ''), device_id
+    """,
+    "DROP TABLE usage_daily",
+)
 
 
 def _require_no_null_user_ids(engine, insp) -> None:
@@ -41,8 +87,8 @@ def _nullable_user_id_tables(insp) -> list[str]:
 
 
 def migrate_database(db_path: str | None = None) -> list[str]:
-    """Bring a database up to the models: create missing indexes, swap the
-    legacy usage_daily partial indexes, and make user_id NOT NULL (Postgres).
+    """Bring a database up to the models: create missing indexes, replace the
+    daily rollup with the hourly one, and make user_id NOT NULL (Postgres).
 
     There are no upgrade steps for schemas older than this one.
     """
@@ -86,22 +132,18 @@ def migrate_database(db_path: str | None = None) -> list[str]:
         applied.append("usage.drop_client_ip")
         insp = inspect(engine)
 
+    # usage_daily → usage_hourly, once: the old table's presence is the marker.
+    if insp.has_table("usage_daily"):
+        with engine.begin() as connection:
+            for statement in HOURLY_BACKFILL:
+                connection.execute(text(statement))
+        applied.append("usage_hourly.backfill")
+        insp = inspect(engine)
+
     existing = {
         table: {index["name"] for index in indexes}
         for (_, table), indexes in insp.get_multi_indexes().items()
     }
-
-    # The daily unique key gained device_id; drop the old-shaped index so the
-    # loop below recreates it from the model.
-    for reflected in insp.get_indexes("usage_daily"):
-        if (
-            reflected["name"] == "uq_usage_daily"
-            and "device_id" not in (reflected["column_names"])
-        ):
-            with engine.begin() as connection:
-                connection.execute(text("DROP INDEX uq_usage_daily"))
-            existing["usage_daily"].discard("uq_usage_daily")
-            applied.append("usage_daily.drop_uq_usage_daily_without_device")
 
     # create_all skips indexes of tables that already exist.
     for table in metadata.sorted_tables:
@@ -131,18 +173,6 @@ def migrate_database(db_path: str | None = None) -> list[str]:
         )
         if result.rowcount:  # type: ignore[attr-defined]
             applied.append("evaluation_jobs.fail_legacy_active")
-
-    # The pre-NOT-NULL pair of partial unique indexes (NULL-user / real-user).
-    legacy = [
-        name
-        for name in LEGACY_USAGE_DAILY_INDEXES
-        if name in existing.get("usage_daily", ())
-    ]
-    if legacy:
-        with engine.begin() as connection:
-            for name in legacy:
-                connection.execute(text(f"DROP INDEX IF EXISTS {name}"))
-        applied.extend(f"usage_daily.drop_{name}" for name in legacy)
 
     # ponytail: SQLite cannot ALTER a column to NOT NULL; its databases get the
     # constraint from create_all (a rebuilt/new file). Postgres is altered here.

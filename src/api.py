@@ -63,9 +63,9 @@ from .database import (
     summarize_session_tool_calls,
     summarize_sessions,
     summarize_tool_calls,
+    summarize_usage_by_model,
     summarize_usage_by_provider,
     summarize_usage_by_source,
-    summarize_usage_daily,
     summarize_usage_window,
     upsert_model_price,
     upsert_session_evaluation,
@@ -375,7 +375,7 @@ def usage_summary(
     client_source: str | None = None,
     device_id: str | None = None,
 ):
-    return summarize_usage_daily(
+    return summarize_usage_by_model(
         user_id=_request_user_id(request),
         since=since,
         until=until,
@@ -492,6 +492,7 @@ def usage_daily_by_dimension(
     model: str | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
+    tz_offset: str = "+00:00",
 ):
     return aggregate_daily_by_dimension(
         user_id=_request_user_id(request),
@@ -502,6 +503,7 @@ def usage_daily_by_dimension(
         model=model,
         client_source=client_source,
         device_id=device_id,
+        tz_offset=tz_offset,
     )
 
 

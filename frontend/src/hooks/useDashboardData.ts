@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { DailyUsage, UsageSummary } from '../types'
-import { getSinceDate, getTimezoneOffset, resolveTimezone, FIXED_PROVIDER_COLORS, PALETTE, netThroughput } from '../utils'
+import { customBound, getSinceDate, getTimezoneOffset, resolveTimezone, FIXED_PROVIDER_COLORS, PALETTE, netThroughput } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -39,8 +39,8 @@ export function useDashboardData() {
   }, [summary]);
 
   const applyFilterParams = useCallback((url: URL) => {
-    const since = dateRange === 'custom' ? customSince : getSinceDate(dateRange)
-    const until = dateRange === 'custom' ? customUntil : null
+    const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
+    const until = dateRange === 'custom' ? customBound(customUntil) : null
 
     if (activeFilter) {
       if (activeFilter.provider) url.searchParams.set('provider', activeFilter.provider)
@@ -62,8 +62,8 @@ export function useDashboardData() {
     model: activeFilter?.model,
     client_source: activeSource,
     device_id: activeDevice,
-    since: dateRange === 'custom' ? customSince : getSinceDate(dateRange),
-    until: dateRange === 'custom' ? customUntil : null,
+    since: dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange),
+    until: dateRange === 'custom' ? customBound(customUntil) : null,
     only_failed: activeFilter?.only_failed,
     status_429: activeFilter?.status_429,
     status_4xx: activeFilter?.status_4xx,
@@ -142,8 +142,8 @@ export function useDashboardData() {
   // Sources fetch
   useEffect(() => {
     const controller = new AbortController()
-    const since = dateRange === 'custom' ? customSince : getSinceDate(dateRange)
-    const until = dateRange === 'custom' ? customUntil : null
+    const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
+    const until = dateRange === 'custom' ? customBound(customUntil) : null
     const url = new URL('/usage/sources', window.location.origin)
     if (since) url.searchParams.set('since', since)
     if (until) url.searchParams.set('until', until)

@@ -192,7 +192,7 @@ def runtime_ports_module(load_module: Callable[[str], ModuleType]) -> ModuleType
 # Verify with: list of tables should match inspect(engine).get_table_names()
 _TRUNCATE_TABLES = [
     "price_snapshots",
-    "usage_daily",
+    "usage_hourly",
     "tool_calls",
     "evaluation_jobs",
     "sessions",

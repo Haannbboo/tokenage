@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { UsageRow, DateRangeOption, ActiveFilter } from '../types'
 import type { RequestLogColumnId } from './useRequestLogColumns'
-import { getSinceDate } from '../utils'
+import { customBound, getSinceDate } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -79,8 +79,8 @@ export function useLogsData(opts: {
       setError(null)
       setLogsLoading(true)
       try {
-        const since = opts.dateRange === 'custom' ? opts.customSince : getSinceDate(opts.dateRange)
-        const until = opts.dateRange === 'custom' ? opts.customUntil : null
+        const since = opts.dateRange === 'custom' ? customBound(opts.customSince) : getSinceDate(opts.dateRange)
+        const until = opts.dateRange === 'custom' ? customBound(opts.customUntil) : null
 
         const usageUrl = new URL('/usage', window.location.origin)
         usageUrl.searchParams.set('limit', String(limit))

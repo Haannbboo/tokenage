@@ -52,7 +52,7 @@ def test_record_usage_normalizes_models_and_rollups(test_db, monkeypatch):
     from sqlalchemy.orm import Session
 
     from src.database import count_usage, get_engine, summarize_usage_window
-    from src.database.models import PriceSnapshot, SessionRecord, UsageDaily
+    from src.database.models import PriceSnapshot, SessionRecord, UsageHourly
     from src.pricing import costs
     from src.pricing.models import ModelCost
     from src.recorder import record_usage
@@ -85,7 +85,7 @@ def test_record_usage_normalizes_models_and_rollups(test_db, monkeypatch):
     assert usages[0].price_snapshot_id == usages[1].price_snapshot_id
 
     with Session(get_engine(test_db)) as session:
-        daily = session.scalars(select(UsageDaily)).one()
+        daily = session.scalars(select(UsageHourly)).one()
         assert (daily.model, daily.request_count, daily.total_tokens) == (
             canonical,
             2,
@@ -131,7 +131,7 @@ def test_record_usage_normalizes_provider_without_losing_pricing(test_db, monkey
     from sqlalchemy.orm import Session
 
     from src.database import count_usage, get_engine, summarize_usage_window
-    from src.database.models import BaseUrl, PriceSnapshot, SessionRecord, UsageDaily
+    from src.database.models import BaseUrl, PriceSnapshot, SessionRecord, UsageHourly
     from src.pricing import costs
     from src.pricing.models import ModelCost
     from src.recorder import record_usage
@@ -169,7 +169,7 @@ def test_record_usage_normalizes_provider_without_losing_pricing(test_db, monkey
         assert usage.price_snapshot_id is not None
 
     with Session(get_engine(test_db)) as session:
-        daily = session.scalars(select(UsageDaily)).one()
+        daily = session.scalars(select(UsageHourly)).one()
         assert daily.provider == provider
         assert daily.request_count == 2
         record = session.get(SessionRecord, "provider-normalization")

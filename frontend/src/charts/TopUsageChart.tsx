@@ -2,7 +2,8 @@ import { useState, useMemo, useEffect } from 'react'
 import type { Theme } from '../theme'
 import type { UsageSummary } from '../types'
 import { getModelColor, getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
-import { formatModelName, getModelIcon, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getSourceBadgeBg, getSourceBadgeText, getSourceIcon, PALETTE, netThroughput } from '../utils'
+import { formatModelName, getModelIcon, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getSourceBadgeBg, getSourceBadgeText, getSourceIcon, PALETTE, netThroughput, getTimezoneOffset, resolveTimezone } from '../utils'
+import { useApp } from '../contexts/AppContext'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
 import { t } from '../i18n/index.ts'
@@ -68,6 +69,7 @@ export function TopUsageChart({
   const [metric, setMetric] = useState<Metric>('tokens')
   const [sourceSummary, setSourceSummary] = useState<SourceSummaryRow[]>([])
   const [deviceRows, setDeviceRows] = useState<DeviceDailyRow[]>([])
+  const tzOffset = getTimezoneOffset(resolveTimezone(useApp().timezone))
 
   // Fetch source summary data when source dimension is selected
   useEffect(() => {
@@ -110,6 +112,7 @@ export function TopUsageChart({
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
         if (filterParams.until) url.searchParams.set('until', filterParams.until)
+        url.searchParams.set('tz_offset', tzOffset)
 
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (res.ok) {
@@ -122,7 +125,7 @@ export function TopUsageChart({
     }
     fetchDeviceRows()
     return () => controller.abort()
-  }, [dimension, filterParams])
+  }, [dimension, filterParams, tzOffset])
 
   const items: BarItem[] = useMemo(() => {
     if (dimension === 'model') {

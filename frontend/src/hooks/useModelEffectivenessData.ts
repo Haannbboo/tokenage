@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { DateRangeOption, ModelEffectivenessResponse } from '../types'
-import { getSinceDate } from '../utils'
+import { customBound, getSinceDate } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -26,8 +26,8 @@ export function useModelEffectivenessData(opts: {
     async function fetchModelEffectivenessData() {
       setModelEffectivenessLoading(true)
       try {
-        const since = opts.dateRange === 'custom' ? opts.customSince : getSinceDate(opts.dateRange)
-        const until = opts.dateRange === 'custom' ? opts.customUntil : null
+        const since = opts.dateRange === 'custom' ? customBound(opts.customSince) : getSinceDate(opts.dateRange)
+        const until = opts.dateRange === 'custom' ? customBound(opts.customUntil) : null
 
         const url = new URL('/model-effectiveness', window.location.origin)
         url.searchParams.set('group_by', 'model')

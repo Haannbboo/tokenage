@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { SessionSummary, DateRangeOption } from '../types'
-import { getSinceDate, buildSessionInsights } from '../utils'
+import { customBound, getSinceDate, buildSessionInsights } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -63,8 +63,8 @@ export function useSessionsData(opts: {
       setError(null)
       setSessionsLoading(true)
       try {
-        const since = opts.dateRange === 'custom' ? opts.customSince : getSinceDate(opts.dateRange)
-        const until = opts.dateRange === 'custom' ? opts.customUntil : null
+        const since = opts.dateRange === 'custom' ? customBound(opts.customSince) : getSinceDate(opts.dateRange)
+        const until = opts.dateRange === 'custom' ? customBound(opts.customUntil) : null
 
         const sessionsUrl = new URL('/sessions', window.location.origin)
         if (opts.activeSource) sessionsUrl.searchParams.set('client_source', opts.activeSource)

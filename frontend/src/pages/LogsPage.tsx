@@ -13,7 +13,7 @@ import { RequestTimeline, type TimelineTool } from '../components/RequestTimelin
 import { t } from '../i18n/index.ts'
 import {
   formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime,
-  value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, resolveTimezone, ToolBadge, getSinceDate, formatModelName,
+  value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, resolveTimezone, ToolBadge, getSinceDate, formatModelName, customBound,
 } from '../utils'
 import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
 import type { DateRangeOption } from '../types'
@@ -72,8 +72,8 @@ export function LogsPage() {
   const [availableTools, setAvailableTools] = useState<string[]>([])
   useEffect(() => {
     const controller = new AbortController()
-    const since = dateRange === 'custom' ? customSince : getSinceDate(dateRange)
-    const until = dateRange === 'custom' ? customUntil : null
+    const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
+    const until = dateRange === 'custom' ? customBound(customUntil) : null
     const url = new URL('/usage/tools', window.location.origin)
     if (since) url.searchParams.set('since', since)
     if (until) url.searchParams.set('until', until)

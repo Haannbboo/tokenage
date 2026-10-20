@@ -8,7 +8,7 @@ import { t } from '../i18n/index.ts'
 import {
   formatCompact, formatCost, formatDuration, formatLatency, formatNumber,
   formatTime, getModelIcon, getSourceBadgeBg, getSourceBadgeText, getSourceIcon,
-  shortSessionId, sessionAgentName, sessionDisplayName, sessionTaskTitle, getSinceDate, resolveTimezone, ToolBadge, formatModelName,
+  shortSessionId, sessionAgentName, sessionDisplayName, sessionTaskTitle, getSinceDate, customBound, resolveTimezone, ToolBadge, formatModelName,
 } from '../utils'
 import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
 import type { DailyEffectivenessReport, EvaluationJob, ModelEffectivenessGroup, SessionOutcome, SessionSummary, SessionsSummary } from '../types'
@@ -96,9 +96,9 @@ export function SessionsTab({
     const url = new URL('/sessions/summary', window.location.origin)
     if (activeSource) url.searchParams.set('client_source', activeSource)
     if (dateRange !== 'all') {
-      const since = dateRange === 'custom' ? customSince : getSinceDate(dateRange)
+      const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
       if (since) url.searchParams.set('since', since)
-      if (dateRange === 'custom' && customUntil) url.searchParams.set('until', customUntil)
+      if (dateRange === 'custom' && customUntil) url.searchParams.set('until', customBound(customUntil))
     }
     if (hideNoop) url.searchParams.set('hide_noop', 'true')
     fetch(url.toString())

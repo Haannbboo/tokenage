@@ -15,14 +15,11 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     and_,
-    case,
     func,
     literal_column,
-    or_,
     select,
-    text,
-    types,
     update,
 )
 from sqlalchemy.orm import Session
@@ -37,15 +34,9 @@ from ..utils import (
 )
 from .engine import get_engine
 from .model_prices import load_model_price_overrides
-from .models import BaseUrl, Device, ToolCall, Usage, UsageDaily
+from .models import BaseUrl, Device, ToolCall, Usage, UsageHourly
 
 logger = logging.getLogger(__name__)
-
-# Client sources whose recorded latency is the full assistant-message lifetime
-# and therefore already includes tool execution time. Tool-call duration is only
-# netted out of throughput for these. Model-call sources (claude-code, codex)
-# time a single request, so their latency already excludes tool time and
-# subtracting it would overstate throughput.
 
 
 def _iso_to_micros(value: str) -> int:
@@ -65,25 +56,6 @@ def _iso_to_micros(value: str) -> int:
 def _iso_to_millis(value: str) -> int:
     """Convert an ISO-8601 datetime string to integer milliseconds since epoch."""
     return _iso_to_micros(value) // 1000
-
-
-# === Price helpers ===
-
-
-def _avg_effective_price_expr(total_cost_col: Any, total_tokens_col: Any) -> Any:
-    return case(
-        (
-            func.sum(total_tokens_col) > 0,
-            func.sum(total_cost_col) / func.sum(total_tokens_col),
-        ),
-        else_=0,
-    )
-
-
-def _avg_effective_price_per_million_expr(
-    total_cost_col: Any, total_tokens_col: Any
-) -> Any:
-    return _avg_effective_price_expr(total_cost_col, total_tokens_col) * 1_000_000
 
 
 # === Entity / Persistence Helpers ===
@@ -155,7 +127,7 @@ def merge_duplicate_usage(
     overwrite these fields, an incoming proxy call only fills them in if the
     existing row doesn't already have them. Other fields (tokens, cost,
     latency, status, provider, ...) are left untouched even on a match:
-    they're already folded into `usage_daily`/`sessions` running sums the
+    they're already folded into `usage_hourly`/`sessions` running sums the
     moment the existing row was inserted, so changing them here would desync
     those aggregates without a matching correction.
     """
@@ -242,7 +214,7 @@ def log_usage(
     this usage; they join the same transaction and a tool_use_id that is
     already recorded is skipped, so a redelivered report cannot double count.
 
-    The row and its usage_daily increment land together or not at all: the
+    The row and its usage_hourly increment land together or not at all: the
     error propagates and the transaction rolls back. Callers must not assume a
     retry (the proxy client drops the report on anything but 429).
 
@@ -262,7 +234,7 @@ def log_usage(
         session.flush()
         if tool_calls:
             _insert_tool_calls(session, usage.id, tool_calls)
-        upsert_daily_aggregate(session, usage)
+        upsert_hourly_aggregate(session, usage)
         try:
             with session.begin_nested():
                 _upsert_session_from_usage(session, usage)
@@ -292,40 +264,40 @@ def _insert_tool_calls(
 
 
 def _require_device_id(usage: Usage) -> None:
-    # A NULL in the daily unique key never conflicts, so a device-less live row
-    # would silently split its daily bucket instead of incrementing it.
+    # A NULL in the hourly unique key never conflicts, so a device-less live row
+    # would silently split its hourly bucket instead of incrementing it.
     if usage.device_id is None:
         raise ValueError("usage.device_id is required on the live write path")
 
 
 def _usage_date(usage: Usage) -> str:
-    """UTC date bucket for a usage row's daily aggregate."""
+    """UTC date of a usage row (its price snapshot's date)."""
     return datetime.fromtimestamp(micros_to_secs(usage.ts), tz=UTC).strftime("%Y-%m-%d")
 
 
-def _usage_daily_match(usage: Usage, date: str) -> Any:
-    """Filter selecting the usage_daily row that aggregates *usage*'s group.
+def _usage_hour(usage: Usage) -> int:
+    """UTC hour start, in epoch seconds, of a usage row's hourly aggregate."""
+    return usage.ts // 3_600_000_000 * 3600
 
-    Shared by every incremental usage_daily update so the match fields
+
+def _usage_hourly_match(usage: Usage, hour: int) -> Any:
+    """Filter selecting the usage_hourly row that aggregates *usage*'s group.
+
+    Shared by every incremental usage_hourly update so the match fields
     can't drift between callers.
     """
     return and_(
-        UsageDaily.date == date,
-        UsageDaily.provider == usage.provider,
-        UsageDaily.model == usage.model,
-        UsageDaily.client_source == (usage.client_source or ""),
-        UsageDaily.user_id == usage.user_id,
-        UsageDaily.device_id == usage.device_id,
+        UsageHourly.hour == hour,
+        UsageHourly.provider == usage.provider,
+        UsageHourly.model == usage.model,
+        UsageHourly.client_source == (usage.client_source or ""),
+        UsageHourly.user_id == usage.user_id,
+        UsageHourly.device_id == usage.device_id,
     )
 
 
-def daily_values(usage: Usage) -> dict[str, Any]:
-    """The usage_daily contribution (key columns + additive counters) of one row.
-
-    Shared by the live upsert and the one-off daily rebuild so both always
-    derive the same date bucket and counters.
-    """
-    date = _usage_date(usage)
+def hourly_values(usage: Usage) -> dict[str, Any]:
+    """The usage_hourly contribution (key columns + additive counters) of one row."""
     client_source = usage.client_source or ""
     is_success = usage.status is None or usage.status < 400
     latency = usage.latency_ms or 0
@@ -346,7 +318,7 @@ def daily_values(usage: Usage) -> dict[str, Any]:
             status_unknown = 1
 
     values: dict[str, Any] = {
-        "date": date,
+        "hour": _usage_hour(usage),
         "provider": usage.provider,
         "model": usage.model,
         "client_source": client_source,
@@ -375,10 +347,10 @@ def daily_values(usage: Usage) -> dict[str, Any]:
     return values
 
 
-def upsert_daily_aggregate(session: Session, usage: Usage) -> None:
-    """Add *usage* to usage_daily on *session*; the caller owns the commit."""
+def upsert_hourly_aggregate(session: Session, usage: Usage) -> None:
+    """Add *usage* to usage_hourly on *session*; the caller owns the commit."""
     _require_device_id(usage)
-    values = daily_values(usage)
+    values = hourly_values(usage)
 
     engine = session.get_bind()
     from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -386,49 +358,49 @@ def upsert_daily_aggregate(session: Session, usage: Usage) -> None:
 
     insert_fn = pg_insert if engine.dialect.name == "postgresql" else sqlite_insert
 
-    statement = insert_fn(UsageDaily).values(**values)
+    statement = insert_fn(UsageHourly).values(**values)
     statement = statement.on_conflict_do_update(
         index_elements=[
-            "date",
+            "user_id",
+            "hour",
             "provider",
             "model",
             "client_source",
-            "user_id",
             "device_id",
         ],
         set_={
-            "request_count": UsageDaily.request_count
+            "request_count": UsageHourly.request_count
             + statement.excluded.request_count,
-            "prompt_tokens": UsageDaily.prompt_tokens
+            "prompt_tokens": UsageHourly.prompt_tokens
             + statement.excluded.prompt_tokens,
-            "completion_tokens": UsageDaily.completion_tokens
+            "completion_tokens": UsageHourly.completion_tokens
             + statement.excluded.completion_tokens,
-            "reasoning_tokens": UsageDaily.reasoning_tokens
+            "reasoning_tokens": UsageHourly.reasoning_tokens
             + statement.excluded.reasoning_tokens,
-            "cached_tokens": UsageDaily.cached_tokens
+            "cached_tokens": UsageHourly.cached_tokens
             + statement.excluded.cached_tokens,
-            "total_tokens": UsageDaily.total_tokens + statement.excluded.total_tokens,
-            "tool_tokens": UsageDaily.tool_tokens + statement.excluded.tool_tokens,
-            "cache_creation_tokens": UsageDaily.cache_creation_tokens
+            "total_tokens": UsageHourly.total_tokens + statement.excluded.total_tokens,
+            "tool_tokens": UsageHourly.tool_tokens + statement.excluded.tool_tokens,
+            "cache_creation_tokens": UsageHourly.cache_creation_tokens
             + statement.excluded.cache_creation_tokens,
-            "prompt_length": UsageDaily.prompt_length
+            "prompt_length": UsageHourly.prompt_length
             + statement.excluded.prompt_length,
-            "input_cost_usd": UsageDaily.input_cost_usd
+            "input_cost_usd": UsageHourly.input_cost_usd
             + statement.excluded.input_cost_usd,
-            "output_cost_usd": UsageDaily.output_cost_usd
+            "output_cost_usd": UsageHourly.output_cost_usd
             + statement.excluded.output_cost_usd,
-            "total_cost_usd": UsageDaily.total_cost_usd
+            "total_cost_usd": UsageHourly.total_cost_usd
             + statement.excluded.total_cost_usd,
-            "successful_requests": UsageDaily.successful_requests
+            "successful_requests": UsageHourly.successful_requests
             + statement.excluded.successful_requests,
-            "failed_requests": UsageDaily.failed_requests
+            "failed_requests": UsageHourly.failed_requests
             + statement.excluded.failed_requests,
-            "latency_sum_ms": UsageDaily.latency_sum_ms
+            "latency_sum_ms": UsageHourly.latency_sum_ms
             + statement.excluded.latency_sum_ms,
-            "status_429": UsageDaily.status_429 + statement.excluded.status_429,
-            "status_4xx": UsageDaily.status_4xx + statement.excluded.status_4xx,
-            "status_5xx": UsageDaily.status_5xx + statement.excluded.status_5xx,
-            "status_unknown": UsageDaily.status_unknown
+            "status_429": UsageHourly.status_429 + statement.excluded.status_429,
+            "status_4xx": UsageHourly.status_4xx + statement.excluded.status_4xx,
+            "status_5xx": UsageHourly.status_5xx + statement.excluded.status_5xx,
+            "status_unknown": UsageHourly.status_unknown
             + statement.excluded.status_unknown,
         },
     )
@@ -473,7 +445,7 @@ def _reprice_usage_rows(
     db_path: str | None,
 ) -> list[_RowReprice]:
     """Recompute *usages*' costs against current pricing, rebind their price
-    snapshots and delta-adjust the usage_daily and sessions rollups, all on
+    snapshots and delta-adjust the usage_hourly and sessions rollups, all on
     *session* (the caller loads the rows and owns the commit).
 
     Returns one entry per row.
@@ -535,7 +507,7 @@ def _reprice_usage_rows(
         usage.price_snapshot_id = snapshot_ids[key]
         examined.append(_RowReprice(usage, resolved, old_costs, new_costs))
 
-    daily: dict[tuple[Any, ...], tuple[Usage, str, dict[str, Decimal]]] = {}
+    hourly: dict[tuple[Any, ...], tuple[Usage, int, dict[str, Decimal]]] = {}
     session_rows: dict[tuple[str, str], list[tuple[Usage, Decimal]]] = {}
     for row in examined:
         if row.resolved is None:
@@ -551,21 +523,21 @@ def _reprice_usage_rows(
             )
             for f in row.old_costs
         }
-        date = _usage_date(usage)
-        daily_key = (
-            date,
+        hour = _usage_hour(usage)
+        hourly_key = (
+            hour,
             usage.provider,
             usage.model,
             usage.client_source or "",
             usage.user_id,
             usage.device_id,
         )
-        if daily_key in daily:
-            sums = daily[daily_key][2]
+        if hourly_key in hourly:
+            sums = hourly[hourly_key][2]
             for field, delta in deltas.items():
                 sums[field] += delta
         else:
-            daily[daily_key] = (usage, date, dict(deltas))
+            hourly[hourly_key] = (usage, hour, dict(deltas))
         if usage.session_id and deltas["total_cost_usd"] != 0:
             session_rows.setdefault((usage.session_id, usage.user_id), []).append(
                 (usage, deltas["total_cost_usd"])
@@ -579,22 +551,22 @@ def _reprice_usage_rows(
     # where with_for_update() is a silent no-op (same caveat as
     # merge_duplicate_usage's row lock, elsewhere in this module). Keys are
     # sorted so concurrent reprices lock rollup rows in the same order.
-    for daily_key in sorted(daily, key=repr):
-        usage, date, sums = daily[daily_key]
-        daily_result = session.execute(
-            update(UsageDaily)
-            .where(_usage_daily_match(usage, date))
+    for hourly_key in sorted(hourly, key=repr):
+        usage, hour, sums = hourly[hourly_key]
+        hourly_result = session.execute(
+            update(UsageHourly)
+            .where(_usage_hourly_match(usage, hour))
             .values(
-                input_cost_usd=UsageDaily.input_cost_usd + sums["input_cost_usd"],
-                output_cost_usd=UsageDaily.output_cost_usd + sums["output_cost_usd"],
-                total_cost_usd=UsageDaily.total_cost_usd + sums["total_cost_usd"],
+                input_cost_usd=UsageHourly.input_cost_usd + sums["input_cost_usd"],
+                output_cost_usd=UsageHourly.output_cost_usd + sums["output_cost_usd"],
+                total_cost_usd=UsageHourly.total_cost_usd + sums["total_cost_usd"],
             )
         )
-        if daily_result.rowcount == 0:  # type: ignore[attr-defined]
+        if hourly_result.rowcount == 0:  # type: ignore[attr-defined]
             logger.warning(
-                "reprice: no usage_daily row for date=%s "
+                "reprice: no usage_hourly row for hour=%s "
                 "provider=%s model=%s client_source=%s, rollup left as-is",
-                date,
+                hour,
                 usage.provider,
                 usage.model,
                 usage.client_source or "",
@@ -645,7 +617,7 @@ def recalculate_usage_cost(
     overrides: dict[str, Any] | None = None,
 ) -> CostRecalcResult | None:
     """Recompute one Usage row's cost against current pricing and keep its
-    usage_daily and sessions rollups in sync, all in one transaction. Returns
+    usage_hourly and sessions rollups in sync, all in one transaction. Returns
     None if the row doesn't exist or belongs to another user when scoped.
 
     If the row's (provider, model) doesn't resolve against current pricing
@@ -745,7 +717,7 @@ def reprice_estimated_rows(
     Only rows with ``price_snapshot_id IS NULL`` are touched. Rows are
     repriced in chunks of ``_REPRICE_CHUNK``, one transaction per chunk, by
     the same ``_reprice_usage_rows`` core as ``recalculate_usage_cost`` so
-    stored costs, session/daily rollups, and the snapshot binding stay
+    stored costs, session/hourly rollups, and the snapshot binding stay
     consistent. Rows whose provider/model no longer resolves are left
     untouched and counted as skipped. Pass explicit ``model_costs`` / source
     maps to price every row from one pricing generation; otherwise the
@@ -959,19 +931,31 @@ def _usage_filters(
     return filters
 
 
-def _attach_throughput(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Attach completion tokens per second of latency to summary rows in place."""
-    for row in rows:
-        latency = row.get("latency_sum_ms") or 0
-        row["avg_throughput"] = (
-            (row.get("completion_tokens") or 0) * 1000.0 / latency
-            if latency > 0
-            else None
-        )
-    return rows
+def _tz_seconds(tz_offset: str) -> int:
+    """Parse '+05:30' into signed seconds."""
+    sign = 1 if tz_offset.startswith("+") else -1
+    hours_str, minutes_str = tz_offset[1:].split(":", 1)
+    return sign * (int(hours_str) * 3600 + int(minutes_str) * 60)
 
 
-def _daily_usage_filters(
+def _hour_bounds(since: str | None, until: str | None) -> tuple[int | None, int | None]:
+    """Inclusive usage_hourly.hour bounds of a range, rounded to the UTC hour.
+
+    A bound without a timezone is UTC, as in ``_iso_to_micros``; a date-only
+    *until* covers that whole day.
+    """
+
+    def hour_of(value: str) -> int:
+        return _iso_to_micros(value) // 3_600_000_000 * 3600
+
+    since_hour = hour_of(since) if since else None
+    until_hour = None
+    if until:
+        until_hour = hour_of(until) + (86400 - 3600 if len(until) == 10 else 0)
+    return since_hour, until_hour
+
+
+def _hourly_filters(
     *,
     user_id: str,
     since: str | None = None,
@@ -981,112 +965,103 @@ def _daily_usage_filters(
     client_source: str | None = None,
     device_id: str | None = None,
 ) -> list[Any]:
-    filters: list[Any] = [UsageDaily.user_id == user_id]
-    if since:
-        filters.append(UsageDaily.date >= since[:10])
-    _until = until or datetime.now(UTC).isoformat()
-    if _until:
-        filters.append(UsageDaily.date <= _until[:10])
+    filters: list[Any] = [UsageHourly.user_id == user_id]
+    since_hour, until_hour = _hour_bounds(since, until)
+    if since_hour is not None:
+        filters.append(UsageHourly.hour >= since_hour)
+    if until_hour is not None:
+        filters.append(UsageHourly.hour <= until_hour)
     if provider:
-        filters.append(UsageDaily.provider == normalize_provider_name(provider))
+        filters.append(UsageHourly.provider == normalize_provider_name(provider))
     if model:
-        filters.append(UsageDaily.model == normalize_model_name(model))
+        filters.append(UsageHourly.model == normalize_model_name(model))
     if client_source:
-        filters.append(UsageDaily.client_source == client_source)
+        filters.append(UsageHourly.client_source == client_source)
     if device_id:
-        filters.append(_device_filter(UsageDaily.device_id, device_id))
+        filters.append(_device_filter(UsageHourly.device_id, device_id))
     return filters
 
 
-def _should_use_daily_table(since: str | None, until: str | None) -> bool:
-    """Return True when the time range is wide enough for daily aggregation.
+ROLLUP_SUM_FIELDS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "reasoning_tokens",
+    "cached_tokens",
+    "cache_creation_tokens",
+    "total_tokens",
+    "input_cost_usd",
+    "output_cost_usd",
+    "total_cost_usd",
+    "latency_sum_ms",
+    "successful_requests",
+    "failed_requests",
+    "status_429",
+    "status_4xx",
+    "status_5xx",
+    "status_unknown",
+)
 
-    For sub-2-day ranges, the daily aggregate table loses precision because it
-    includes full calendar days.  Fall back to the raw usage table for accuracy.
+
+def _rollup(
+    *group_cols: Any,
+    user_id: str,
+    since: str | None = None,
+    until: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    client_source: str | None = None,
+    device_id: str | None = None,
+    order_by: Any = None,
+    join_device: bool = False,
+    db_path: str | None = None,
+) -> list[dict[str, Any]]:
+    """Sum usage_hourly over a range and filters, grouped by *group_cols*.
+
+    The one query behind every dashboard summary and chart; rows get the
+    derived averages and throughput. Default order is total tokens, desc.
     """
-    if since is None:
-        return True
-    try:
-        since_dt = datetime.fromisoformat(since)
-        if since_dt.tzinfo is None:
-            since_dt = since_dt.replace(tzinfo=UTC)
-        if until is None:
-            until_dt = datetime.now(UTC)
-        else:
-            until_dt = datetime.fromisoformat(until)
-            if until_dt.tzinfo is None:
-                until_dt = until_dt.replace(tzinfo=UTC)
-        return (until_dt - since_dt).total_seconds() >= 2 * 86400
-    except (ValueError, TypeError):
-        return True
-
-
-def _daily_usage_token_columns(*, include_reasoning: bool = True) -> tuple[Any, ...]:
-    columns: list[Any] = [
-        func.sum(UsageDaily.prompt_tokens).label("prompt_tokens"),
-        func.sum(UsageDaily.completion_tokens).label("completion_tokens"),
-    ]
-    if include_reasoning:
-        columns.append(func.sum(UsageDaily.reasoning_tokens).label("reasoning_tokens"))
-    columns.extend(
-        [
-            func.sum(UsageDaily.cached_tokens).label("cached_tokens"),
-            func.sum(UsageDaily.cache_creation_tokens).label("cache_creation_tokens"),
-            func.sum(UsageDaily.total_tokens).label("total_tokens"),
-        ]
-    )
-    return tuple(columns)
-
-
-def _daily_usage_latency_columns(
-    *, include_avg_latency: bool = True
-) -> tuple[Any, ...]:
-    columns: list[Any] = []
-    if include_avg_latency:
-        # Cast to REAL to avoid integer division truncation on SQLite
-        columns.append(
-            (
-                func.cast(func.sum(UsageDaily.latency_sum_ms), types.REAL)
-                / func.sum(UsageDaily.request_count)
-            ).label("avg_latency_ms")
+    total_tokens = func.sum(UsageHourly.total_tokens)
+    query = (
+        select(
+            *group_cols,
+            func.sum(UsageHourly.request_count).label("requests"),
+            *(
+                func.sum(getattr(UsageHourly, field)).label(field)
+                for field in ROLLUP_SUM_FIELDS
+            ),
         )
-    columns.append(func.sum(UsageDaily.latency_sum_ms).label("latency_sum_ms"))
-    return tuple(columns)
-
-
-def _daily_usage_cost_columns(*, include_input_output: bool = True) -> tuple[Any, ...]:
-    columns: list[Any] = []
-    if include_input_output:
-        columns.extend(
-            [
-                func.sum(UsageDaily.input_cost_usd).label("input_cost_usd"),
-                func.sum(UsageDaily.output_cost_usd).label("output_cost_usd"),
-            ]
+        .select_from(UsageHourly)
+        .where(
+            *_hourly_filters(
+                user_id=user_id,
+                since=since,
+                until=until,
+                provider=provider,
+                model=model,
+                client_source=client_source,
+                device_id=device_id,
+            )
         )
-    columns.append(func.sum(UsageDaily.total_cost_usd).label("total_cost_usd"))
-    return tuple(columns)
-
-
-def _daily_usage_effective_price_columns() -> tuple[Any, ...]:
-    return (
-        _avg_effective_price_expr(
-            UsageDaily.total_cost_usd, UsageDaily.total_tokens
-        ).label("avg_effective_price_usd"),
-        _avg_effective_price_per_million_expr(
-            UsageDaily.total_cost_usd, UsageDaily.total_tokens
-        ).label("avg_effective_price_per_million_usd"),
+        .group_by(*group_cols)
+        .order_by(total_tokens.desc() if order_by is None else order_by)
     )
-
-
-def _daily_usage_status_columns() -> tuple[Any, ...]:
-    return (
-        func.sum(UsageDaily.successful_requests).label("successful_requests"),
-        func.sum(UsageDaily.failed_requests).label("failed_requests"),
-        func.sum(UsageDaily.status_429).label("status_429"),
-        func.sum(UsageDaily.status_4xx).label("status_4xx"),
-        func.sum(UsageDaily.status_5xx).label("status_5xx"),
-        func.sum(UsageDaily.status_unknown).label("status_unknown"),
-    )
+    if join_device:
+        query = query.outerjoin(Device, UsageHourly.device_id == Device.id)
+    with get_engine(db_path).connect() as connection:
+        rows = [_row_to_dict(row) for row in connection.execute(query)]
+    for row in rows:
+        latency_sum = row["latency_sum_ms"] or 0
+        row["avg_latency_ms"] = latency_sum / row["requests"]
+        row["avg_throughput"] = (
+            row["completion_tokens"] * 1000.0 / latency_sum if latency_sum > 0 else None
+        )
+        row["avg_effective_price_usd"] = (
+            row["total_cost_usd"] / row["total_tokens"] if row["total_tokens"] else 0
+        )
+        row["avg_effective_price_per_million_usd"] = (
+            row["avg_effective_price_usd"] * 1_000_000
+        )
+    return rows
 
 
 def fetch_recent_usage(
@@ -1130,10 +1105,7 @@ def fetch_recent_usage(
         tool_names_expr = func.string_agg(ToolCall.tool_name, ",").label("tool_names")
     else:
         tool_names_expr = func.group_concat(ToolCall.tool_name, ",").label("tool_names")
-    tool_query = select(
-        ToolCall.usage_id,
-        tool_names_expr,
-    ).group_by(ToolCall.usage_id)
+    tool_query = select(ToolCall.usage_id, tool_names_expr).group_by(ToolCall.usage_id)
     tool_query = tool_query.where(ToolCall.user_id == user_id)
     tool_agg = tool_query.subquery()
 
@@ -1188,14 +1160,14 @@ def distinct_client_sources(
     until: str | None = None,
     db_path: str | None = None,
 ) -> list[str]:
-    """Return distinct client_source values from usage_daily."""
-    filters = _daily_usage_filters(user_id=user_id, since=since, until=until)
-    filters.append(UsageDaily.client_source != "")
+    """Return distinct client_source values from usage_hourly."""
+    filters = _hourly_filters(user_id=user_id, since=since, until=until)
+    filters.append(UsageHourly.client_source != "")
     query = (
-        select(UsageDaily.client_source)
+        select(UsageHourly.client_source)
         .distinct()
         .where(and_(*filters))
-        .order_by(UsageDaily.client_source)
+        .order_by(UsageHourly.client_source)
     )
     with get_engine(db_path).connect() as connection:
         return [row[0] for row in connection.execute(query)]
@@ -1271,17 +1243,12 @@ def count_usage(
     until: str | None = None,
     db_path: str | None = None,
 ) -> int:
-    """Sum request_count from usage_daily matching the optional filters.
+    """Count usage rows matching the optional filters.
 
-    When *session_id* is set the daily-aggregate table cannot help (it has no
-    session_id column), so we fall back to counting rows in the raw ``usage``
-    table instead.
+    Unbounded counts (the Overview total) read usage_hourly; a time range,
+    session or tool counts raw ``usage`` rows exactly, matching the Logs rows.
     """
-    if (
-        session_id is not None
-        or tool_name is not None
-        or not _should_use_daily_table(since, until)
-    ):
+    if since or until or session_id is not None or tool_name is not None:
         filters = _usage_filters(
             user_id=user_id,
             provider=provider,
@@ -1293,28 +1260,20 @@ def count_usage(
             since=since,
             until=until,
         )
-        query = select(func.count()).select_from(Usage)
-        if filters:
-            query = query.where(and_(*filters))
-        with get_engine(db_path).connect() as connection:
-            result = connection.execute(query).scalar_one()
-            return int(result or 0)
-
-    filters = _daily_usage_filters(
-        user_id=user_id,
-        since=since,
-        until=until,
-        provider=provider,
-        model=model,
-        client_source=client_source,
-        device_id=device_id,
-    )
-    query = select(func.sum(UsageDaily.request_count))
-    if filters:
-        query = query.where(and_(*filters))
+        query = select(func.count()).select_from(Usage).where(and_(*filters))
+    else:
+        filters = _hourly_filters(
+            user_id=user_id,
+            since=since,
+            until=until,
+            provider=provider,
+            model=model,
+            client_source=client_source,
+            device_id=device_id,
+        )
+        query = select(func.sum(UsageHourly.request_count)).where(and_(*filters))
     with get_engine(db_path).connect() as connection:
-        result = connection.execute(query).scalar_one()
-        return int(result or 0)
+        return int(connection.execute(query).scalar_one() or 0)
 
 
 def get_usage_high_watermark_ts(*, user_id: str, db_path: str | None = None) -> int:
@@ -1503,91 +1462,6 @@ def _build_usage_window_summary(
     return result
 
 
-def _summarize_usage_raw(
-    *,
-    user_id: str,
-    select_cols: tuple[Any, ...],
-    group_cols: tuple[Any, ...],
-    since: str | None = None,
-    until: str | None = None,
-    provider: str | None = None,
-    model: str | None = None,
-    client_source: str | None = None,
-    device_id: str | None = None,
-    db_path: str | None = None,
-) -> list[dict[str, Any]]:
-    """Aggregate raw usage table for sub-day ranges."""
-    filters = _usage_filters(
-        user_id=user_id,
-        provider=provider,
-        model=model,
-        client_source=client_source,
-        device_id=device_id,
-        since=since,
-        until=until,
-    )
-
-    latency_sum = func.coalesce(
-        func.sum(case((Usage.latency_ms.isnot(None), Usage.latency_ms), else_=0)), 0
-    )
-
-    query = (
-        select(
-            *select_cols,
-            func.count().label("requests"),
-            func.coalesce(func.sum(Usage.prompt_tokens), 0).label("prompt_tokens"),
-            func.coalesce(func.sum(Usage.completion_tokens), 0).label(
-                "completion_tokens"
-            ),
-            func.coalesce(func.sum(Usage.reasoning_tokens), 0).label(
-                "reasoning_tokens"
-            ),
-            func.coalesce(func.sum(Usage.cached_tokens), 0).label("cached_tokens"),
-            func.coalesce(func.sum(Usage.cache_creation_tokens), 0).label(
-                "cache_creation_tokens"
-            ),
-            func.coalesce(func.sum(Usage.total_tokens), 0).label("total_tokens"),
-            func.avg(Usage.latency_ms).label("avg_latency_ms"),
-            latency_sum.label("latency_sum_ms"),
-            func.coalesce(func.sum(Usage.input_cost_usd), 0).label("input_cost_usd"),
-            func.coalesce(func.sum(Usage.output_cost_usd), 0).label("output_cost_usd"),
-            func.coalesce(func.sum(Usage.total_cost_usd), 0).label("total_cost_usd"),
-            _avg_effective_price_expr(Usage.total_cost_usd, Usage.total_tokens).label(
-                "avg_effective_price_usd"
-            ),
-            _avg_effective_price_per_million_expr(
-                Usage.total_cost_usd, Usage.total_tokens
-            ).label("avg_effective_price_per_million_usd"),
-            func.count(
-                case((or_(Usage.status.is_(None), Usage.status < 400), 1))
-            ).label("successful_requests"),
-            func.count(
-                case((and_(Usage.status.isnot(None), Usage.status >= 400), 1))
-            ).label("failed_requests"),
-            func.count(case((Usage.status == 429, 1))).label("status_429"),
-            func.count(
-                case(
-                    (
-                        and_(
-                            Usage.status >= 400, Usage.status < 500, Usage.status != 429
-                        ),
-                        1,
-                    )
-                )
-            ).label("status_4xx"),
-            func.count(case((Usage.status >= 500, 1))).label("status_5xx"),
-            literal_column("0").label("status_unknown"),
-        )
-        .group_by(*group_cols)
-        .order_by(func.coalesce(func.sum(Usage.total_tokens), 0).desc())
-    )
-    if filters:
-        query = query.where(and_(*filters))
-    with get_engine(db_path).connect() as connection:
-        result = [_row_to_dict(row) for row in connection.execute(query)]
-    return _attach_throughput(result)
-
-
 def summarize_tool_calls(
     *,
     user_id: str,
@@ -1653,21 +1527,8 @@ def summarize_usage_by_source(
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate usage totals by client_source for dashboard source chart."""
-    if not _should_use_daily_table(since, until):
-        return _summarize_usage_raw(
-            user_id=user_id,
-            select_cols=(Usage.client_source,),
-            group_cols=(Usage.client_source,),
-            since=since,
-            until=until,
-            provider=provider,
-            model=model,
-            client_source=client_source,
-            device_id=device_id,
-            db_path=db_path,
-        )
-
-    filters = _daily_usage_filters(
+    return _rollup(
+        UsageHourly.client_source,
         user_id=user_id,
         since=since,
         until=until,
@@ -1675,25 +1536,8 @@ def summarize_usage_by_source(
         model=model,
         client_source=client_source,
         device_id=device_id,
+        db_path=db_path,
     )
-
-    query = (
-        select(
-            UsageDaily.client_source,
-            func.sum(UsageDaily.request_count).label("requests"),
-            *_daily_usage_token_columns(),
-            *_daily_usage_latency_columns(),
-            *_daily_usage_cost_columns(),
-            *_daily_usage_status_columns(),
-        )
-        .group_by(UsageDaily.client_source)
-        .order_by(func.sum(UsageDaily.total_tokens).desc())
-    )
-    if filters:
-        query = query.where(and_(*filters))
-    with get_engine(db_path).connect() as connection:
-        result = [_row_to_dict(row) for row in connection.execute(query)]
-    return _attach_throughput(result)
 
 
 def summarize_usage_by_provider(
@@ -1708,21 +1552,8 @@ def summarize_usage_by_provider(
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate usage totals by provider for dashboard provider chart."""
-    if not _should_use_daily_table(since, until):
-        return _summarize_usage_raw(
-            user_id=user_id,
-            select_cols=(Usage.provider,),
-            group_cols=(Usage.provider,),
-            since=since,
-            until=until,
-            provider=provider,
-            model=model,
-            client_source=client_source,
-            device_id=device_id,
-            db_path=db_path,
-        )
-
-    filters = _daily_usage_filters(
+    return _rollup(
+        UsageHourly.provider,
         user_id=user_id,
         since=since,
         until=until,
@@ -1730,29 +1561,11 @@ def summarize_usage_by_provider(
         model=model,
         client_source=client_source,
         device_id=device_id,
+        db_path=db_path,
     )
 
-    query = (
-        select(
-            UsageDaily.provider,
-            func.sum(UsageDaily.request_count).label("requests"),
-            *_daily_usage_token_columns(),
-            *_daily_usage_latency_columns(),
-            *_daily_usage_cost_columns(),
-            *_daily_usage_effective_price_columns(),
-            *_daily_usage_status_columns(),
-        )
-        .group_by(UsageDaily.provider)
-        .order_by(func.sum(UsageDaily.total_tokens).desc())
-    )
-    if filters:
-        query = query.where(and_(*filters))
-    with get_engine(db_path).connect() as connection:
-        result = [_row_to_dict(row) for row in connection.execute(query)]
-    return _attach_throughput(result)
 
-
-def summarize_usage_daily(
+def summarize_usage_by_model(
     *,
     user_id: str,
     since: str | None = None,
@@ -1763,25 +1576,10 @@ def summarize_usage_daily(
     device_id: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Aggregate usage totals by provider and model for dashboard summaries.
-
-    For sub-2-day time ranges, queries the raw usage table for precision.
-    """
-    if not _should_use_daily_table(since, until):
-        return _summarize_usage_raw(
-            user_id=user_id,
-            select_cols=(Usage.provider, Usage.model),
-            group_cols=(Usage.provider, Usage.model),
-            since=since,
-            until=until,
-            provider=provider,
-            model=model,
-            client_source=client_source,
-            device_id=device_id,
-            db_path=db_path,
-        )
-
-    filters = _daily_usage_filters(
+    """Aggregate usage totals by provider and model for dashboard summaries."""
+    return _rollup(
+        UsageHourly.provider,
+        UsageHourly.model,
         user_id=user_id,
         since=since,
         until=until,
@@ -1789,89 +1587,36 @@ def summarize_usage_daily(
         model=model,
         client_source=client_source,
         device_id=device_id,
+        db_path=db_path,
     )
-
-    query = (
-        select(
-            UsageDaily.provider,
-            UsageDaily.model,
-            func.sum(UsageDaily.request_count).label("requests"),
-            *_daily_usage_token_columns(),
-            *_daily_usage_latency_columns(),
-            *_daily_usage_cost_columns(),
-            *_daily_usage_effective_price_columns(),
-            *_daily_usage_status_columns(),
-        )
-        .group_by(UsageDaily.provider, UsageDaily.model)
-        .order_by(func.sum(UsageDaily.total_tokens).desc())
-    )
-    if filters:
-        query = query.where(and_(*filters))
-    with get_engine(db_path).connect() as connection:
-        result = [_row_to_dict(row) for row in connection.execute(query)]
-    return _attach_throughput(result)
 
 
 # === Period aggregation ===
 
 
-def _parse_tz_offset(tz_offset: str) -> tuple[int, int]:
-    """Parse '+05:30' into (hours, minutes) with sign."""
-    sign = 1 if tz_offset.startswith("+") else -1
-    hours_str, minutes_str = tz_offset[1:].split(":", 1)
-    return sign * int(hours_str), sign * int(minutes_str)
+def _local_period(granularity: str, tz_offset: str) -> tuple[Any, str]:
+    """Local period key (the period start as local-shifted epoch seconds) of a
+    usage_hourly row and its display format.
 
-
-def _period_expression(granularity: str, tz_offset: str) -> Any:
-    """Return a dialect-aware SQL expression that buckets Usage.ts into period strings.
-
-    Usage.ts is stored as epoch microseconds (int). This function converts to a
-    datetime with timezone offset, then formats to the requested granularity.
+    ponytail: a half-hour offset shifts whole UTC hours, so a request within
+    30 min of local midnight can land on the neighbouring day; 15-min rows
+    would make it exact.
     """
-    dialect = get_engine().dialect.name
-    offset_hours, offset_minutes = _parse_tz_offset(tz_offset)
+    size, fmt = (
+        (3600, "%Y-%m-%d %H:00") if granularity == "hour" else (86400, "%Y-%m-%d")
+    )
+    # Inline integers: Postgres only matches the GROUP BY to the SELECT
+    # expression when both render identically, which bind params don't.
+    offset = literal_column(str(_tz_seconds(tz_offset)), BigInteger)
+    # Modulo, not division: `/` is float on MySQL, so this stays an integer.
+    local = UsageHourly.hour + offset
+    period = local - local % literal_column(str(size), BigInteger)
+    return period.label("period"), fmt
 
-    if dialect == "sqlite":
-        fmt = "%Y-%m-%d %H:00" if granularity == "hour" else "%Y-%m-%d"
-        modifiers: list[str] = ["unixepoch"]
-        if offset_hours:
-            modifiers.append(f"{offset_hours:+d} hours")
-        if offset_minutes:
-            modifiers.append(f"{offset_minutes:+d} minutes")
-        return func.strftime(fmt, func.datetime(Usage.ts / 1_000_000, *modifiers))
 
-    if dialect == "postgresql":
-        pg_fmt = "YYYY-MM-DD HH24:00" if granularity == "hour" else "YYYY-MM-DD"
-        ts_cast = func.to_timestamp(Usage.ts / 1_000_000.0)
-        parts: list[str] = []
-        if offset_hours:
-            parts.append(f"{offset_hours} hours")
-        if offset_minutes:
-            parts.append(f"{offset_minutes} minutes")
-        ts_adjusted = (
-            ts_cast + text(f"interval '{' '.join(parts)}'") if parts else ts_cast
-        )
-        # to_char() on a timestamptz implicitly converts to the session's
-        # TimeZone setting first; anchor to UTC so bucketing doesn't depend
-        # on the server/role's configured default timezone. self_group()
-        # parenthesizes ts_adjusted so AT TIME ZONE binds to the whole sum,
-        # not just the trailing interval.
-        return func.to_char(ts_adjusted.self_group().op("AT TIME ZONE")("UTC"), pg_fmt)
-
-    if dialect == "mysql":
-        fmt = "%Y-%m-%d %H:00" if granularity == "hour" else "%Y-%m-%d"
-        ts_parsed = func.from_unixtime(Usage.ts / 1_000_000.0)
-        mysql_parts: list[str] = []
-        if offset_hours:
-            mysql_parts.append(f"INTERVAL {offset_hours} HOUR")
-        if offset_minutes:
-            mysql_parts.append(f"INTERVAL {offset_minutes} MINUTE")
-        ts_adjusted = ts_parsed
-        for part in mysql_parts:
-            ts_adjusted = func.date_add(ts_adjusted, text(part))
-        return func.date_format(ts_adjusted, fmt)
-
-    raise ValueError(f"Unsupported database dialect: {dialect}")
+def _format_periods(rows: list[dict[str, Any]], fmt: str) -> None:
+    for row in rows:
+        row["period"] = datetime.fromtimestamp(row["period"], UTC).strftime(fmt)
 
 
 def aggregate_usage_by_period(
@@ -1885,96 +1630,12 @@ def aggregate_usage_by_period(
     device_id: str | None = None,
     granularity: str = "day",
     tz_offset: str = "+00:00",
-) -> list[dict[str, Any]]:
-    """Bucket usage into local-time hourly or daily periods via SQL GROUP BY."""
-    filters = _usage_filters(
-        user_id=user_id,
-        provider=provider,
-        model=model,
-        client_source=client_source,
-        device_id=device_id,
-        since=since,
-        until=until,
-    )
-
-    period_expr = _period_expression(granularity, tz_offset)
-
-    latency_count = func.count(case((Usage.latency_ms.isnot(None), 1)))
-    latency_sum = func.coalesce(
-        func.sum(case((Usage.latency_ms.isnot(None), Usage.latency_ms), else_=0)),
-        0,
-    )
-
-    query = (
-        select(
-            period_expr.label("period"),
-            func.count().label("requests"),
-            func.coalesce(func.sum(Usage.prompt_tokens), 0).label("prompt_tokens"),
-            func.coalesce(func.sum(Usage.completion_tokens), 0).label(
-                "completion_tokens"
-            ),
-            func.coalesce(func.sum(Usage.cached_tokens), 0).label("cached_tokens"),
-            func.coalesce(func.sum(Usage.cache_creation_tokens), 0).label(
-                "cache_creation_tokens"
-            ),
-            func.coalesce(func.sum(Usage.total_tokens), 0).label("total_tokens"),
-            func.coalesce(func.sum(Usage.input_cost_usd), 0).label("input_cost_usd"),
-            func.coalesce(func.sum(Usage.output_cost_usd), 0).label("output_cost_usd"),
-            func.coalesce(func.sum(Usage.total_cost_usd), 0).label("total_cost_usd"),
-            latency_sum.label("latency_sum"),
-            latency_count.label("latency_count"),
-            func.count(
-                case((and_(Usage.status.isnot(None), Usage.status >= 400), 1))
-            ).label("failed_requests"),
-            func.count(
-                case((or_(Usage.status.is_(None), Usage.status < 400), 1))
-            ).label("successful_requests"),
-        )
-        .group_by(period_expr)
-        .order_by(period_expr)
-    )
-    if filters:
-        query = query.where(and_(*filters))
-
-    result = []
-    with get_engine().connect() as connection:
-        for row in connection.execute(query):
-            count = row.latency_count
-            avg_latency = row.latency_sum / count if count > 0 else 0
-            result.append(
-                {
-                    "period": row.period,
-                    "requests": row.requests,
-                    "prompt_tokens": row.prompt_tokens,
-                    "completion_tokens": row.completion_tokens,
-                    "cached_tokens": row.cached_tokens,
-                    "cache_creation_tokens": row.cache_creation_tokens,
-                    "total_tokens": row.total_tokens,
-                    "input_cost_usd": _normalize_value(row.input_cost_usd),
-                    "output_cost_usd": _normalize_value(row.output_cost_usd),
-                    "total_cost_usd": _normalize_value(row.total_cost_usd),
-                    "latency_sum_ms": _normalize_value(row.latency_sum),
-                    "avg_latency_ms": _normalize_value(avg_latency),
-                    "successful_requests": row.successful_requests,
-                    "failed_requests": row.failed_requests,
-                }
-            )
-    return _attach_throughput(result)
-
-
-def aggregate_daily_by_period(
-    *,
-    user_id: str,
-    since: str | None = None,
-    until: str | None = None,
-    provider: str | None = None,
-    model: str | None = None,
-    client_source: str | None = None,
-    device_id: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Read daily-bucketed usage from the pre-aggregated usage_daily table."""
-    filters = _daily_usage_filters(
+    """Bucket usage into local-time hourly or daily periods."""
+    period, fmt = _local_period(granularity, tz_offset)
+    rows = _rollup(
+        period,
         user_id=user_id,
         since=since,
         until=until,
@@ -1982,25 +1643,11 @@ def aggregate_daily_by_period(
         model=model,
         client_source=client_source,
         device_id=device_id,
+        order_by=period,
+        db_path=db_path,
     )
-
-    query = (
-        select(
-            UsageDaily.date.label("period"),
-            func.sum(UsageDaily.request_count).label("requests"),
-            *_daily_usage_token_columns(include_reasoning=False),
-            *_daily_usage_cost_columns(),
-            *_daily_usage_status_columns(),
-            *_daily_usage_latency_columns(),
-        )
-        .group_by(UsageDaily.date)
-        .order_by(UsageDaily.date)
-    )
-    if filters:
-        query = query.where(and_(*filters))
-    with get_engine(db_path).connect() as connection:
-        result = [_row_to_dict(row) for row in connection.execute(query)]
-    return _attach_throughput(result)
+    _format_periods(rows, fmt)
+    return rows
 
 
 def aggregate_daily_by_dimension(
@@ -2013,10 +1660,26 @@ def aggregate_daily_by_dimension(
     model: str | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
+    tz_offset: str = "+00:00",
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Read daily-bucketed usage grouped by a dimension (model/provider/client_source/device)."""
-    filters = _daily_usage_filters(
+    """Local-day usage grouped by a dimension (model/provider/client_source/device)."""
+    name_cols: list[Any] = []
+    dim_col: Any
+    if dimension == "provider":
+        dim_col = UsageHourly.provider
+    elif dimension == "client_source":
+        dim_col = UsageHourly.client_source
+    elif dimension == "device":
+        dim_col = UsageHourly.device_id  # NULL = Unknown
+        name_cols = [Device.device_name.label("dimension_name")]
+    else:
+        dim_col = UsageHourly.model
+    period, fmt = _local_period("day", tz_offset)
+    rows = _rollup(
+        dim_col.label("dimension"),
+        *name_cols,
+        period,
         user_id=user_id,
         since=since,
         until=until,
@@ -2024,43 +1687,9 @@ def aggregate_daily_by_dimension(
         model=model,
         client_source=client_source,
         device_id=device_id,
+        order_by=period,
+        join_device=dimension == "device",
+        db_path=db_path,
     )
-
-    dim_col: Any
-    name_cols: list[Any] = []
-    if dimension == "provider":
-        dim_col = UsageDaily.provider
-    elif dimension == "client_source":
-        dim_col = UsageDaily.client_source
-    elif dimension == "device":
-        dim_col = UsageDaily.device_id  # NULL = Unknown
-        name_cols = [Device.device_name.label("dimension_name")]
-    else:
-        dim_col = UsageDaily.model
-    group_cols: list[Any] = [dim_col, *name_cols, UsageDaily.date]
-
-    query = (
-        select(
-            dim_col.label("dimension"),
-            *name_cols,
-            UsageDaily.date.label("period"),
-            func.sum(UsageDaily.request_count).label("requests"),
-            func.sum(UsageDaily.prompt_tokens).label("prompt_tokens"),
-            func.sum(UsageDaily.cached_tokens).label("cached_tokens"),
-            func.sum(UsageDaily.cache_creation_tokens).label("cache_creation_tokens"),
-            func.sum(UsageDaily.total_tokens).label("total_tokens"),
-            func.sum(UsageDaily.total_cost_usd).label("total_cost_usd"),
-            func.sum(UsageDaily.completion_tokens).label("completion_tokens"),
-            func.sum(UsageDaily.latency_sum_ms).label("latency_sum_ms"),
-            *_daily_usage_status_columns(),
-        )
-        .select_from(UsageDaily)
-        .group_by(*group_cols)
-        .order_by(UsageDaily.date)
-    )
-    if dimension == "device":
-        query = query.outerjoin(Device, UsageDaily.device_id == Device.id)
-    if filters:
-        query = query.where(and_(*filters))
-    with get_engine(db_path).connect() as connection:
-        return [_row_to_dict(row) for row in connection.execute(query)]
+    _format_periods(rows, fmt)
+    return rows

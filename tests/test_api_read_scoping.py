@@ -71,7 +71,7 @@ def tenant_reads(api_module, fresh_db):
                 session.commit()
                 session.refresh(usage)
                 session.expunge(usage)
-            _upsert_daily(usage)
+            _upsert_hourly(usage)
             db.upsert_session_from_usage(usage)
             tool = ToolCall(
                 tool_use_id=f"{name}-tool-{index}",
@@ -99,7 +99,7 @@ def tenant_reads(api_module, fresh_db):
 
 
 @pytest.mark.parametrize("auth_mode", ("cookie", "bearer", "empty", "loopback"))
-@pytest.mark.parametrize("range_mode", ("daily", "raw"))
+@pytest.mark.parametrize("range_mode", ("days", "hours"))
 def test_all_read_routes_isolate_data(
     api_module, tenant_reads, monkeypatch, auth_mode, range_mode
 ):
@@ -121,10 +121,10 @@ def test_all_read_routes_isolate_data(
     weight = int(bool(owners))
     params = {
         "since": "2026-04-16T00:00:00+00:00"
-        if range_mode == "daily"
+        if range_mode == "days"
         else "2026-04-17T09:00:00+00:00",
         "until": "2026-04-19T00:00:00+00:00"
-        if range_mode == "daily"
+        if range_mode == "days"
         else "2026-04-17T11:00:00+00:00",
     }
 
@@ -325,7 +325,7 @@ def test_cost_recalculation_requires_row_ownership(
     from sqlalchemy import select
 
     from src.config.app import CONFIG
-    from src.database.models import PriceSnapshot, SessionRecord, Usage, UsageDaily
+    from src.database.models import PriceSnapshot, SessionRecord, Usage, UsageHourly
 
     tokens, _ = tenant_reads
     monkeypatch.setitem(CONFIG, "auth", {"provider": "google"})
@@ -345,8 +345,8 @@ def test_cost_recalculation_requires_row_ownership(
                     ).order_by(Usage.id)
                 ).all(),
                 session.execute(
-                    select(UsageDaily.id, UsageDaily.total_cost_usd).order_by(
-                        UsageDaily.id
+                    select(UsageHourly.id, UsageHourly.total_cost_usd).order_by(
+                        UsageHourly.id
                     )
                 ).all(),
                 session.execute(
@@ -421,12 +421,12 @@ def test_cost_recalculation_rejects_invalid_and_revoked_tokens(
         )
 
 
-def _upsert_daily(usage, db_path=None):
+def _upsert_hourly(usage, db_path=None):
     from sqlalchemy.orm import Session
 
     from src.database import get_engine
-    from src.database.usage import upsert_daily_aggregate
+    from src.database.usage import upsert_hourly_aggregate
 
     with Session(get_engine(db_path)) as session:
-        upsert_daily_aggregate(session, usage)
+        upsert_hourly_aggregate(session, usage)
         session.commit()

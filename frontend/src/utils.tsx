@@ -167,6 +167,11 @@ export function formatTime(input: string | number, tz?: string) {
   return new Intl.DateTimeFormat(undefined, options).format(date)
 }
 
+// The custom range is datetime-local (no zone); the API reads naive bounds as UTC.
+export function customBound(local: string): string {
+  return local && new Date(local).toISOString()
+}
+
 export function getSinceDate(option: DateRangeOption): string | null {
   if (option === 'custom' || option === 'all') return null
   if (option === '24h') return new Date(Date.now() - 24 * 3600_000).toISOString()

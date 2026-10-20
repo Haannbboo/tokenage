@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 # Epoch constants for test timestamps
@@ -117,7 +119,7 @@ def test_log_usage_normalizes_model_before_rollups(fresh_db):
     from sqlalchemy.orm import Session
 
     from src.database import get_engine, log_usage
-    from src.database.models import SessionRecord, Usage, UsageDaily
+    from src.database.models import SessionRecord, Usage, UsageHourly
 
     usage = Usage(
         device_id="test-device",
@@ -134,9 +136,9 @@ def test_log_usage_normalizes_model_before_rollups(fresh_db):
     with Session(get_engine(fresh_db.db_path)) as session:
         assert session.get(Usage, usage.id).provider == "custom"
         assert session.get(Usage, usage.id).model == "stealth/space-bunny-alpha"
-        assert session.scalars(select(UsageDaily)).one().provider == "custom"
+        assert session.scalars(select(UsageHourly)).one().provider == "custom"
         assert (
-            session.scalars(select(UsageDaily)).one().model
+            session.scalars(select(UsageHourly)).one().model
             == "stealth/space-bunny-alpha"
         )
         record = session.get(SessionRecord, "normalized-session")
@@ -454,7 +456,7 @@ def test_aggregate_usage_by_period_filters_by_client_source(fresh_db):
     assert len(result) == 2
 
 
-def test_summarize_usage_daily_includes_avg_effective_price(fresh_db):
+def test_summarize_usage_by_model_includes_avg_effective_price(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -514,7 +516,7 @@ def test_summarize_usage_daily_includes_avg_effective_price(fresh_db):
         db_path=db_path,
     )
 
-    rows = database_module.summarize_usage_daily(user_id="test-user")
+    rows = database_module.summarize_usage_by_model(user_id="test-user")
     assert rows[0]["avg_effective_price_usd"] == pytest.approx(0.0015 / 450, abs=1e-8)
 
 
@@ -993,12 +995,12 @@ def _log_batch_rows(database_module, db_path, user_id):
 
 
 def _batch_state(database_module, db_path, user_id):
-    """Usage, usage_daily and session state with the user id stripped out."""
+    """Usage, usage_hourly and session state with the user id stripped out."""
     import json
 
     from sqlalchemy import select
 
-    from src.database.models import SessionRecord, UsageDaily
+    from src.database.models import SessionRecord, UsageHourly
 
     with database_module.Session(database_module.get_engine(db_path)) as session:
         usage = {
@@ -1015,13 +1017,13 @@ def _batch_state(database_module, db_path, user_id):
             )
         }
         daily = {
-            (d.date, d.model): (
+            (d.hour, d.model): (
                 float(d.input_cost_usd),
                 float(d.output_cost_usd),
                 float(d.total_cost_usd),
             )
             for d in session.scalars(
-                select(UsageDaily).where(UsageDaily.user_id == user_id)
+                select(UsageHourly).where(UsageHourly.user_id == user_id)
             )
         }
         sessions = {
@@ -1092,8 +1094,8 @@ def test_reprice_batches_match_per_row_recalculation(fresh_db, monkeypatch):
                 (float(costs["input_cost_usd"]), float(costs["output_cost_usd"]), total)
             )
             assert usage[f"-{i}"][3] is not None
-        date = usage_module._usage_date(database_module.Usage(ts=ts))
-        expected_daily[(date, model)] = expected_daily.get((date, model), 0) + total
+        hour = usage_module._usage_hour(database_module.Usage(ts=ts))
+        expected_daily[(hour, model)] = expected_daily.get((hour, model), 0) + total
         if session:
             models = expected_sessions.setdefault(f"-{session}", {})
             models[model] = models.get(model, 0) + total
@@ -1481,25 +1483,25 @@ def test_aggregate_usage_by_period_includes_cost_totals(fresh_db):
         granularity="day", user_id="test-user"
     )
 
-    assert daily == [
-        {
-            "period": "2026-04-17",
-            "requests": 2,
-            "prompt_tokens": 30,
-            "completion_tokens": 15,
-            "avg_throughput": 50.0,
-            "cached_tokens": 6,
-            "cache_creation_tokens": 0,
-            "total_tokens": 45,
-            "input_cost_usd": 6e-05,
-            "output_cost_usd": 9e-05,
-            "total_cost_usd": 0.00015,
-            "successful_requests": 2,
-            "failed_requests": 0,
-            "latency_sum_ms": 300,
-            "avg_latency_ms": 150.0,
-        }
-    ]
+    expected = {
+        "period": "2026-04-17",
+        "requests": 2,
+        "prompt_tokens": 30,
+        "completion_tokens": 15,
+        "avg_throughput": 50.0,
+        "cached_tokens": 6,
+        "cache_creation_tokens": 0,
+        "total_tokens": 45,
+        "input_cost_usd": 6e-05,
+        "output_cost_usd": 9e-05,
+        "total_cost_usd": 0.00015,
+        "successful_requests": 2,
+        "failed_requests": 0,
+        "latency_sum_ms": 300,
+        "avg_latency_ms": 150.0,
+    }
+    assert len(daily) == 1
+    assert {k: daily[0][k] for k in expected} == expected
 
 
 def test_throughput_ignores_tool_calls(fresh_db):
@@ -1541,9 +1543,12 @@ def test_throughput_ignores_tool_calls(fresh_db):
 
     for rows in (
         database_module.aggregate_usage_by_period(user_id="test-user"),
-        database_module.summarize_usage_daily(user_id="test-user"),
+        database_module.summarize_usage_by_model(user_id="test-user"),
         database_module.summarize_usage_by_source(user_id="test-user"),
         database_module.summarize_usage_by_provider(user_id="test-user"),
+        database_module.aggregate_daily_by_dimension(
+            user_id="test-user", dimension="model"
+        ),
     ):
         assert rows[0]["avg_throughput"] == 100.0
         assert "tool_duration_sum_ms" not in rows[0]
@@ -1674,7 +1679,7 @@ def test_get_or_create_base_url_retries_in_fresh_transaction_after_duplicate_ins
     assert state["rolled_back"] is True
 
 
-def test_upsert_daily_aggregate_inserts_and_updates(fresh_db):
+def test_upsert_hourly_aggregate_inserts_and_updates(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -1708,7 +1713,7 @@ def test_upsert_daily_aggregate_inserts_and_updates(fresh_db):
 
     # Verify insert
     with database_module.get_engine(db_path).connect() as conn:
-        rows = list(conn.execute(database_module.select(database_module.UsageDaily)))
+        rows = list(conn.execute(database_module.select(database_module.UsageHourly)))
     assert len(rows) == 1
     assert rows[0].request_count == 1
     assert rows[0].prompt_tokens == 100
@@ -1716,10 +1721,10 @@ def test_upsert_daily_aggregate_inserts_and_updates(fresh_db):
     assert rows[0].successful_requests == 1
     assert rows[0].failed_requests == 0
 
-    # Same date, provider, model, client_source -> upsert
+    # Same hour, provider, model, client_source -> upsert
     usage2 = database_module.Usage(
         device_id="test-device",
-        ts=TS_2026_04_17_11,
+        ts=TS_2026_04_17_10 + 1_800_000_000,
         provider="anthropic",
         model="claude-sonnet-4-6",
         client_source="claude-code",
@@ -1745,7 +1750,7 @@ def test_upsert_daily_aggregate_inserts_and_updates(fresh_db):
     database_module.log_usage(usage2, db_path=db_path)
 
     with database_module.get_engine(db_path).connect() as conn:
-        rows = list(conn.execute(database_module.select(database_module.UsageDaily)))
+        rows = list(conn.execute(database_module.select(database_module.UsageHourly)))
     assert len(rows) == 1
     assert rows[0].request_count == 2
     assert rows[0].prompt_tokens == 300
@@ -1756,7 +1761,7 @@ def test_upsert_daily_aggregate_inserts_and_updates(fresh_db):
     assert float(rows[0].total_cost_usd) == 0.009
 
 
-def test_upsert_daily_aggregate_handles_null_client_source(fresh_db):
+def test_upsert_hourly_aggregate_handles_null_client_source(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -1789,18 +1794,18 @@ def test_upsert_daily_aggregate_handles_null_client_source(fresh_db):
     database_module.log_usage(usage, db_path=db_path)
 
     with database_module.get_engine(db_path).connect() as conn:
-        rows = list(conn.execute(database_module.select(database_module.UsageDaily)))
+        rows = list(conn.execute(database_module.select(database_module.UsageHourly)))
     assert len(rows) == 1
     assert rows[0].client_source == ""
     assert rows[0].request_count == 1
 
 
-def test_upsert_daily_aggregate_separates_by_date(fresh_db):
+def test_upsert_hourly_aggregate_separates_by_hour(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    for ts in [TS_2026_04_17_10, TS_2026_04_18_10]:
+    for ts in [TS_2026_04_17_10, TS_2026_04_17_11]:
         usage = database_module.Usage(
             device_id="test-device",
             ts=ts,
@@ -1829,13 +1834,15 @@ def test_upsert_daily_aggregate_separates_by_date(fresh_db):
         database_module.log_usage(usage, db_path=db_path)
 
     with database_module.get_engine(db_path).connect() as conn:
-        rows = list(conn.execute(database_module.select(database_module.UsageDaily)))
+        rows = list(conn.execute(database_module.select(database_module.UsageHourly)))
     assert len(rows) == 2
-    dates = {r.date for r in rows}
-    assert dates == {"2026-04-17", "2026-04-18"}
+    assert {r.hour for r in rows} == {
+        TS_2026_04_17_10 // 1_000_000,
+        TS_2026_04_17_11 // 1_000_000,
+    }
 
 
-def test_log_usage_automaticaly_upserts_daily_aggregate(fresh_db):
+def test_log_usage_automaticaly_upserts_hourly_aggregate(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -1870,13 +1877,13 @@ def test_log_usage_automaticaly_upserts_daily_aggregate(fresh_db):
     )
 
     with database_module.get_engine(db_path).connect() as conn:
-        rows = list(conn.execute(database_module.select(database_module.UsageDaily)))
+        rows = list(conn.execute(database_module.select(database_module.UsageHourly)))
     assert len(rows) == 1
     assert rows[0].request_count == 1
     assert rows[0].prompt_tokens == 100
 
 
-def test_summarize_usage_daily_reads_from_aggregate_table(fresh_db):
+def test_summarize_usage_by_model_reads_from_aggregate_table(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -1913,7 +1920,7 @@ def test_summarize_usage_daily_reads_from_aggregate_table(fresh_db):
         )
         database_module.log_usage(usage, db_path=db_path)
 
-    summary = database_module.summarize_usage_daily(user_id="test-user")
+    summary = database_module.summarize_usage_by_model(user_id="test-user")
 
     assert len(summary) == 1
     row = summary[0]
@@ -1927,7 +1934,7 @@ def test_summarize_usage_daily_reads_from_aggregate_table(fresh_db):
     assert row["failed_requests"] == 1
 
 
-def test_summarize_usage_daily_filters_by_provider(fresh_db):
+def test_summarize_usage_by_model_filters_by_provider(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -1963,14 +1970,14 @@ def test_summarize_usage_daily_filters_by_provider(fresh_db):
         )
         database_module.log_usage(usage, db_path=db_path)
 
-    summary = database_module.summarize_usage_daily(
+    summary = database_module.summarize_usage_by_model(
         provider="anthropic", user_id="test-user"
     )
     assert len(summary) == 1
     assert summary[0]["provider"] == "anthropic"
 
 
-def test_summarize_usage_daily_filters_by_since(fresh_db):
+def test_summarize_usage_by_model_filters_by_since(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -2003,7 +2010,7 @@ def test_summarize_usage_daily_filters_by_since(fresh_db):
         )
         database_module.log_usage(usage, db_path=db_path)
 
-    summary = database_module.summarize_usage_daily(
+    summary = database_module.summarize_usage_by_model(
         since="2026-04-20", user_id="test-user"
     )
     assert len(summary) == 1
@@ -2057,8 +2064,8 @@ def _log_usage_row(
     )
 
 
-def test_summarize_usage_daily_sub_day_range(fresh_db):
-    """Sub-day time range must use raw usage table, not daily aggregates."""
+def test_summarize_usage_by_model_sub_day_range(fresh_db):
+    """A sub-day range is exact to the hour."""
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -2095,7 +2102,7 @@ def test_summarize_usage_daily_sub_day_range(fresh_db):
     _log_usage_row(database_module, db_path, TS_2026_04_18_10, 400, 200, 600)
 
     # 2-hour window on April 17 (sub-day) — should only include first two rows
-    summary = database_module.summarize_usage_daily(
+    summary = database_module.summarize_usage_by_model(
         since="2026-04-17T09:00:00",
         until="2026-04-17T12:00:00",
         user_id="test-user",
@@ -2133,7 +2140,7 @@ def test_count_usage_sub_day_range(fresh_db):
 
 
 def test_summarize_usage_by_source_sub_day_range(fresh_db):
-    """by-source with sub-day range must use raw usage table."""
+    """by-source honours a sub-day range."""
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -2161,7 +2168,7 @@ def test_summarize_usage_by_source_sub_day_range(fresh_db):
 
 
 def test_summarize_usage_by_provider_sub_day_range(fresh_db):
-    """by-provider with sub-day range must use raw usage table."""
+    """by-provider honours a sub-day range."""
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -2188,144 +2195,93 @@ def test_summarize_usage_by_provider_sub_day_range(fresh_db):
     assert summary[0]["total_tokens"] == 450
 
 
-def test_aggregate_daily_by_period_reads_from_aggregate_table(fresh_db):
+@pytest.mark.parametrize(
+    ("tz_offset", "days", "hours"),
+    [
+        (
+            "+00:00",
+            {"2026-05-05": 2, "2026-05-06": 2},
+            [
+                "2026-05-05 18:00",
+                "2026-05-05 23:00",
+                "2026-05-06 00:00",
+                "2026-05-06 06:00",
+            ],
+        ),
+        (
+            "-07:00",
+            {"2026-05-05": 4},
+            [
+                "2026-05-05 11:00",
+                "2026-05-05 16:00",
+                "2026-05-05 17:00",
+                "2026-05-05 23:00",
+            ],
+        ),
+        # Half-hour offsets shift whole UTC hours (documented approximation):
+        # 18:45 UTC is 00:15 local on the 6th but its hour lands on the 5th.
+        (
+            "+05:30",
+            {"2026-05-05": 1, "2026-05-06": 3},
+            [
+                "2026-05-05 23:00",
+                "2026-05-06 04:00",
+                "2026-05-06 05:00",
+                "2026-05-06 11:00",
+            ],
+        ),
+    ],
+)
+def test_aggregate_usage_by_period_local_buckets_around_midnight(
+    fresh_db, tz_offset, days, hours
+):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    for ts, tokens in [
-        (TS_2026_04_17_10, 100),
-        (TS_2026_04_17_11, 200),
-        (TS_2026_04_18_10, 300),
-    ]:
-        usage = database_module.Usage(
-            device_id="test-device",
-            ts=ts,
-            provider="anthropic",
-            model="claude-sonnet-4-6",
-            client_source=None,
-            session_id=None,
-            endpoint="/v1/messages",
-            prompt_tokens=tokens,
-            prompt_length=500,
-            completion_tokens=tokens // 2,
-            reasoning_tokens=None,
-            cached_tokens=None,
-            total_tokens=tokens + tokens // 2,
-            latency_ms=100,
-            ttft_ms=None,
-            tool_tokens=None,
-            cache_creation_tokens=None,
-            input_cost_usd=0.001,
-            output_cost_usd=0.002,
-            total_cost_usd=0.003,
-            status=200,
-            base_url_id=None,
-            user_id="test-user",
-        )
-        database_module.log_usage(usage, db_path=db_path)
+    for utc in [(5, 18, 45), (5, 23, 30), (6, 0, 30), (6, 6, 30)]:
+        ts = int(datetime(2026, 5, *utc, tzinfo=UTC).timestamp()) * 1_000_000
+        _log_usage_row(database_module, db_path, ts, 10, 5, 15)
 
-    result = database_module.aggregate_daily_by_period(user_id="test-user")
-
-    assert len(result) == 2
-    assert result[0]["period"] == "2026-04-17"
-    assert result[0]["requests"] == 2
-    assert result[0]["prompt_tokens"] == 300
-    assert result[0]["total_tokens"] == 450
-    assert result[1]["period"] == "2026-04-18"
-    assert result[1]["requests"] == 1
-    assert result[1]["prompt_tokens"] == 300
-
-
-def test_aggregate_daily_by_period_filters_by_provider(fresh_db):
-    database_module = fresh_db.database_module
-    db_path = fresh_db.db_path
-    database_module.init_db(db_path)
-
-    for provider, model in [("anthropic", "claude-sonnet-4-6"), ("openai", "gpt-4")]:
-        usage = database_module.Usage(
-            device_id="test-device",
-            ts=TS_2026_04_17_10,
-            provider=provider,
-            model=model,
-            client_source=None,
-            session_id=None,
-            endpoint="/v1/messages",
-            prompt_tokens=100,
-            prompt_length=500,
-            completion_tokens=50,
-            reasoning_tokens=None,
-            cached_tokens=None,
-            total_tokens=150,
-            latency_ms=100,
-            ttft_ms=None,
-            tool_tokens=None,
-            cache_creation_tokens=None,
-            input_cost_usd=0.001,
-            output_cost_usd=0.002,
-            total_cost_usd=0.003,
-            status=200,
-            base_url_id=None,
-            user_id="test-user",
-        )
-        database_module.log_usage(usage, db_path=db_path)
-
-    result = database_module.aggregate_daily_by_period(
-        provider="anthropic", user_id="test-user"
+    by_day = database_module.aggregate_usage_by_period(
+        granularity="day", tz_offset=tz_offset, user_id="test-user"
     )
-    assert len(result) == 1
-    assert result[0]["requests"] == 1
+    assert {row["period"]: row["requests"] for row in by_day} == days
+    by_hour = database_module.aggregate_usage_by_period(
+        granularity="hour", tz_offset=tz_offset, user_id="test-user"
+    )
+    assert [row["period"] for row in by_hour] == hours
 
 
-def test_aggregate_usage_by_period_hourly_with_tz_offset(fresh_db):
+def test_dimension_days_honour_tz_offset_and_naive_bounds_are_utc(fresh_db):
+    """tz_offset makes dimension periods local days; naive bounds are UTC."""
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    # Two rows 1 hour apart in UTC
-    for ts, tokens in [
-        (TS_2026_05_05_10_30, 100),
-        (TS_2026_05_05_11_45, 200),
-    ]:
-        database_module.log_usage(
-            database_module.Usage(
-                device_id="test-device",
-                ts=ts,
-                provider="anthropic",
-                model="claude-sonnet-4-20250514",
-                client_source=None,
-                session_id=None,
-                endpoint="/v1/messages",
-                prompt_tokens=50,
-                completion_tokens=50,
-                reasoning_tokens=None,
-                cached_tokens=None,
-                total_tokens=tokens,
-                latency_ms=100,
-                ttft_ms=None,
-                tool_tokens=None,
-                cache_creation_tokens=None,
-                input_cost_usd=0.002,
-                output_cost_usd=0.003,
-                total_cost_usd=0.005,
-                status=200,
-                base_url_id=None,
-                user_id="test-user",
-            ),
-            db_path=db_path,
-        )
+    for utc in [(5, 23, 30), (6, 6, 30)]:
+        ts = int(datetime(2026, 5, *utc, tzinfo=UTC).timestamp()) * 1_000_000
+        _log_usage_row(database_module, db_path, ts, 10, 5, 15)
 
-    # With +05:30 offset, 10:30 UTC -> 16:00 IST, 11:45 UTC -> 17:15 IST
-    result = database_module.aggregate_usage_by_period(
-        granularity="hour", tz_offset="+05:30", user_id="test-user"
-    )
-    assert len(result) == 2
-    assert result[0]["period"] == "2026-05-05 16:00"
-    assert result[0]["requests"] == 1
-    assert result[0]["total_tokens"] == 100
-    assert result[1]["period"] == "2026-05-05 17:00"
-    assert result[1]["requests"] == 1
-    assert result[1]["total_tokens"] == 200
+    def days(**kwargs):
+        rows = database_module.aggregate_daily_by_dimension(
+            user_id="test-user", dimension="model", **kwargs
+        )
+        return {row["period"]: row["requests"] for row in rows}
+
+    assert days() == {"2026-05-05": 1, "2026-05-06": 1}
+    assert days(tz_offset="-07:00") == {"2026-05-05": 2}
+
+    for summarize in (
+        database_module.summarize_usage_by_model,
+        database_module.summarize_usage_by_source,
+        database_module.summarize_usage_by_provider,
+    ):
+        # A date-only until covers that whole UTC day.
+        utc_day = summarize(user_id="test-user", until="2026-05-05")
+        assert utc_day[0]["requests"] == 1, summarize
+        naive = summarize(user_id="test-user", since="2026-05-06T00:00:00")
+        assert naive[0]["requests"] == 1, summarize
 
 
 def test_aggregate_usage_by_period_hourly_merges_same_hour(fresh_db):
@@ -3295,7 +3251,7 @@ def test_fetch_recent_usage_only_failed_filter(fresh_db):
     assert failed_rows[0]["status"] == 500
 
 
-def test_usage_daily_status_breakdown(database_module, isolated_home):
+def test_usage_hourly_status_breakdown(database_module, isolated_home):
     db_path = str(isolated_home / "usage_status.db")
     database_module.init_db(db_path)
 
@@ -3315,10 +3271,10 @@ def test_usage_daily_status_breakdown(database_module, isolated_home):
             prompt_length=0,
             user_id="test-user",
         )
-        _upsert_daily(usage, db_path=db_path)
+        _upsert_hourly(usage, db_path=db_path)
 
     # Check aggregation
-    summary = database_module.summarize_usage_daily(
+    summary = database_module.summarize_usage_by_model(
         since="2024-01-01", db_path=db_path, user_id="test-user"
     )
     assert len(summary) == 1
@@ -4277,7 +4233,7 @@ def test_daily_effectiveness_report_rejects_invalid_date(fresh_db):
         )
 
 
-def test_upsert_daily_aggregate_with_epoch_ts(fresh_db):
+def test_upsert_hourly_aggregate_with_epoch_ts(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
@@ -4314,12 +4270,12 @@ def test_upsert_daily_aggregate_with_epoch_ts(fresh_db):
     from sqlalchemy.orm import Session
 
     from src.database.engine import get_engine
-    from src.database.models import UsageDaily
+    from src.database.models import UsageHourly
 
     with Session(get_engine(db_path)) as session:
-        daily = session.query(UsageDaily).first()
+        daily = session.query(UsageHourly).first()
         assert daily is not None
-        assert daily.date == "2026-04-17"
+        assert daily.hour == 1776384000
 
 
 def test_fetch_recent_usage_filters_by_since_until_with_epoch_ts(fresh_db):
@@ -4645,9 +4601,9 @@ def test_usage_filters_tool_name_empty_string(fresh_db):
     assert len(rows) == 0  # no tool calls with empty name
 
 
-def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
+def test_recalculate_usage_cost_updates_row_and_hourly_rollup(fresh_db):
     """Recalculating a row must update its cost columns and delta-adjust (not
-    replace) the matching usage_daily rollup, since other rows share it."""
+    replace) the matching usage_hourly rollup, since other rows share it."""
     from decimal import Decimal
 
     from src.pricing.models import ModelCost
@@ -4678,7 +4634,7 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
         ),
         db_path=db_path,
     )
-    # A second row sharing the same usage_daily bucket (same date/provider/
+    # A second row sharing the same usage_hourly bucket (same hour/provider/
     # model/client_source), to prove the rollup is delta-adjusted rather than
     # clobbered by the single recalculated row.
     database_module.log_usage(
@@ -4742,7 +4698,9 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
     )
     assert float(row["total_cost_usd"]) == 6.0
 
-    daily = database_module.summarize_usage_daily(db_path=db_path, user_id="test-user")
+    daily = database_module.summarize_usage_by_model(
+        db_path=db_path, user_id="test-user"
+    )
     bucket = next(d for d in daily if d["model"] == "recalc-model")
     # Old combined total was 2.0 + 0.2 = 2.2; the recalculated row's total
     # went 2.0 -> 6.0, so the bucket should read 6.0 + 0.2 = 6.2, not 6.0.
@@ -4751,7 +4709,7 @@ def test_recalculate_usage_cost_updates_row_and_daily_rollup(fresh_db):
 
 def test_recalculate_usage_cost_adjusts_session_rollup(fresh_db):
     """Recalculating a session-linked row must delta-adjust sessions.total_cost_usd
-    and its per-model cost map (and re-derive primary_model), not just usage_daily —
+    and its per-model cost map (and re-derive primary_model), not just usage_hourly —
     upsert_session_from_usage maintains this rollup at record time, so recalculation
     must keep it in sync too instead of letting it silently go stale."""
     import json
@@ -4899,222 +4857,6 @@ def test_recalculate_usage_cost_returns_none_for_missing_row(fresh_db):
 
 # === PR 4 tenancy schema ===
 
-OLD_SHAPE_USAGE_DDL = """
-CREATE TABLE usage (
-    id TEXT PRIMARY KEY,
-    ts INTEGER NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    client_source TEXT,
-    session_id TEXT,
-    endpoint TEXT NOT NULL,
-    prompt_tokens INTEGER,
-    prompt_length INTEGER NOT NULL DEFAULT 0,
-    completion_tokens INTEGER,
-    reasoning_tokens INTEGER,
-    cached_tokens INTEGER,
-    total_tokens INTEGER,
-    latency_ms INTEGER,
-    ttft_ms INTEGER,
-    tool_tokens INTEGER,
-    cache_creation_tokens INTEGER,
-    input_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    output_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    status INTEGER,
-    client_ip TEXT
-);
-"""
-
-OLD_SHAPE_USAGE_DAILY_DDL = """
-CREATE TABLE usage_daily (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    client_source TEXT NOT NULL DEFAULT '',
-    request_count INTEGER NOT NULL DEFAULT 0,
-    prompt_tokens INTEGER NOT NULL DEFAULT 0,
-    completion_tokens INTEGER NOT NULL DEFAULT 0,
-    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-    cached_tokens INTEGER NOT NULL DEFAULT 0,
-    total_tokens INTEGER NOT NULL DEFAULT 0,
-    tool_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-    prompt_length INTEGER NOT NULL DEFAULT 0,
-    input_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    output_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    successful_requests INTEGER NOT NULL DEFAULT 0,
-    failed_requests INTEGER NOT NULL DEFAULT 0,
-    status_429 INTEGER NOT NULL DEFAULT 0,
-    status_4xx INTEGER NOT NULL DEFAULT 0,
-    status_5xx INTEGER NOT NULL DEFAULT 0,
-    status_unknown INTEGER NOT NULL DEFAULT 0,
-    latency_sum_ms INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(date, provider, model, client_source)
-);
-"""
-
-OLD_SHAPE_SESSIONS_DDL = """
-CREATE TABLE sessions (
-    session_id TEXT PRIMARY KEY,
-    client_source TEXT,
-    started INTEGER NOT NULL,
-    ended INTEGER NOT NULL,
-    request_count INTEGER NOT NULL DEFAULT 0,
-    successful_requests INTEGER NOT NULL DEFAULT 0,
-    failed_requests INTEGER NOT NULL DEFAULT 0,
-    total_tokens INTEGER NOT NULL DEFAULT 0,
-    prompt_tokens INTEGER NOT NULL DEFAULT 0,
-    completion_tokens INTEGER NOT NULL DEFAULT 0,
-    cached_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-    total_cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    latency_sum_ms INTEGER NOT NULL DEFAULT 0,
-    avg_latency_ms NUMERIC(18, 4),
-    avg_ttft_ms NUMERIC(18, 4),
-    primary_provider TEXT,
-    primary_model TEXT,
-    providers_json TEXT,
-    models_json TEXT,
-    tool_calls_json TEXT DEFAULT '{}',
-    last_usage_id TEXT,
-    updated_at TEXT NOT NULL
-);
-"""
-
-OLD_SHAPE_EVALUATION_JOBS_DDL = """
-CREATE TABLE evaluation_jobs (
-    job_id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    client_source TEXT,
-    trigger TEXT NOT NULL DEFAULT 'manual',
-    evaluator_type TEXT NOT NULL DEFAULT 'codex',
-    status TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    started_at TEXT,
-    finished_at TEXT,
-    error TEXT
-);
-"""
-
-
-CREATE_ALL_ERA_USAGE_DAILY_DDL = OLD_SHAPE_USAGE_DAILY_DDL.replace(
-    ",\n    UNIQUE(date, provider, model, client_source)", ""
-)
-
-
-def _create_all_era_db(db_file) -> None:
-    """Build today's shape as created by Base.metadata.create_all (no
-    table-level UNIQUE on usage_daily) with duplicate daily rows."""
-    import sqlite3
-
-    connection = sqlite3.connect(db_file)
-    connection.executescript(
-        OLD_SHAPE_USAGE_DDL
-        + CREATE_ALL_ERA_USAGE_DAILY_DDL
-        + OLD_SHAPE_SESSIONS_DDL
-        + OLD_SHAPE_EVALUATION_JOBS_DDL
-    )
-    connection.execute(
-        """
-        INSERT INTO usage (id, ts, provider, model, client_source, session_id,
-            endpoint, prompt_tokens, completion_tokens, total_tokens,
-            latency_ms, status, input_cost_usd, output_cost_usd, total_cost_usd)
-        VALUES ('uuid-1', ?, 'anthropic', 'm1', 'claude-code', 'sess-1',
-            '/v1/messages', 10, 5, 15, 100, 200, 0.001, 0.002, 0.003)
-        """,
-        (TS_2026_04_17_10,),
-    )
-    connection.execute(
-        """
-        INSERT INTO usage_daily (date, provider, model, client_source,
-            request_count, prompt_tokens, completion_tokens, total_tokens,
-            input_cost_usd, total_cost_usd, latency_sum_ms)
-        VALUES ('2026-04-17', 'anthropic', 'm1', 'claude-code',
-            1, 10, 5, 15, 0.001, 0.003, 100)
-        """
-    )
-    connection.execute(
-        """
-        INSERT INTO usage_daily (date, provider, model, client_source,
-            request_count, prompt_tokens, completion_tokens, total_tokens,
-            input_cost_usd, total_cost_usd, latency_sum_ms)
-        VALUES ('2026-04-17', 'anthropic', 'm1', 'claude-code',
-            2, 20, 10, 30, 0.002, 0.006, 200)
-        """
-    )
-    connection.execute(
-        """
-        INSERT INTO usage_daily (date, provider, model, client_source,
-            request_count, prompt_tokens)
-        VALUES ('2026-04-18', 'anthropic', 'm1', 'claude-code', 7, 70)
-        """
-    )
-    connection.execute(
-        """
-        INSERT INTO sessions (session_id, started, ended, request_count, updated_at)
-        VALUES ('sess-1', ?, ?, 1, '2026-04-17T00:00:00+00:00')
-        """,
-        (TS_2026_04_17_10, TS_2026_04_17_10),
-    )
-    connection.execute(
-        """
-        INSERT INTO evaluation_jobs (job_id, kind, session_id, status, created_at)
-        VALUES ('job-1', 'session_evaluation', 'sess-1', 'queued',
-            '2026-04-17T00:00:00+00:00')
-        """
-    )
-    connection.commit()
-    connection.close()
-
-
-def _old_shape_db(db_file) -> None:
-    import sqlite3
-
-    connection = sqlite3.connect(db_file)
-    connection.executescript(
-        OLD_SHAPE_USAGE_DDL
-        + OLD_SHAPE_USAGE_DAILY_DDL
-        + OLD_SHAPE_SESSIONS_DDL
-        + OLD_SHAPE_EVALUATION_JOBS_DDL
-    )
-    connection.execute(
-        """
-        INSERT INTO usage (id, ts, provider, model, client_source, session_id,
-            endpoint, prompt_tokens, completion_tokens, total_tokens,
-            latency_ms, status, input_cost_usd, output_cost_usd, total_cost_usd)
-        VALUES ('uuid-1', ?, 'anthropic', 'm1', 'claude-code', 'sess-1',
-            '/v1/messages', 10, 5, 15, 100, 200, 0.001, 0.002, 0.003)
-        """,
-        (TS_2026_04_17_10,),
-    )
-    connection.execute(
-        """
-        INSERT INTO usage_daily (date, provider, model, client_source,
-            request_count, prompt_tokens)
-        VALUES ('2026-04-17', 'anthropic', 'm1', 'claude-code', 42, 4242)
-        """
-    )
-    connection.execute(
-        """
-        INSERT INTO sessions (session_id, started, ended, request_count, updated_at)
-        VALUES ('sess-1', ?, ?, 42, '2026-04-17T00:00:00+00:00')
-        """,
-        (TS_2026_04_17_10, TS_2026_04_17_10),
-    )
-    connection.execute(
-        """
-        INSERT INTO evaluation_jobs (job_id, kind, session_id, status, created_at)
-        VALUES ('job-1', 'session_evaluation', 'sess-1', 'queued',
-            '2026-04-17T00:00:00+00:00')
-        """
-    )
-    connection.commit()
-    connection.close()
-
 
 def test_init_db_creates_tenancy_shapes(fresh_db):
     """AC 2: init_db alone (no migrate_database) creates the new shapes."""
@@ -5125,12 +4867,11 @@ def test_init_db_creates_tenancy_shapes(fresh_db):
 
     engine = database_module.get_engine(db_path)
     inspector = inspect(engine)
-    for table in ("usage", "usage_daily", "sessions", "tool_calls", "evaluation_jobs"):
+    for table in ("usage", "usage_hourly", "sessions", "tool_calls", "evaluation_jobs"):
         assert "user_id" in {c["name"] for c in inspector.get_columns(table)}
 
-    daily_indexes = {i["name"]: i for i in inspector.get_indexes("usage_daily")}
-    assert daily_indexes["uq_usage_daily"]["unique"]
-    assert "uq_usage_daily_local" not in daily_indexes
+    hourly_indexes = {i["name"]: i for i in inspector.get_indexes("usage_hourly")}
+    assert hourly_indexes["uq_usage_hourly"]["unique"]
 
     for table, index_name in [
         ("usage", "ix_usage_user_id"),
@@ -5140,7 +4881,7 @@ def test_init_db_creates_tenancy_shapes(fresh_db):
         assert index_name in {i["name"] for i in inspector.get_indexes(table)}
 
 
-def test_upsert_daily_aggregate_separates_user_rows(fresh_db):
+def test_upsert_hourly_aggregate_separates_user_rows(fresh_db):
     """Same (date, provider, model, client_source) for users u0 and u1
     produces two rows; increments land in the right row (both ON CONFLICT
     branches)."""
@@ -5169,16 +4910,16 @@ def test_upsert_daily_aggregate_separates_user_rows(fresh_db):
             total_cost_usd=0.003,
         )
 
-    _upsert_daily(make_usage("u0"), db_path=db_path)
-    _upsert_daily(make_usage("u0"), db_path=db_path)
-    _upsert_daily(make_usage("u1"), db_path=db_path)
-    _upsert_daily(make_usage("u1"), db_path=db_path)
+    _upsert_hourly(make_usage("u0"), db_path=db_path)
+    _upsert_hourly(make_usage("u0"), db_path=db_path)
+    _upsert_hourly(make_usage("u1"), db_path=db_path)
+    _upsert_hourly(make_usage("u1"), db_path=db_path)
 
     with database_module.get_engine(db_path).connect() as conn:
         rows = list(
             conn.execute(
-                database_module.select(database_module.UsageDaily).order_by(
-                    database_module.UsageDaily.id
+                database_module.select(database_module.UsageHourly).order_by(
+                    database_module.UsageHourly.id
                 )
             )
         )
@@ -5274,13 +5015,15 @@ def test_upsert_session_from_usage_scopes_tenant(fresh_db):
     assert local_row.request_count == 1
 
 
-def test_log_usage_keeps_row_and_daily_when_session_rollup_fails(fresh_db, monkeypatch):
+def test_log_usage_keeps_row_and_hourly_when_session_rollup_fails(
+    fresh_db, monkeypatch
+):
     from sqlalchemy import select
     from sqlalchemy.orm import Session
 
     import src.database.sessions as sessions_module
     from src.database import get_engine, log_usage
-    from src.database.models import Usage, UsageDaily
+    from src.database.models import Usage, UsageHourly
 
     def boom(*_args, **_kwargs):
         raise RuntimeError("session rollup failed")
@@ -5302,7 +5045,7 @@ def test_log_usage_keeps_row_and_daily_when_session_rollup_fails(fresh_db, monke
 
     with Session(get_engine(fresh_db.db_path)) as session:
         assert len(session.scalars(select(Usage)).all()) == 1
-        assert len(session.scalars(select(UsageDaily)).all()) == 1
+        assert len(session.scalars(select(UsageHourly)).all()) == 1
 
 
 def test_upsert_session_adds_to_row_created_by_a_concurrent_first_usage(
@@ -5414,7 +5157,7 @@ def test_rebuild_sessions_from_usage_stamps_user_id(fresh_db):
 
 
 def test_recalculate_usage_cost_targets_user_slice(fresh_db):
-    """The daily delta UPDATE lands only in the row matching the usage row's
+    """The hourly delta UPDATE lands only in the row matching the usage row's
     user_id when both a NULL-slice and a real-user-slice row exist."""
     from src.pricing.models import ModelCost
 
@@ -5486,7 +5229,7 @@ def test_recalculate_usage_cost_targets_user_slice(fresh_db):
         rows = list(
             conn.execute(
                 database_module.text(
-                    "SELECT user_id, total_cost_usd FROM usage_daily ORDER BY user_id"
+                    "SELECT user_id, total_cost_usd FROM usage_hourly ORDER BY user_id"
                 )
             )
         )
@@ -5495,43 +5238,6 @@ def test_recalculate_usage_cost_targets_user_slice(fresh_db):
     # test-user slice: 0.2 -> 6.0; the u1 slice is untouched.
     assert float(by_user["test-user"].total_cost_usd) == pytest.approx(6.0)
     assert float(by_user["u1"].total_cost_usd) == pytest.approx(2.0)
-
-
-def test_migrate_database_swaps_legacy_usage_daily_indexes(fresh_db):
-    """A database from before user_id was required carried two partial unique
-    indexes on usage_daily; migrating replaces them with one plain index and is
-    then a no-op."""
-    schema_migrations = fresh_db.schema_migrations_module
-    database_module = fresh_db.database_module
-    engine = database_module.get_engine(fresh_db.db_path)
-
-    with engine.begin() as conn:
-        conn.execute(database_module.text("DROP INDEX uq_usage_daily"))
-        conn.execute(
-            database_module.text(
-                "CREATE UNIQUE INDEX uq_usage_daily_local ON usage_daily "
-                "(date, provider, model, client_source) WHERE user_id IS NULL"
-            )
-        )
-        conn.execute(
-            database_module.text(
-                "CREATE UNIQUE INDEX uq_usage_daily_user ON usage_daily "
-                "(date, provider, model, client_source, user_id) "
-                "WHERE user_id IS NOT NULL"
-            )
-        )
-
-    changes = schema_migrations.migrate_database(fresh_db.db_path)
-
-    assert "usage_daily.drop_uq_usage_daily_local" in changes
-    assert "usage_daily.drop_uq_usage_daily_user" in changes
-    assert "usage_daily.uq_usage_daily" in changes
-    from sqlalchemy import inspect
-
-    names = {i["name"] for i in inspect(engine).get_indexes("usage_daily")}
-    assert "uq_usage_daily" in names
-    assert not names & {"uq_usage_daily_local", "uq_usage_daily_user"}
-    assert schema_migrations.migrate_database(fresh_db.db_path) == []
 
 
 def test_migrate_database_rejects_sqlite_with_nullable_user_id(fresh_db):
@@ -5549,7 +5255,7 @@ def test_migrate_database_rejects_sqlite_with_nullable_user_id(fresh_db):
                 "CREATE TABLE tool_calls (tool_use_id TEXT PRIMARY KEY, user_id TEXT)"
             )
         )
-        conn.execute(database_module.text("DROP INDEX uq_usage_daily"))
+        conn.execute(database_module.text("DROP INDEX uq_usage_hourly"))
 
     try:
         with pytest.raises(RuntimeError, match="tool_calls"):
@@ -5558,8 +5264,8 @@ def test_migrate_database_rejects_sqlite_with_nullable_user_id(fresh_db):
         # Rejected before any DDL: the dropped index was not recreated.
         from sqlalchemy import inspect
 
-        names = {i["name"] for i in inspect(engine).get_indexes("usage_daily")}
-        assert "uq_usage_daily" not in names
+        names = {i["name"] for i in inspect(engine).get_indexes("usage_hourly")}
+        assert "uq_usage_hourly" not in names
     finally:  # the test schema is shared across the session
         from src.database.models import ToolCall
 
@@ -5567,6 +5273,101 @@ def test_migrate_database_rejects_sqlite_with_nullable_user_id(fresh_db):
             conn.execute(database_module.text("DROP TABLE tool_calls"))
         ToolCall.__table__.create(engine)
         schema_migrations.migrate_database(fresh_db.db_path)
+
+
+def test_migrate_database_replaces_usage_daily_with_hourly_backfill(fresh_db):
+    """With usage_daily present, migration rebuilds usage_hourly from raw usage
+    over the rows ingest already wrote, nets tool time out of opencode/kilo
+    hourly latency per row (raw latency_ms untouched) and drops usage_daily; a
+    second run is a no-op."""
+    from src.recorder import record_tool_call
+
+    schema_migrations = fresh_db.schema_migrations_module
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    engine = database_module.get_engine(db_path)
+
+    def log(user_id, source, ts, latency_ms, status, tool_ms=()):
+        usage = database_module.Usage(
+            device_id="test-device",
+            ts=ts,
+            provider="anthropic",
+            model="m1",
+            client_source=source,
+            endpoint="/v1/messages",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+            latency_ms=latency_ms,
+            status=status,
+            input_cost_usd=0.001,
+            output_cost_usd=0.002,
+            total_cost_usd=0.003,
+            user_id=user_id,
+        )
+        database_module.log_usage(usage, db_path=db_path)
+        for n, duration_ms in enumerate(tool_ms):
+            record_tool_call(
+                tool_use_id=f"{usage.id}-{n}",
+                usage_id=usage.id,
+                tool_name="bash",
+                duration_ms=duration_ms,
+                ts=ts // 1000,
+                db_path=db_path,
+                user_id=user_id,
+            )
+        return usage.id
+
+    half_hour = 1_800_000_000
+    ids = {
+        "opencode": log("u0", "opencode", TS_2026_04_17_10, 1000, 200, (300, 400)),
+        "opencode-2": log("u0", "opencode", TS_2026_04_17_10 + half_hour, 200, 500),
+        "kilo": log("u0", "kilo", TS_2026_04_17_11, 500, 200, (800,)),
+        "claude": log("u0", "claude-code", TS_2026_04_17_10, 1000, 429, (500,)),
+        "none": log("u1", None, TS_2026_04_17_11, None, 200),
+    }
+
+    def hourly_rows():
+        with engine.connect() as conn:
+            return {
+                (r.user_id, r.hour, r.client_source): {
+                    k: v for k, v in r._mapping.items() if k != "id"
+                }
+                for r in conn.execute(
+                    database_module.select(database_module.UsageHourly)
+                )
+            }
+
+    # The live write path's rollup is the expected backfill, but for the
+    # latency the migration takes tool time out of. Its rows stay in place:
+    # ingest can write usage_hourly before migrate runs.
+    expected = hourly_rows()
+    hour_10, hour_11 = TS_2026_04_17_10 // 1_000_000, TS_2026_04_17_11 // 1_000_000
+    expected[("u0", hour_10, "opencode")]["latency_sum_ms"] = 300 + 200
+    expected[("u0", hour_11, "kilo")]["latency_sum_ms"] = 0
+    with engine.begin() as conn:
+        conn.execute(database_module.text("CREATE TABLE usage_daily (id INTEGER)"))
+
+    assert "usage_hourly.backfill" in schema_migrations.migrate_database(db_path)
+
+    from sqlalchemy import inspect
+
+    assert "usage_daily" not in inspect(engine).get_table_names()
+    assert hourly_rows() == expected
+    with engine.connect() as conn:
+        latency = dict(
+            conn.execute(database_module.text("SELECT id, latency_ms FROM usage")).all()
+        )
+    assert {name: latency[usage_id] for name, usage_id in ids.items()} == {
+        "opencode": 1000,
+        "opencode-2": 200,
+        "kilo": 500,
+        "claude": 1000,
+        "none": None,
+    }
+
+    assert schema_migrations.migrate_database(db_path) == []
+    assert hourly_rows() == expected
 
 
 def test_migrate_database_creates_missing_model_indexes(fresh_db):
@@ -5612,18 +5413,18 @@ def test_sqlite_pragmas_enable_wal_and_busy_timeout(tmp_path):
     conn.close()
 
 
-def test_log_usage_rolls_back_row_when_daily_rollup_fails(fresh_db, monkeypatch):
+def test_log_usage_rolls_back_row_when_hourly_rollup_fails(fresh_db, monkeypatch):
     from sqlalchemy import select
     from sqlalchemy.orm import Session
 
     import src.database.usage as usage_module
     from src.database import get_engine, log_usage
-    from src.database.models import ToolCall, Usage, UsageDaily
+    from src.database.models import ToolCall, Usage, UsageHourly
 
     def boom(*_args, **_kwargs):
         raise RuntimeError("database is locked")
 
-    monkeypatch.setattr(usage_module, "upsert_daily_aggregate", boom)
+    monkeypatch.setattr(usage_module, "upsert_hourly_aggregate", boom)
     usage = Usage(
         device_id="test-device",
         ts=TS_2026_05_19_00,
@@ -5650,18 +5451,18 @@ def test_log_usage_rolls_back_row_when_daily_rollup_fails(fresh_db, monkeypatch)
 
     with Session(get_engine(fresh_db.db_path)) as session:
         assert session.scalars(select(Usage)).all() == []
-        assert session.scalars(select(UsageDaily)).all() == []
+        assert session.scalars(select(UsageHourly)).all() == []
         assert session.scalars(select(ToolCall)).all() == []
 
 
-def _upsert_daily(usage, db_path=None):
+def _upsert_hourly(usage, db_path=None):
     from sqlalchemy.orm import Session
 
     from src.database import get_engine
-    from src.database.usage import upsert_daily_aggregate
+    from src.database.usage import upsert_hourly_aggregate
 
     with Session(get_engine(db_path)) as session:
-        upsert_daily_aggregate(session, usage)
+        upsert_hourly_aggregate(session, usage)
         session.commit()
 
 
@@ -5675,7 +5476,7 @@ def test_reprice_batch_rounds_like_per_row_updates(fresh_db, monkeypatch):
     from sqlalchemy.orm import Session
 
     from src.database import usage as usage_module
-    from src.database.models import SessionRecord, UsageDaily
+    from src.database.models import SessionRecord, UsageHourly
     from src.pricing.models import ModelCost
 
     database_module = fresh_db.database_module
@@ -5719,7 +5520,7 @@ def test_reprice_batch_rounds_like_per_row_updates(fresh_db, monkeypatch):
                 )
             )
             daily = session.scalar(
-                select(UsageDaily.total_cost_usd).where(UsageDaily.user_id == user_id)
+                select(UsageHourly.total_cost_usd).where(UsageHourly.user_id == user_id)
             )
             total = session.scalar(
                 select(SessionRecord.total_cost_usd).where(

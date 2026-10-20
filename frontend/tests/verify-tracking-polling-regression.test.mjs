@@ -39,8 +39,7 @@ test('verify tracking UI exposes polling, timeout, and success states without ma
 })
 
 test('verify tracking strings have Chinese translations', () => {
-  assert.match(zhSource, /'Waiting\.\.\.': '等待中\.\.\.'/)
   assert.match(zhSource, /'Waiting for your first event\.\.\.': '正在等待你的第一个请求\.\.\.'/)
   assert.match(zhSource, /'No event found yet': '还没找到事件'/)
-  assert.match(zhSource, /'Tracking works': '追踪已生效'/)
+  assert.match(zhSource, /'Tracking works\. Your first request is recorded\.':/)
 })

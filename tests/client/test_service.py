@@ -34,7 +34,6 @@ def device_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("TOKENAGE_HOME", str(home / ".tokenage"))
     monkeypatch.setenv("TOKENAGE_CLIENT_COMMIT", "a" * 40)
     monkeypatch.delenv("TOKENAGE_ROOT", raising=False)
-    monkeypatch.delenv("TOKENAGE_SERVER_ROOT", raising=False)
     monkeypatch.setattr(setup.shutil, "which", lambda name: None)
     _write_json(
         home / ".tokenage" / "credentials.json",

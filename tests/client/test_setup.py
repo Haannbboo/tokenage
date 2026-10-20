@@ -27,7 +27,6 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("TOKENAGE_ROOT", raising=False)
     monkeypatch.delenv("TOKENAGE_CONFIG", raising=False)
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", raising=False)
-    monkeypatch.delenv("TOKENAGE_INGEST_TOKEN", raising=False)
     monkeypatch.setattr(
         setup.shutil,
         "which",

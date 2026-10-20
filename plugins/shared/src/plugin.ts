@@ -1,5 +1,5 @@
 import { finiteNumber, statusCodeFromError, errorName } from "./helpers.js"
-import { makePromptState } from "./prompt.js"
+import { makePromptState, MAX_TRACKED_MESSAGES } from "./prompt.js"
 import { claim, release } from "./dedupe.js"
 import { buildOtlpPayload, buildToolEventPayload, emitOtlp } from "./otlp.js"
 
@@ -40,6 +40,21 @@ function getCompletedInfo(info: any): { completedAt: number | null; statusCode: 
   return { completedAt, statusCode }
 }
 
+// Length of the union of tool intervals clipped to [start, end]: parallel tools count once.
+export function toolTimeWithin(intervals: [number, number][], start: number, end: number): number {
+  let total = 0
+  let cursor = start
+  for (const [s, e] of [...intervals].sort((a, b) => a[0] - b[0])) {
+    const lo = Math.max(s, cursor)
+    const hi = Math.min(e, end)
+    if (hi > lo) {
+      total += hi - lo
+      cursor = hi
+    }
+  }
+  return total
+}
+
 async function handleMessageUpdated(
   input: any,
   endpoint: string,
@@ -48,6 +63,7 @@ async function handleMessageUpdated(
   processed: Set<string>,
   pending: Set<string>,
   promptState: ReturnType<typeof makePromptState>,
+  toolIntervals: Map<string, [number, number][]>,
   headers?: Record<string, string>,
 ): Promise<void> {
   if (info.role === "user") {
@@ -71,7 +87,11 @@ async function handleMessageUpdated(
     const model = info.modelID || "unknown"
     const createdAt: number = finiteNumber(info.time?.created) ?? Date.now()
     const timestampMs = completedAt ?? Date.now()
-    const durationMs = completedAt != null ? completedAt - createdAt : null
+    // Latency excludes tool execution, like Claude Code and Codex.
+    const durationMs =
+      completedAt != null
+        ? Math.max(0, completedAt - createdAt - toolTimeWithin(toolIntervals.get(info.id) ?? [], createdAt, completedAt))
+        : null
     const firstPartStart = promptState.firstAssistantPartStart.get(info.id)
     const ttftMs =
       firstPartStart != null ? Math.max(0, Math.round(firstPartStart - createdAt)) : null
@@ -122,6 +142,7 @@ async function handleMessageUpdated(
       }
     }
     promptState.firstAssistantPartStart.delete(info.id)
+    toolIntervals.delete(info.id)
   } finally {
     if (!emitted) release(claimKey)
     pending.delete(info.id)
@@ -133,6 +154,7 @@ export function createPlugin(clientSource: string) {
   const pending = new Set<string>()
   const promptState = makePromptState()
   const emittedTools = new Set<string>()
+  const toolIntervals = new Map<string, [number, number][]>()
 
   return async (input: any, options?: Record<string, any>) => {
     const { endpoint, headers } = resolveOptions(options)
@@ -145,6 +167,22 @@ export function createPlugin(clientSource: string) {
           if (!part) return
           promptState.rememberPromptPart(part)
           promptState.rememberFirstAssistantPart(part, Date.now())
+
+          const t = part.state?.time
+          if (
+            part.type === "tool" &&
+            (part.state?.status === "completed" || part.state?.status === "error") &&
+            part.messageID &&
+            typeof t?.start === "number" &&
+            typeof t?.end === "number"
+          ) {
+            const intervals = toolIntervals.get(part.messageID) ?? []
+            intervals.push([t.start, t.end])
+            toolIntervals.set(part.messageID, intervals)
+            while (toolIntervals.size > MAX_TRACKED_MESSAGES) {
+              toolIntervals.delete(toolIntervals.keys().next().value!)
+            }
+          }
 
           // Emit tool_decision event when a ToolPart completes.
           if (
@@ -173,8 +211,9 @@ export function createPlugin(clientSource: string) {
                 messageId: part.messageID,
                 callId: part.callID,
                 toolName: part.tool,
+                // Stamped at the tool's start, like the other sources' tool events.
                 timestampMs:
-                  typeof time?.end === "number" ? time.end : Date.now(),
+                  typeof time?.start === "number" ? time.start : typeof time?.end === "number" ? time.end : Date.now(),
                 durationMs,
               },
               clientSource,
@@ -189,7 +228,7 @@ export function createPlugin(clientSource: string) {
         const info = event.properties?.info
         if (!info) return
 
-        await handleMessageUpdated(input, endpoint, info, clientSource, processed, pending, promptState, headers)
+        await handleMessageUpdated(input, endpoint, info, clientSource, processed, pending, promptState, toolIntervals, headers)
       },
     }
   }

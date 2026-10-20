@@ -2,7 +2,7 @@ import { finiteNumber } from "./helpers.js"
 import { MAX_TRACKED_MESSAGES } from "./prompt.js"
 import { buildOtlpPayload, buildToolEventPayload, emitOtlp } from "./otlp.js"
 import { claim, release } from "./dedupe.js"
-import { resolveOptions } from "./plugin.js"
+import { resolveOptions, toolTimeWithin } from "./plugin.js"
 
 // OpenCode 2 publishes its public event stream through `ctx.event.subscribe()`.
 // Unlike v1 there is no message/part snapshot: one assistant message is one
@@ -51,6 +51,17 @@ function createV2Tracker(
 ) {
   const steps = new Map<string, StepState>()
   const tools = new Map<string, ToolState>()
+  // Tool run intervals per assistant message, subtracted from the step latency.
+  const toolIntervals = new Map<string, [number, number][]>()
+
+  function recordToolInterval(callId: string, end: number): void {
+    const tool = tools.get(callId)
+    if (!tool?.messageId || tool.calledAt == null) return
+    const intervals = toolIntervals.get(tool.messageId) ?? []
+    intervals.push([tool.calledAt, end])
+    toolIntervals.set(tool.messageId, intervals)
+    trim(toolIntervals)
+  }
   const promptLengths = new Map<string, number>()
 
   async function finishStep(event: V2Event, failed: boolean): Promise<void> {
@@ -59,6 +70,8 @@ function createV2Tracker(
     if (!messageId) return
     const step = steps.get(messageId)
     steps.delete(messageId)
+    const intervals = toolIntervals.get(messageId) ?? []
+    toolIntervals.delete(messageId)
     const sessionId: string | undefined = data.sessionID ?? step?.sessionId
     if (!sessionId || !claim(`message:${messageId}`)) return
 
@@ -87,7 +100,10 @@ function createV2Tracker(
         cachedTokens: nonNegative(tokens?.cache?.read),
         cacheCreationTokens: nonNegative(tokens?.cache?.write),
         totalTokens,
-        durationMs: step ? Math.max(0, now - step.startedAt) : null,
+        // Latency excludes tool execution, like Claude Code and Codex.
+        durationMs: step
+          ? Math.max(0, now - step.startedAt - toolTimeWithin(intervals, step.startedAt, now))
+          : null,
         ttftMs:
           step?.firstPartAt != null ? Math.max(0, Math.round(step.firstPartAt - step.startedAt)) : null,
         statusCode,
@@ -110,7 +126,8 @@ function createV2Tracker(
         messageId: tool.messageId,
         callId,
         toolName: tool.name,
-        timestampMs: end,
+        // Stamped at the tool's start, like the other sources' tool events.
+        timestampMs: tool.calledAt ?? end,
         durationMs: tool.calledAt != null ? Math.max(0, end - tool.calledAt) : undefined,
       },
       clientSource,
@@ -168,10 +185,13 @@ function createV2Tracker(
         return
       }
       case "session.tool.success":
+        recordToolInterval(data.id, created)
         await emitTool(event, data.id)
         return
       case "session.tool.failed":
-        // Like v1, only completed tools are recorded.
+        // Like v1, only completed tools are recorded; their run time still
+        // leaves the step latency.
+        recordToolInterval(data.id, created)
         tools.delete(data.id)
         return
       case "session.step.ended":

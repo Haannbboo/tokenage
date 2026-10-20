@@ -123,19 +123,9 @@ export function formatSpeed(tokens: number | null | undefined, latencyMs: number
 export function netThroughput(
   completionTokens: number | null | undefined,
   latencyMs: number | null | undefined,
-  toolMs: number | null | undefined,
 ): number {
-  const net = Math.max(value(latencyMs) - value(toolMs), 0)
-  return net > 0 ? (value(completionTokens) * 1000) / net : 0
-}
-
-// Sources whose recorded latency is the full assistant-message lifetime and so
-// already includes tool execution time; mirrors the backend
-// TOOL_DURATION_IN_LATENCY_SOURCES. Only these net tool time out of throughput.
-const TOOL_DURATION_IN_LATENCY_SOURCES = new Set(['opencode', 'kilo'])
-
-export function latencyIncludesToolTime(clientSource?: string | null): boolean {
-  return !!clientSource && TOOL_DURATION_IN_LATENCY_SOURCES.has(clientSource)
+  const ms = value(latencyMs)
+  return ms > 0 ? (value(completionTokens) * 1000) / ms : 0
 }
 
 type DurationFormatOptions = {

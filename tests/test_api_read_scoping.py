@@ -165,15 +165,8 @@ def test_all_read_routes_isolate_data(
         assert sum(row["requests"] for row in groups) == count, path
         assert sum(row["total_tokens"] for row in groups) == 300 * weight, path
         assert sum(row["total_cost_usd"] for row in groups) == 2 * weight, path
-        assert sum(row["tool_duration_sum_ms"] for row in groups) == 100 * weight, path
         if auth_mode in ("cookie", "bearer"):
-            if path == "/usage/by-source":
-                opencode = next(
-                    row for row in groups if row["client_source"] == "opencode"
-                )
-                assert opencode["avg_throughput"] == pytest.approx(100 / 0.9)
-            else:
-                assert groups[0]["avg_throughput"] == pytest.approx(200 / 1.9)
+            assert groups[0]["avg_throughput"] == pytest.approx(100.0)
 
     tools = read("/usage/by-tool")
     assert sum(row["count"] for row in tools) == count
@@ -287,7 +280,6 @@ def test_tool_queries_require_matching_owner(
     rows = client.get("/usage").json()
     row = next(row for row in rows if row["id"] == "a-0")
     assert row["tool_names"] == "shared-tool"
-    assert row["tool_duration_ms"] == 100
     assert client.get("/usage", params={"tool_name": "foreign-tool"}).json() == []
     assert client.get("/usage/count", params={"tool_name": "foreign-tool"}).json() == {
         "total": 0
@@ -296,7 +288,6 @@ def test_tool_queries_require_matching_owner(
         "shared-tool",
         "a-tool",
     }
-    assert client.get("/usage/summary").json()[0]["tool_duration_sum_ms"] == 100
 
 
 def test_reads_reject_missing_invalid_and_ingest_tokens(

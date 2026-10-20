@@ -126,9 +126,9 @@ export function TopUsageChart({
 
   const items: BarItem[] = useMemo(() => {
     if (dimension === 'model') {
-      const map = new Map<string, { tokens: number; completion: number; prompt: number; cached: number; cacheCreation: number; latency: number; toolMs: number; cost: number; priceWeight: number; priceTokens: number; successful: number; total: number }>()
+      const map = new Map<string, { tokens: number; completion: number; prompt: number; cached: number; cacheCreation: number; latency: number; cost: number; priceWeight: number; priceTokens: number; successful: number; total: number }>()
       for (const s of summary) {
-        const existing = map.get(s.model) || { tokens: 0, completion: 0, prompt: 0, cached: 0, cacheCreation: 0, latency: 0, toolMs: 0, cost: 0, priceWeight: 0, priceTokens: 0, successful: 0, total: 0 }
+        const existing = map.get(s.model) || { tokens: 0, completion: 0, prompt: 0, cached: 0, cacheCreation: 0, latency: 0, cost: 0, priceWeight: 0, priceTokens: 0, successful: 0, total: 0 }
         const tokens = s.total_tokens ?? 0
         existing.tokens += tokens
         existing.completion += s.completion_tokens ?? 0
@@ -136,7 +136,6 @@ export function TopUsageChart({
         existing.cached += s.cached_tokens ?? 0
         existing.cacheCreation += s.cache_creation_tokens ?? 0
         existing.latency += s.latency_sum_ms ?? 0
-        existing.toolMs += s.tool_duration_sum_ms ?? 0
         existing.cost += s.total_cost_usd ?? 0
         existing.successful += s.successful_requests ?? 0
         existing.total += (s.successful_requests ?? 0) + (s.failed_requests ?? 0)
@@ -155,7 +154,7 @@ export function TopUsageChart({
         completionTokens: v.completion,
         cachedTokens: v.cached,
         cost: v.cost,
-        throughput: netThroughput(v.completion, v.latency, v.toolMs),
+        throughput: netThroughput(v.completion, v.latency),
         pricePerMillion: v.priceTokens > 0
           ? v.priceWeight / v.priceTokens
           : v.tokens > 0 ? (v.cost / v.tokens) * 1_000_000 : null,
@@ -168,16 +167,15 @@ export function TopUsageChart({
     }
 
     if (dimension === 'provider') {
-      const map = new Map<string, { tokens: number; completion: number; prompt: number; cached: number; cacheCreation: number; latency: number; toolMs: number; cost: number; successful: number; total: number }>()
+      const map = new Map<string, { tokens: number; completion: number; prompt: number; cached: number; cacheCreation: number; latency: number; cost: number; successful: number; total: number }>()
       for (const s of summary) {
-        const existing = map.get(s.provider) || { tokens: 0, completion: 0, prompt: 0, cached: 0, cacheCreation: 0, latency: 0, toolMs: 0, cost: 0, successful: 0, total: 0 }
+        const existing = map.get(s.provider) || { tokens: 0, completion: 0, prompt: 0, cached: 0, cacheCreation: 0, latency: 0, cost: 0, successful: 0, total: 0 }
         existing.tokens += s.total_tokens ?? 0
         existing.completion += s.completion_tokens ?? 0
         existing.prompt += s.prompt_tokens ?? 0
         existing.cached += s.cached_tokens ?? 0
         existing.cacheCreation += s.cache_creation_tokens ?? 0
         existing.latency += s.latency_sum_ms ?? 0
-        existing.toolMs += s.tool_duration_sum_ms ?? 0
         existing.cost += s.total_cost_usd ?? 0
         existing.successful += s.successful_requests ?? 0
         existing.total += (s.successful_requests ?? 0) + (s.failed_requests ?? 0)
@@ -191,7 +189,7 @@ export function TopUsageChart({
         completionTokens: v.completion,
         cachedTokens: v.cached,
         cost: v.cost,
-        throughput: netThroughput(v.completion, v.latency, v.toolMs),
+        throughput: netThroughput(v.completion, v.latency),
         successRate: v.total > 0 ? (v.successful / v.total) * 100 : 100,
         cacheHitRate: (v.prompt + v.cacheCreation) > 0 ? (v.cached / (v.prompt + v.cacheCreation)) * 100 : 0,
         color: providerColors[provider.toLowerCase()] || PALETTE[i % PALETTE.length],
@@ -224,7 +222,7 @@ export function TopUsageChart({
         completionTokens: v.completion,
         cachedTokens: v.cached,
         cost: v.cost,
-        throughput: netThroughput(v.completion, v.latency, 0),
+        throughput: netThroughput(v.completion, v.latency),
         pricePerMillion: v.tokens > 0 ? (v.cost / v.tokens) * 1_000_000 : null,
         successRate: v.total > 0 ? (v.successful / v.total) * 100 : 100,
         cacheHitRate: (v.prompt + v.cacheCreation) > 0 ? (v.cached / (v.prompt + v.cacheCreation)) * 100 : 0,

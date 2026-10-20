@@ -165,7 +165,6 @@ export function useDashboardData() {
     const totalTokens = data.reduce((sum, row) => sum + (row.total_tokens || 0), 0)
     const totalCost = data.reduce((sum, row) => sum + (row.total_cost_usd || 0), 0)
     const latencySum = data.reduce((sum, row) => sum + (row.latency_sum_ms || 0), 0)
-    const toolDurationSum = data.reduce((sum, row) => sum + (row.tool_duration_sum_ms || 0), 0)
 
     return {
       requests,
@@ -177,7 +176,7 @@ export function useDashboardData() {
       totalCost,
       avgEffectivePrice: requests === 0 ? 0 : totalCost / requests,
       avgEffectivePricePerMillion: totalTokens === 0 ? 0 : (totalCost / totalTokens) * 1_000_000,
-      avgThroughput: netThroughput(completionTokens, latencySum, toolDurationSum),
+      avgThroughput: netThroughput(completionTokens, latencySum),
       avgTokensPerRequest: requests === 0 ? 0 : totalTokens / requests
     }
   }, [summary])

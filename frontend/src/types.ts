@@ -10,7 +10,6 @@ export type UsageSummary = {
   total_tokens: number | null
   avg_latency_ms: number | null
   latency_sum_ms: number | null
-  tool_duration_sum_ms: number | null
   avg_throughput: number | null
   input_cost_usd: number | null
   output_cost_usd: number | null
@@ -55,7 +54,6 @@ export type UsageRow = {
   ttft_ms: number | null
   tool_tokens: number | null
   tool_names: string | null
-  tool_duration_ms: number | null
   normal_input_cost_usd: number | null
   cache_read_cost_usd: number | null
   cache_write_cost_usd: number | null

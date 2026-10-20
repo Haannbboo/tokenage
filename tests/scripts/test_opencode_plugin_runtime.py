@@ -199,6 +199,44 @@ def test_opencode_plugin_emits_status_for_failed_assistant_messages(tmp_path):
           },
         })
 
+        // msg-tool: call-tool-1 [5000,5234] overlaps call-tool-2 [5100,5300];
+        // call-tool-3 [5500,5600] is disjoint. Union = 400 ms of tool time.
+        for (const [callID, start, end] of [["call-tool-2", 5100, 5300], ["call-tool-3", 5500, 5600]]) {
+          await hooks.event({
+            event: {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  type: "tool",
+                  sessionID: "ses-1",
+                  messageID: "msg-tool",
+                  callID,
+                  tool: "read",
+                  state: { status: "completed", time: { start, end } },
+                },
+              },
+            },
+          })
+        }
+
+        await hooks.event({
+          event: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "msg-tool",
+                sessionID: "ses-1",
+                role: "assistant",
+                time: { created: 4900, completed: 6000 },
+                tokens: { input: 1, output: 2 },
+                parentID: "user-5",
+                modelID: "claude-sonnet",
+                providerID: "anthropic",
+              },
+            },
+          },
+        })
+
         const recordFor = (payload) => payload.resourceLogs[0].scopeLogs[0].logRecords[0]
         const attrsFor = (payload) =>
           Object.fromEntries(
@@ -254,11 +292,15 @@ def test_opencode_plugin_emits_status_for_failed_assistant_messages(tmp_path):
     assert "error.type" not in payloads[3]
 
     assert records[4]["severityNumber"] == 9
-    assert records[4]["timeUnixNano"] == "5234000000"
+    assert records[4]["timeUnixNano"] == "5000000000"
     assert payloads[4]["event.name"] == "opencode.tool_decision"
     assert payloads[4]["tool_name"] == "bash"
     assert payloads[4]["call_id"] == "call-tool-1"
     assert payloads[4]["duration_ms"] == "234"
+
+    # Latency excludes the union of the message's tool intervals.
+    assert payloads[7]["event.name"] == "opencode.message_completed"
+    assert payloads[7]["duration_ms"] == (6000 - 4900) - ((5300 - 5000) + (5600 - 5500))
 
 
 @pytest.mark.slow
@@ -437,10 +479,11 @@ def test_opencode_plugin_v2_tracks_usage_tools_and_failures(tmp_path):
     assert tool["tool_name"] == "read"
     assert tool["call_id"] == "call_1"
     assert tool["duration_ms"] == "50"
-    assert output["times"][1] == "2250000000"
+    assert output["times"][1] == "2200000000"
 
     assert attrs[2]["event.name"] == "opencode.message_completed"
-    assert attrs[2]["duration_ms"] == 300
+    # Step 2000-2300 minus the read [2200, 2250] and failed bash [2270, 2280] runs.
+    assert attrs[2]["duration_ms"] == 240
     assert "ttft_ms" not in attrs[2]
 
     assert attrs[3]["status_code"] == 429

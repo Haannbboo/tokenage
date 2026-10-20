@@ -937,7 +937,11 @@ def _hour_bounds(since: str | None, until: str | None) -> tuple[int | None, int 
     since_hour = hour_of(since) if since else None
     until_hour = None
     if until:
-        until_hour = hour_of(until) + (86400 - 3600 if len(until) == 10 else 0)
+        if len(until) == 10:
+            until_hour = hour_of(until) + 86400 - 3600
+        else:
+            # Inclusive `ts <= until`: an hour-aligned bound ends the prior bucket.
+            until_hour = (_iso_to_micros(until) - 1) // 3_600_000_000 * 3600
     return since_hour, until_hour
 
 

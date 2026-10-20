@@ -135,6 +135,9 @@ def migrate_database(db_path: str | None = None) -> list[str]:
     # usage_daily → usage_hourly, once: the old table's presence is the marker.
     if insp.has_table("usage_daily"):
         with engine.begin() as connection:
+            if engine.dialect.name == "postgresql":
+                # Hold off live hourly upserts until the rebuild commits.
+                connection.execute(text("LOCK TABLE usage_hourly IN EXCLUSIVE MODE"))
             for statement in HOURLY_BACKFILL:
                 connection.execute(text(statement))
         applied.append("usage_hourly.backfill")

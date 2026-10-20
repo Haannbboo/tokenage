@@ -1275,6 +1275,15 @@ def test_summarize_usage_window_groups_by_session_source_and_model(fresh_db):
     assert summary["models"][1]["model"] == "gpt-test"
 
 
+def test_hour_bounds_hour_aligned_until_ends_previous_bucket():
+    from src.database.usage import _hour_bounds
+
+    h = 1776384000  # 2026-04-17T00:00:00Z
+    assert _hour_bounds(None, "2026-04-17T00:00:00Z") == (None, h - 3600)
+    assert _hour_bounds(None, "2026-04-17T00:00:01Z") == (None, h)
+    assert _hour_bounds("2026-04-17T00:30:00Z", "2026-04-17") == (h, h + 82800)
+
+
 def test_summarize_usage_window_filters_after_and_until_ts(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path

@@ -17,7 +17,7 @@ from .ingest_queue import TRANSIENT_DB_ERRORS, consumer_lifespan, publish
 from .provider_parser import parse_provider_metadata
 from .ratelimit import resolve_ingest_request_async
 from .recorder import record_tool_call, record_usage, update_tool_call_duration
-from .shared_mapping import SharedMapping, defer_updates
+from .shared_state import SharedMapping, defer_updates
 
 log = logging.getLogger(__name__)
 _usage_committed: ContextVar[bool] = ContextVar("otlp_usage_committed", default=False)

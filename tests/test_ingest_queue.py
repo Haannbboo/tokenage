@@ -739,7 +739,7 @@ def test_state_flush_fails_after_usage_commit(api_module, fresh_db, monkeypatch)
 
     user, auth = _postcommit_setup(fresh_db)
     store = get_shared_state()
-    monkeypatch.setattr("src.shared_mapping.get_shared_state", lambda: store)
+    monkeypatch.setattr("src.shared_state.get_shared_state", lambda: store)
     _postcommit_codex(store, user, auth)
     c = Consumer(store)
     failed = []

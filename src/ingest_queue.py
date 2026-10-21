@@ -19,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as DatabaseTimeout
 
-from .shared_state import Event, QueueFull, SharedState, get_shared_state
+from .shared_state import LEASE_SECONDS, Event, QueueFull, SharedState, get_shared_state
 
 log = logging.getLogger(__name__)
 POLL_SECONDS = 0.25
@@ -58,6 +58,7 @@ class Consumer:
         self.store = store if store is not None else get_shared_state()
         self.owner = uuid.uuid4().hex
         self.positions: dict[int, str] = {}
+        self.renew_at: dict[int, float] = {}
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.abandoned = threading.Event()
@@ -100,8 +101,9 @@ class Consumer:
     def commit_position(self, partition: int, expected: str, position: str) -> str:
         from .database import get_engine
 
-        if self.abandoned.is_set() or not self.store.renew(partition, self.owner):
+        if self.abandoned.is_set():
             raise LeaseLost()
+        self._renew_if_due(partition)
         value = f"{position}:{self.store.identity}:{self.owner}"
         with get_engine().begin() as conn:
             changed = conn.execute(
@@ -114,14 +116,21 @@ class Consumer:
                 raise LeaseLost()
         return value
 
+    def _renew_if_due(self, partition: int) -> None:
+        with self.lock:
+            due = self.renew_at.get(partition, 0)
+        if time.monotonic() < due:
+            return
+        if not self.store.renew(partition, self.owner):
+            raise LeaseLost()
+        with self.lock:
+            self.renew_at[partition] = time.monotonic() + LEASE_SECONDS / 2
+
     def _progress(self) -> None:
         partition = self.active_partition
-        if (
-            self.abandoned.is_set()
-            or partition is None
-            or not self.store.renew(partition, self.owner)
-        ):
+        if self.abandoned.is_set() or partition is None:
             raise LeaseLost()
+        self._renew_if_due(partition)
         # The watchdog measures stalled work, not the duration of a healthy
         # multi-record OTLP export over a slow remote database.
         self.processing_since = time.monotonic()
@@ -183,11 +192,11 @@ class Consumer:
                     continue
                 with self.lock:
                     self.positions[partition] = "0"
+                    self.renew_at[partition] = time.monotonic() + LEASE_SECONDS / 2
                 try:
                     self.processing_since = time.monotonic()
                     value = self._claim_position(partition)
-                    if not self.store.renew(partition, self.owner):
-                        raise LeaseLost()
+                    self._renew_if_due(partition)
                     with self.lock:
                         self.positions[partition] = value
                 except LeaseLost:
@@ -214,12 +223,9 @@ class Consumer:
             for event in self.store.read(partition, _offset(position), limit):
                 self.processing_since = time.monotonic()
                 try:
-                    if (
-                        self.abandoned.is_set()
-                        or self.stop_event.is_set()
-                        or not self.store.renew(partition, self.owner)
-                    ):
+                    if self.abandoned.is_set() or self.stop_event.is_set():
                         raise LeaseLost()
+                    self._renew_if_due(partition)
                     try:
                         self.active_partition = partition
                         self._process(event)
@@ -268,6 +274,7 @@ class Consumer:
     def _drop(self, partition: int) -> None:
         with self.lock:
             self.positions.pop(partition, None)
+            self.renew_at.pop(partition, None)
         self.store.release(partition, self.owner)
 
     def _run(self) -> None:
@@ -298,6 +305,11 @@ class Consumer:
                 try:
                     if not self.store.renew(partition, self.owner):
                         self._drop(partition)
+                    else:
+                        with self.lock:
+                            self.renew_at[partition] = (
+                                time.monotonic() + LEASE_SECONDS / 2
+                            )
                 except Exception as exc:
                     log.warning(
                         "Ingest lease renewal failed error=%s", type(exc).__name__

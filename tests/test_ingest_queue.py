@@ -804,3 +804,22 @@ def test_drained_partition_is_available_to_new_consumer(
     assert second.drain() == 1
     assert len(seen) == 1
     assert store.status()[partition].depth == 0
+
+
+def test_large_export_renews_lease_only_when_due(api_module, fresh_db, monkeypatch):
+    from unittest.mock import Mock
+
+    import src.otlp as otlp
+    from src.ingest_queue import Consumer
+    from src.shared_state import get_shared_state
+
+    store = get_shared_state()
+    _queue_otlp(store, "user", "device", [{} for _ in range(1000)])
+    renew = Mock(wraps=store.renew)
+    monkeypatch.setattr(store, "renew", renew)
+    monkeypatch.setattr(otlp, "_parse_log_record", lambda *args, **kwargs: None)
+    # Freeze the clock: renewals depend on elapsed time, never record count.
+    monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: 1000.0)
+    consumer = Consumer(store)
+    assert consumer.drain() == 1
+    assert renew.call_count <= 1

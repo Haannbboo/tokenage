@@ -892,3 +892,55 @@ def test_dropped_partition_does_not_abort_other_partitions(
     assert store.status()[partition_for(first)].depth == 1
     assert "KeyError" not in caplog.text
     assert "Skipping" not in caplog.text
+
+
+def test_due_renewal_rejects_stolen_lease_before_next_record(
+    api_module, fresh_db, monkeypatch
+):
+    import src.otlp as otlp
+    from src.ingest_queue import Consumer, LeaseLost
+    from src.shared_state import LEASE_SECONDS, get_shared_state, partition_for
+
+    store = get_shared_state()
+    partition = partition_for("user")
+    now = 1000.0
+    monkeypatch.setattr("src.shared_state.time.time", lambda: now)
+    monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: now)
+    _queue_otlp(store, "user", "device", [{}, {}])
+    consumer = Consumer(store)
+    calls = []
+    original_commit = consumer.commit_position
+
+    def commit_then_steal(*args):
+        nonlocal now
+        value = original_commit(*args)
+        now += LEASE_SECONDS + 1
+        assert store.claim(partition, "successor")
+        return value
+
+    monkeypatch.setattr(consumer, "commit_position", commit_then_steal)
+    monkeypatch.setattr(otlp, "_parse_log_record", lambda *a, **kw: calls.append(1))
+    assert consumer.drain() == 0
+    assert calls == [1]
+    assert store.status()[partition].depth == 1
+    with pytest.raises(LeaseLost):
+        consumer._renew_if_due(partition)
+
+
+def test_slow_renewal_deadline_uses_call_start(api_module, fresh_db, monkeypatch):
+    from src.ingest_queue import Consumer
+    from src.shared_state import LEASE_SECONDS, get_shared_state
+
+    consumer = Consumer(get_shared_state())
+    now = 1000.0
+    monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: now)
+
+    def slow_renew(*args):
+        nonlocal now
+        now += LEASE_SECONDS
+        return True
+
+    monkeypatch.setattr(consumer.store, "renew", slow_renew)
+    consumer._renew_if_due(0)
+    assert consumer.renew_at[0] == 1000.0 + LEASE_SECONDS / 2
+    assert consumer.renew_at[0] < now

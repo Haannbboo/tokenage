@@ -113,14 +113,15 @@ class Consumer:
         return value
 
     def _renew_if_due(self, partition: int) -> None:
+        now = time.monotonic()
         with self.lock:
             due = self.renew_at.get(partition, 0)
-        if time.monotonic() < due:
+        if now < due:
             return
         if not self.store.renew(partition, self.owner):
             raise LeaseLost()
         with self.lock:
-            self.renew_at[partition] = time.monotonic() + LEASE_SECONDS / 2
+            self.renew_at[partition] = now + LEASE_SECONDS / 2
 
     def _position(self, partition: int) -> str:
         with self.lock:
@@ -304,13 +305,12 @@ class Consumer:
                 partitions = list(self.positions)
             for partition in partitions:
                 try:
+                    now = time.monotonic()
                     if not self.store.renew(partition, self.owner):
                         self._drop(partition)
                     else:
                         with self.lock:
-                            self.renew_at[partition] = (
-                                time.monotonic() + LEASE_SECONDS / 2
-                            )
+                            self.renew_at[partition] = now + LEASE_SECONDS / 2
                 except Exception as exc:
                     log.warning(
                         "Ingest lease renewal failed error=%s", type(exc).__name__

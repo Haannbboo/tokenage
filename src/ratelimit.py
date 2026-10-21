@@ -1,27 +1,26 @@
 """Per-key sliding-window rate limiter and ingest-token authentication.
 
-In-process: the server runs one worker (the API, with OTLP mounted at /otlp)
-and keeps its windows in memory.
+Windows are shared across server processes; invalid-token caching stays local.
 """
 
 import asyncio
 import concurrent.futures
+import sqlite3
 import threading
 import time
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from typing import NoReturn
 
 from fastapi import HTTPException, Request
 
 from src.config.app import CONFIG
+from src.shared_state import get_shared_state
 
 from .auth import resolve_token
 from .auth.tokens import hash_token
 
 WINDOW_SECONDS = 60
 
-_rate_limit_state: dict[str, deque] = {}
-_last_rate_limit_cleanup = 0.0
 _rate_limit_lock = threading.Lock()
 _invalid_token_cache: OrderedDict[str, float] = OrderedDict()
 # ponytail: bounded 4096-entry expiry scan; add an expiry index if profiling
@@ -39,35 +38,14 @@ def rate_limit_hit(key: str, limit_name: str) -> int | None:
 
     Returns None when allowed, else the seconds until a slot frees up.
     """
-    global _last_rate_limit_cleanup
-
-    max_per_minute = CONFIG["rate_limits"][limit_name]
-    with _rate_limit_lock:
-        now = time.time()
-        window_start = now - WINDOW_SECONDS
-
-        if now - _last_rate_limit_cleanup >= WINDOW_SECONDS:
-            _last_rate_limit_cleanup = now
-            stale_keys = [
-                k
-                for k, timestamps in _rate_limit_state.items()
-                if not timestamps or timestamps[-1] < window_start
-            ]
-            for k in stale_keys:
-                del _rate_limit_state[k]
-
-        dq = _rate_limit_state.get(key)
-        if dq is None:
-            dq = deque()
-            _rate_limit_state[key] = dq
-        while dq and dq[0] < window_start:
-            dq.popleft()
-
-        if len(dq) >= max_per_minute:
-            return int((dq[0] if dq else now) + WINDOW_SECONDS - now) + 1
-
-        dq.append(now)
-        return None
+    try:
+        return get_shared_state().rate_limit(
+            key, CONFIG["rate_limits"][limit_name], WINDOW_SECONDS
+        )
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            503, "rate limiter unavailable", headers={"Retry-After": "5"}
+        ) from exc
 
 
 def check_rate_limit(key: str, limit_name: str) -> None:

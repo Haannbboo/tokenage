@@ -187,7 +187,16 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content=AUTH_GATE_LOGIN_REQUIRED)
         user, auth_token = resolved
         if auth_token is not None:  # the loopback owner (no token) is exempt
-            retry_after = rate_limit_hit(f"api:{user.id}", "api_per_minute")
+            try:
+                retry_after = await asyncio.to_thread(
+                    rate_limit_hit, f"api:{user.id}", "api_per_minute"
+                )
+            except HTTPException as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": exc.detail},
+                    headers=exc.headers,
+                )
             if retry_after is not None:
                 return JSONResponse(
                     status_code=429,

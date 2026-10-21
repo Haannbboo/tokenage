@@ -4,7 +4,13 @@ import { customBound, getSinceDate, getTimezoneOffset, resolveTimezone, FIXED_PR
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
-export function useDashboardData() {
+type DashboardDataOptions = {
+  includeDaily?: boolean
+  includeHeatmap?: boolean
+  includeCount?: boolean
+}
+
+export function useDashboardData({ includeDaily = true, includeHeatmap = true, includeCount = true }: DashboardDataOptions = {}) {
   const { refreshTrigger, setError, activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil, timezone } = useApp()
   const tz = resolveTimezone(timezone)
 
@@ -96,21 +102,21 @@ export function useDashboardData() {
 
         const responses = await Promise.all([
           fetch(summaryUrl.toString(), sig),
-          fetch(dailyUrl.toString(), sig),
-          fetch(heatmapUrl.toString(), sig),
-          fetch(totalCountUrl.toString(), sig),
+          includeDaily ? fetch(dailyUrl.toString(), sig) : null,
+          includeHeatmap ? fetch(heatmapUrl.toString(), sig) : null,
+          includeCount ? fetch(totalCountUrl.toString(), sig) : null,
         ])
 
-        if (responses.some(r => !r.ok)) throw new Error(t('Failed to fetch dashboard data'))
+        if (responses.some(r => r && !r.ok)) throw new Error(t('Failed to fetch dashboard data'))
         const [summaryData, dailyData, heatmapRaw, totalCountData] =
-          await Promise.all(responses.map(r => r.json())) as [UsageSummary[], DailyUsage[], DailyUsage[], { total: number }]
+          await Promise.all(responses.map(r => r ? r.json() : null)) as [UsageSummary[], DailyUsage[] | null, DailyUsage[] | null, { total: number } | null]
 
         if (!isCurrentRequest()) return
 
         setSummary(summaryData)
-        setDailyUsage(dailyData)
-        setHeatmapData(heatmapRaw)
-        setTotalTrackedEvents(totalCountData.total)
+        if (dailyData) setDailyUsage(dailyData)
+        if (heatmapRaw) setHeatmapData(heatmapRaw)
+        if (totalCountData) setTotalTrackedEvents(totalCountData.total)
         dashboardHasLoadedRef.current = true
       } catch (err) {
         if (!isCurrentRequest()) return
@@ -125,7 +131,7 @@ export function useDashboardData() {
 
     void fetchDashboard()
     return () => controller.abort()
-  }, [activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil, refreshTrigger, applyFilterParams, setError, tz])
+  }, [activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil, refreshTrigger, applyFilterParams, setError, tz, includeDaily, includeHeatmap, includeCount])
 
   // Sources fetch
   useEffect(() => {

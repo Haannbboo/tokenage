@@ -828,3 +828,28 @@ def test_state_flush_fails_after_usage_commit(api_module, fresh_db, monkeypatch)
     assert c.drain() == 0
     assert failed
     assert _postcommit_counts(fresh_db)[0] == 1
+
+
+def test_stalled_processing_stops_lease_renewal(api_module, fresh_db, monkeypatch):
+    from unittest.mock import Mock
+
+    import src.ingest_queue as queue
+    from src.shared_state import get_shared_state, partition_for
+
+    store = get_shared_state()
+    consumer = queue.Consumer(store)
+    partition = partition_for("hung-user")
+    now = 1000.0
+    monkeypatch.setattr("src.shared_state.time.time", lambda: now)
+    monkeypatch.setattr(queue.time, "monotonic", lambda: now)
+    assert store.claim(partition, consumer.owner)
+    consumer.positions[partition] = "0"
+    consumer.processing_since = now
+    now += queue.LEASE_SECONDS + 1
+    wait = iter([False, True])
+    monkeypatch.setattr(consumer.stop_event, "wait", lambda _: next(wait))
+    renew = Mock(wraps=store.renew)
+    monkeypatch.setattr(store, "renew", renew)
+    consumer._renew()
+    assert renew.call_count == 0
+    assert store.claim(partition, "successor")

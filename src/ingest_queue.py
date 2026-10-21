@@ -61,6 +61,7 @@ class Consumer:
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.active_partition: int | None = None
+        self.processing_since: float | None = None
 
     def _claim_position(self, partition: int) -> str:
         from .database import get_engine
@@ -213,6 +214,7 @@ class Consumer:
                 self._drop(partition)
                 continue
             for event in self.store.read(partition, _offset(position), limit):
+                self.processing_since = time.monotonic()
                 try:
                     if self.stop_event.is_set():
                         raise LeaseLost()
@@ -252,6 +254,7 @@ class Consumer:
                     break
                 finally:
                     self.active_partition = None
+                    self.processing_since = None
             # Once drained, let a newly started consumer claim future work.
             # A publish racing this check is harmless: either this owner keeps
             # the lease for its next poll or a successor claims it after release.
@@ -269,8 +272,9 @@ class Consumer:
 
     def _run(self) -> None:
         # ponytail: a hung DB call blocks this process's consumer; bound it with
-        # a DB statement timeout if it bites. Lease expiry and position fencing
-        # protect takeover by another worker once this process stops renewing.
+        # a DB statement timeout if it bites. Renewal pauses for stalled work
+        # so another worker can take over after lease expiry; position fencing
+        # rejects the stale consumer if its blocked call eventually returns.
         while not self.stop_event.is_set():
             try:
                 self.drain()
@@ -280,6 +284,9 @@ class Consumer:
 
     def _renew(self) -> None:
         while not self.stop_event.wait(RENEW_SECONDS):
+            since = self.processing_since
+            if since is not None and time.monotonic() - since > LEASE_SECONDS / 4:
+                continue
             with self.lock:
                 partitions = list(self.positions)
             for partition in partitions:

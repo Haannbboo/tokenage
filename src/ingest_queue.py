@@ -1,8 +1,9 @@
 """In-process queue consumer; blocking ingest and DB calls run on daemon threads.
 
-PR 1b commits a fenced position immediately after each event's existing writes.
-Those writes still own their sessions. PR 1c will commit them and the position
-in one transaction; a crash between them can currently redeliver an event.
+PR 1b commits a fenced position after each OTLP record (or usage event).
+These per-record position transactions are a stopgap: PR 1c must replace them
+with one transaction for usage writes and the position, rather than add another
+commit. A crash between a write and its checkpoint can still replay that record.
 """
 
 from __future__ import annotations

@@ -17,6 +17,7 @@ from .shared_state import get_shared_state
 # correlation inputs (including tools from previously acknowledged events).
 _pending: ContextVar[dict | None] = ContextVar("correlation_updates", default=None)
 _DELETED = object()
+CORRELATION_TTL_SECONDS = 600
 
 
 @contextmanager
@@ -30,7 +31,7 @@ def defer_updates():
             if value is _DELETED:
                 store.delete(namespace, key)
             else:
-                store.set(namespace, key, value, 600)
+                store.set(namespace, key, value, CORRELATION_TTL_SECONDS)
     finally:
         _pending.reset(token)
 
@@ -56,7 +57,7 @@ class SharedMapping(MutableMapping[str, Any]):
         if pending is not None:
             pending[self.namespace, key] = deepcopy(value)
         else:
-            get_shared_state().set(self.namespace, key, value, 600)
+            get_shared_state().set(self.namespace, key, value, CORRELATION_TTL_SECONDS)
 
     def __delitem__(self, key: str) -> None:
         pending = _pending.get()

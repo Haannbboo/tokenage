@@ -1,6 +1,6 @@
 """Shared transient state, with a durable partitioned queue.
 
-Delivery is at least once; consumers must fence committed positions before acking.
+Delivery is at least once; consumers write events before acknowledging them.
 Positions are opaque strings at the interface boundary (Redis stream IDs can
 implement the same contract). SQLite uses monotonically increasing row IDs.
 """
@@ -14,7 +14,6 @@ import os
 import sqlite3
 import threading
 import time
-import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,8 +51,6 @@ class PartitionStatus:
 
 
 class SharedState(Protocol):
-    identity: str
-
     def publish(self, user_id: str, payload: dict[str, Any]) -> str: ...
     def read(
         self, partition: int, after: str = "0", limit: int = 500
@@ -88,7 +85,6 @@ class SQLiteSharedState:
         with self._connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
-                CREATE TABLE IF NOT EXISTS store_meta (id INTEGER PRIMARY KEY, identity TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, partition INTEGER NOT NULL,
                     payload TEXT NOT NULL, created REAL NOT NULL);
@@ -104,15 +100,6 @@ class SQLiteSharedState:
                 CREATE INDEX IF NOT EXISTS limits_key ON limits(key, ts);
                 CREATE INDEX IF NOT EXISTS limits_expiry ON limits(expires);
             """)
-
-        with self._connection(True) as conn:
-            conn.execute(
-                "INSERT INTO store_meta VALUES (1, ?) ON CONFLICT(id) DO NOTHING",
-                (uuid.uuid4().hex,),
-            )
-            self.identity = conn.execute(
-                "SELECT identity FROM store_meta WHERE id=1"
-            ).fetchone()[0]
 
     @contextmanager
     def _connection(self, write: bool = False):

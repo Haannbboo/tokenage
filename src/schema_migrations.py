@@ -93,9 +93,8 @@ def migrate_database(db_path: str | None = None) -> list[str]:
     There are no upgrade steps for schemas older than this one.
     """
     engine = get_engine(db_path)
-    had_positions = inspect(engine).has_table("queue_positions")
-    init_db(db_path)  # create_all also upgrades existing installs with queue_positions
-    applied: list[str] = [] if had_positions else ["queue_positions"]
+    init_db(db_path)
+    applied: list[str] = []
     insp = inspect(engine)
     if engine.dialect.name == "postgresql":
         _require_no_null_user_ids(engine, insp)

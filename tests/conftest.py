@@ -194,7 +194,6 @@ def runtime_ports_module(load_module: Callable[[str], ModuleType]) -> ModuleType
 # data will leak between fresh_db tests and cause spurious failures.
 # Verify with: list of tables should match inspect(engine).get_table_names()
 _TRUNCATE_TABLES = [
-    "queue_positions",
     "price_snapshots",
     "usage_hourly",
     "tool_calls",

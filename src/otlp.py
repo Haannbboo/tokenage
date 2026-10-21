@@ -1056,7 +1056,7 @@ def _ingest_records(
         except Exception as exc:
             if _usage_committed.get():
                 # Usage already committed: retrying optional enrichment would
-                # double-count it. PR 1c will make these writes atomic instead.
+                # double-count it. PR 1c will use one transaction per batch, then ack.
                 log.warning(
                     "Ingest enrichment failed partition=%s event=%s record=%s error=%s",
                     partition,

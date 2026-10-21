@@ -318,7 +318,7 @@ def test_queue_unavailable_returns_retryable_503(
     ],
 )
 def test_auth_db_failure_returns_retryable_503(
-    api_module, fresh_db, monkeypatch, error_name, app_name, path
+    api_module, fresh_db, monkeypatch, caplog, error_name, app_name, path
 ):
     from fastapi.testclient import TestClient
     from sqlalchemy import exc
@@ -359,6 +359,11 @@ def test_auth_db_failure_returns_retryable_503(
     assert response.headers["retry-after"] == "5"
     assert "secret" not in response.text
     assert "private" not in response.text
+    assert ("src.ingest_queue", logging.WARNING, f"Returning 503: {error_name}") in (
+        caplog.record_tuples
+    )
+    assert "SELECT secret" not in caplog.text
+    assert "private connection details" not in caplog.text
 
 
 @pytest.mark.parametrize("path", ["/usage", "/ingest/v1/usage", "/otlp/v1/logs"])

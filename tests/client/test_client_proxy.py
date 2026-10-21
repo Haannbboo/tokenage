@@ -490,7 +490,7 @@ def test_post_report_retries_transport_failure_then_delivers(
     )
     proxy_report.post_report(reports[0])
     assert len(calls) == 2 and calls[0] == calls[1]
-    assert bounds == [(2.5, 5.0)] and sleeps == [5.0]
+    assert bounds == [(5.0, 7.5)] and sleeps == [7.5]
     assert "dropped" not in caplog.text and "ing-tok" not in caplog.text
 
 
@@ -571,9 +571,9 @@ def test_post_report_retries_backpressure_after_retry_after(
     )
     proxy_report.post_report(reports[0])
     delays = [min(60, max(retry_after, 1) * 2**n) for n in range(5)]
-    assert bounds == [(d / 2, d) for d in delays]
-    assert sleeps == [d / 2 + jitter * d / 2 for d in delays]
-    assert all(d / 2 <= sleep <= d <= 60 for sleep, d in zip(sleeps, delays))
+    assert bounds == [(d, d * 1.5) for d in delays]
+    assert sleeps == [min(60, d + jitter * d / 2) for d in delays]
+    assert all(d <= sleep <= 60 for sleep, d in zip(sleeps, delays))
     assert "dropped" not in caplog.text
 
 

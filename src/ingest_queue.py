@@ -53,6 +53,8 @@ def publish(user_id: str, payloads: list[dict]) -> None:
 
 
 def store_unavailable_response(request: Request, exc: Exception) -> JSONResponse:
+    # Handled exceptions are otherwise not logged; omit sensitive error details.
+    log.warning("Returning 503: %s", type(exc).__name__)
     # Clients retry 503, not 500, including DB failures before ingest is queued.
     return JSONResponse(
         status_code=503,

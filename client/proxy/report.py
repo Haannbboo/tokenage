@@ -91,12 +91,12 @@ def post_report(report: UsageReport) -> None:
                 pass
             if attempt == RATE_LIMIT_RETRIES:
                 break
-            # Exponential backoff and jitter avoid a retry storm after recovery.
+            # Upward jitter avoids retry storms without undercutting Retry-After.
             delay = min(
                 MAX_RETRY_DELAY_SECONDS,
                 (_retry_delay(response) if response is not None else 5.0) * 2**attempt,
             )
-            time.sleep(random.uniform(delay / 2, delay))
+            time.sleep(min(MAX_RETRY_DELAY_SECONDS, random.uniform(delay, delay * 1.5)))
         logger.warning("usage report dropped: rate limited or unavailable")
     except Exception as exc:
         # The message never includes headers, so the token stays out of logs.

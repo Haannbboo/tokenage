@@ -122,10 +122,18 @@ class Consumer:
         with self.lock:
             self.renew_at[partition] = time.monotonic() + LEASE_SECONDS / 2
 
+    def _position(self, partition: int) -> str:
+        with self.lock:
+            position = self.positions.get(partition)
+        if position is None:
+            raise LeaseLost()
+        return position
+
     def _progress(self) -> None:
         partition = self.active_partition
         if partition is None:
             raise LeaseLost()
+        self._position(partition)
         self._renew_if_due(partition)
 
     def _process(self, event: Event) -> None:
@@ -135,7 +143,7 @@ class Consumer:
 
             partition = self.active_partition
             assert partition is not None
-            checkpoint = self.positions[partition].split(":", 1)[0].split("/")
+            checkpoint = self._position(partition).split(":", 1)[0].split("/")
             start = (
                 int(checkpoint[2])
                 if len(checkpoint) == 3 and checkpoint[1] == event.position
@@ -146,7 +154,7 @@ class Consumer:
             def record_completed() -> None:
                 nonlocal completed
                 completed += 1
-                expected = self.positions[partition]
+                expected = self._position(partition)
                 value = self.commit_position(
                     partition,
                     expected,
@@ -208,7 +216,10 @@ class Consumer:
                 except Exception:
                     self._drop(partition)
                     raise
-            position = self.positions[partition]
+            try:
+                position = self._position(partition)
+            except LeaseLost:
+                continue
             # Trims redeliveries already committed before a crash during ack.
             if not self.store.ack(partition, _offset(position), self.owner):
                 self._drop(partition)
@@ -235,7 +246,7 @@ class Consumer:
                             type(exc).__name__,
                         )
                     position = self.commit_position(
-                        partition, self.positions[partition], event.position
+                        partition, self._position(partition), event.position
                     )
                     with self.lock:
                         self.positions[partition] = position
@@ -258,8 +269,10 @@ class Consumer:
             # Once drained, let a newly started consumer claim future work.
             # A publish racing this check is harmless: either this owner keeps
             # the lease for its next poll or a successor claims it after release.
-            if partition in self.positions and not self.store.read(
-                partition, _offset(self.positions[partition]), 1
+            with self.lock:
+                idle_position = self.positions.get(partition)
+            if idle_position is not None and not self.store.read(
+                partition, _offset(idle_position), 1
             ):
                 self._drop(partition)
         return processed

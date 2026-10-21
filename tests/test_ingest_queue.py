@@ -853,3 +853,42 @@ def test_stalled_processing_stops_lease_renewal(api_module, fresh_db, monkeypatc
     consumer._renew()
     assert renew.call_count == 0
     assert store.claim(partition, "successor")
+
+
+@pytest.mark.parametrize("kind", ["otlp", "usage"])
+def test_dropped_partition_does_not_abort_other_partitions(
+    api_module, fresh_db, monkeypatch, caplog, kind
+):
+    import src.otlp as otlp
+    from src.ingest_queue import Consumer
+    from src.shared_state import get_shared_state, partition_for
+
+    users = sorted({str(i) for i in range(100)}, key=partition_for)
+    first, last = users[0], users[-1]
+    store = get_shared_state()
+    if kind == "otlp":
+        _queue_otlp(store, first, "device", [{}])
+    else:
+        store.publish(first, {"kind": "usage", "user_id": first})
+    store.publish(last, {"kind": "usage", "user_id": last})
+    consumer = Consumer(store)
+    process = consumer._process
+    seen = []
+    monkeypatch.setattr(
+        otlp, "_parse_log_record", lambda *a, **kw: consumer._drop(partition_for(first))
+    )
+
+    def drop_mid_record(event):
+        if event.payload["user_id"] == last:
+            seen.append(event)
+        elif kind == "otlp":
+            process(event)
+        else:
+            consumer._drop(partition_for(first))
+
+    monkeypatch.setattr(consumer, "_process", drop_mid_record)
+    assert consumer.drain() == 1
+    assert len(seen) == 1
+    assert store.status()[partition_for(first)].depth == 1
+    assert "KeyError" not in caplog.text
+    assert "Skipping" not in caplog.text

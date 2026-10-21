@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.ingest_queue import drain
+
 
 def _report(**overrides) -> dict:
     report = {
@@ -61,6 +63,7 @@ def test_valid_report_is_recorded_priced_and_attributed(
     r = TestClient(api_module.app).post(
         "/ingest/v1/usage", json=_report(), headers={"x-tokenage-token": token}
     )
+    drain()
     assert r.status_code == 204
     usage, tools = _rows(fresh_db, None)
     assert len(usage) == 1
@@ -78,10 +81,12 @@ def test_missing_or_bad_token_is_rejected(api_module, fresh_db):
     client = TestClient(api_module.app)
     # loopback owner without a token must not be accepted
     assert client.post("/ingest/v1/usage", json=_report()).status_code == 401
+    drain()
     bad = {"x-tokenage-token": "tokenage_ingest_nope"}
     assert (
         client.post("/ingest/v1/usage", json=_report(), headers=bad).status_code == 401
     )
+    drain()
     assert _rows(fresh_db, None)[0] == []
 
 
@@ -94,6 +99,7 @@ def test_non_ingest_tokens_and_cookies_are_rejected(api_module, fresh_db):
         {"cookies": {"tokenage_session": web}},
     ):
         r = client.post("/ingest/v1/usage", json=_report(), **kwargs)
+        drain()
         assert r.status_code == 401
     assert _rows(fresh_db, None)[0] == []
 
@@ -106,7 +112,9 @@ def test_malformed_payload_is_422(api_module, fresh_db):
         client.post("/ingest/v1/usage", json={"model": "x"}, headers=h).status_code
         == 422
     )
+    drain()
     r = client.post("/ingest/v1/usage", json=_report(prompt_tokens=-1), headers=h)
+    drain()
     assert r.status_code == 422
 
 
@@ -123,7 +131,9 @@ def test_ingest_works_under_every_auth_provider(
     client = TestClient(api_module.app)
     h = {"x-tokenage-token": token}
     assert client.post("/ingest/v1/usage", json=_report(), headers=h).status_code == 204
+    drain()
     assert client.post("/ingest/v1/usage", json=_report()).status_code == 401
+    drain()
 
 
 def test_usage_ingest_is_rate_limited_per_token(api_module, fresh_db, monkeypatch):
@@ -152,6 +162,7 @@ def test_redelivered_report_does_not_double_count_tool_calls(api_module, fresh_d
         r = client.post(
             "/ingest/v1/usage", json=report, headers={"x-tokenage-token": token}
         )
+        drain()
         assert r.status_code == 204
     usage, tools = _rows(fresh_db, None)
     assert len(usage) == 2  # the report itself is not deduplicated

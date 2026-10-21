@@ -27,6 +27,13 @@ class Base(DeclarativeBase):
 metadata = Base.metadata
 
 
+class QueuePosition(Base):
+    __tablename__ = "queue_positions"
+
+    partition: Mapped[int] = mapped_column(Integer, primary_key=True)
+    position: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class User(Base):
     __tablename__ = "users"
 

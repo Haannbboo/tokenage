@@ -4,6 +4,8 @@ from unittest.mock import ANY
 import pytest
 from fastapi.testclient import TestClient
 
+from src.ingest_queue import drain
+
 
 def test_usage_daily_endpoint_exists(api_module):
     # This just verifies the endpoint function is defined
@@ -1420,6 +1422,7 @@ def test_otlp_is_mounted_under_the_api(api_module, fresh_db, monkeypatch):
 
     # Tokenless: the collector's own 401, not the API gate's login response.
     response = client.post("/otlp/v1/logs", json=_otlp_body())
+    drain()
     assert response.status_code == 401
     assert response.json() == {"detail": "invalid token"}
 
@@ -1427,6 +1430,7 @@ def test_otlp_is_mounted_under_the_api(api_module, fresh_db, monkeypatch):
     response = client.post(
         "/otlp/v1/logs", json=_otlp_body(), headers={"x-tokenage-token": token}
     )
+    drain()
     assert response.status_code == 200
     engine = fresh_db.database_module.get_engine(fresh_db.db_path)
     with engine.connect() as conn:

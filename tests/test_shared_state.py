@@ -1,5 +1,3 @@
-import hashlib
-
 import pytest
 
 from src.shared_state import QueueFull, SQLiteSharedState, partition_for
@@ -11,10 +9,7 @@ def store(request, tmp_path):
 
 
 def test_affinity_queue_and_ack(store):
-    assert (
-        partition_for("alice")
-        == int.from_bytes(hashlib.sha256(b"alice").digest()[:8], "big") % 16
-    )
+    assert partition_for("alice") == 15
     first = store.publish("alice", {"n": 1})
     second = store.publish("alice", {"n": 2})
     p = partition_for("alice")

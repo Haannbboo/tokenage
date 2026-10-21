@@ -1,20 +1,18 @@
-import asyncio
 import json
 import logging
 import os
 import time
 import uuid
-from collections.abc import Iterator, MutableMapping
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Iterator, MutableMapping
 from contextlib import asynccontextmanager
 from datetime import datetime
-from functools import partial
 
 from fastapi import FastAPI, HTTPException, Request
 
 from src.config.app import CONFIG
 
 from .database import init_db
+from .ingest_queue import TRANSIENT_DB_ERRORS, consumer_lifespan, publish
 from .provider_parser import parse_provider_metadata
 from .ratelimit import resolve_ingest_request_async
 from .recorder import record_tool_call, record_usage, update_tool_call_duration
@@ -897,7 +895,8 @@ def _parse_log_record(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    yield
+    async with consumer_lifespan():
+        yield
 
 
 app = FastAPI(title="tokenage-otlp", lifespan=lifespan)
@@ -928,6 +927,63 @@ async def _read_capped_json(request: Request) -> dict:
     return json.loads(body_bytes)
 
 
+# Only metadata used by the parser crosses the durable queue boundary. OTLP
+# may also carry prompt/response text, tool arguments or a log body.
+_QUEUE_ATTRIBUTES = frozenset(
+    [
+        "cache_creation_token_count",
+        "cache_creation_tokens",
+        "cache_read_tokens",
+        "cached_token_count",
+        "call_id",
+        "conversation.id",
+        "duration_ms",
+        "event.kind",
+        "event.name",
+        "event.timestamp",
+        "http.response.status_code",
+        "http.status_code",
+        "input_token_count",
+        "input_tokens",
+        "message.id",
+        "model",
+        "output_token_count",
+        "output_tokens",
+        "prompt.id",
+        "prompt_id",
+        "prompt_length",
+        "provider",
+        "reasoning_token_count",
+        "session.id",
+        "status_code",
+        "tool_name",
+        "tool_token_count",
+        "tool_use_id",
+        "ttft_ms",
+    ]
+)
+
+
+def _queue_record(record: dict) -> dict:
+    attributes = []
+    for attr in record.get("attributes", []):
+        if attr.get("key") not in _QUEUE_ATTRIBUTES:
+            continue
+        raw_value = attr.get("value", {})
+        value = {
+            kind: raw_value[kind]
+            for kind in ("stringValue", "intValue", "doubleValue", "boolValue")
+            if kind in raw_value
+            and isinstance(raw_value[kind], (str, int, float, bool))
+        }
+        attributes.append({"key": attr["key"], "value": value})
+    return {
+        "timeUnixNano": record.get("timeUnixNano", "0"),
+        "observedTimeUnixNano": record.get("observedTimeUnixNano", "0"),
+        "attributes": attributes,
+    }
+
+
 def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
     """Yield (record, service_name, session_id) for each ingestable record."""
     for resource_log in body.get("resourceLogs", []):
@@ -949,31 +1005,35 @@ def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
                 yield record, service_name, session_id
 
 
-# Every request's records are processed on this one thread, in arrival order.
-# The buffers above correlate events that arrive in separate requests and are
-# plain dicts mutated with check-then-act sequences, so they rely on a single
-# thread touching them: keep max_workers=1. Running the blocking DB writes here
-# instead of on the event loop keeps /health, auth and body reads responsive
-# while a record waits on the database.
-_record_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tokenage-otlp")
-# Batches accepted but not finished (running + queued). If the database stalls
-# the worker stops draining, so bound the queue and shed with a retryable 503
-# instead of holding every request body in memory.
-MAX_PENDING_BATCHES = 64
-_pending_batches = 0
-
-
 def _ingest_records(
-    records: list[tuple[dict, str, str]], *, user_id: str, device_id: str
+    records: list[tuple[dict, str, str]],
+    *,
+    user_id: str,
+    device_id: str,
+    progress: Callable[[], None] | None = None,
 ) -> None:
     for record, service_name, session_id in records:
-        _parse_log_record(
-            record,
-            service_name,
-            session_id,
-            user_id=user_id,
-            device_id=device_id,
-        )
+        if progress is not None:
+            progress()
+        try:
+            _parse_log_record(
+                record, service_name, session_id, user_id=user_id, device_id=device_id
+            )
+        except TRANSIENT_DB_ERRORS:
+            raise
+        except Exception as exc:
+            try:
+                event_name = _attr(record.get("attributes", []), "event.name")
+            except Exception:
+                event_name = None
+            log.warning(
+                "Skipping OTLP event user=%s device=%s service=%s event=%s error=%s message=processing-failed",
+                user_id,
+                device_id,
+                service_name,
+                event_name,
+                type(exc).__name__,
+            )
 
 
 @app.post("/v1/logs")
@@ -995,27 +1055,20 @@ async def receive_logs(request: Request):
         )
         records = records[:max_records]
 
-    global _pending_batches
-    if _pending_batches >= MAX_PENDING_BATCHES:
-        raise HTTPException(
-            status_code=503,
-            detail="collector is busy, retry later",
-            headers={"Retry-After": "5"},
-        )
-    _pending_batches += 1
-    future = asyncio.get_running_loop().run_in_executor(
-        _record_executor,
-        partial(_ingest_records, records, user_id=user_id, device_id=device_id),
+    from starlette.concurrency import run_in_threadpool
+
+    await run_in_threadpool(
+        publish,
+        user_id,
+        {
+            "kind": "otlp",
+            "device_id": device_id,
+            "records": [
+                (_queue_record(record), service, session)
+                for record, service, session in records
+            ],
+        },
     )
-
-    def _release_slot(_future: object) -> None:
-        global _pending_batches
-        _pending_batches -= 1
-
-    # On completion, not when this handler returns: a cancelled request leaves
-    # its batch queued, and it still occupies a slot until it has run.
-    future.add_done_callback(_release_slot)
-    await future
     if rejected:
         # OTLP partial success: still 200 so the exporter does not retry the same
         # oversized batch forever, but the dropped count is reported, not hidden.

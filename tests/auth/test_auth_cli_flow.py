@@ -13,6 +13,8 @@ from urllib.parse import parse_qs, urlparse
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from src.ingest_queue import drain
+
 SESSION_COOKIE = "tokenage_session"
 
 
@@ -430,6 +432,7 @@ def test_installed_machine_relogin_rotates_both_tokens_and_revoke_stops_ingest(
         json={},
         headers={"x-tokenage-token": second_tokens["ingest_token"]},
     )
+    drain()
     assert rejected.status_code == 401
 
 

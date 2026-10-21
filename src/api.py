@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import shlex
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -70,12 +71,12 @@ from .database import (
     upsert_model_price,
     upsert_session_evaluation,
 )
+from .ingest_queue import consumer_lifespan, publish
 from .otlp import app as otlp_app
 from .pricing.costs import resolve_cost_match
 from .pricing.models import ResolvedCost
 from .pricing.snapshots import enrich_rows
 from .ratelimit import rate_limit_hit, resolve_ingest_request
-from .recorder import record_usage
 from .utils import normalize_model_name
 
 logger = logging.getLogger(__name__)
@@ -138,14 +139,15 @@ def _parse_device_status_json(raw: str | None) -> dict | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    yield
+    async with consumer_lifespan():
+        yield
 
 
 app = FastAPI(title="tokenage-api", lifespan=lifespan)
 app.include_router(auth_router)
 # One process, one port: the collector keeps its own app (still runnable as
 # `uvicorn src.otlp:app`). Starlette skips a mounted app's lifespan; ours runs
-# the only thing it needs, init_db().
+# init_db() and the shared ingest consumer.
 app.mount("/otlp", otlp_app)
 
 
@@ -653,15 +655,15 @@ def ingest_usage(request: Request, report: UsageReport):
     metadata only."""
     user_id, device_id = resolve_ingest_request(request)
     fields = report.model_dump(exclude={"tool_calls", "base_url"})
-    record_usage(
-        **fields,
-        user_id=user_id,
-        device_id=device_id,
+    if fields["ts"] is None:
+        fields["ts"] = time.time_ns() // 1000
+    fields.update(
         base_url=report.base_url,
         base_url_provider=report.provider,
         base_url_source="proxy_config",
         tool_calls=[(tc.tool_use_id, tc.tool_name) for tc in report.tool_calls],
     )
+    publish(user_id, {"kind": "usage", "device_id": device_id, "fields": fields})
     return Response(status_code=204)
 
 

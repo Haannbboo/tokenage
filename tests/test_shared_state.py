@@ -10,14 +10,13 @@ def store(request, tmp_path):
 
 def test_affinity_queue_and_ack(store):
     assert partition_for("alice") == 15
-    first = store.publish("alice", {"n": 1})
-    second = store.publish("alice", {"n": 2})
+    store.publish("alice", [{"n": 1}, {"n": 2}])
     p = partition_for("alice")
-    assert [e.position for e in store.read(p)] == [first, second]
-    assert store.read(p, first)[0].payload == {"n": 2}
-    assert not store.ack(p, second, "other")
-    assert store.claim(p, "owner")
-    assert store.ack(p, first, "owner")
+    first, second = store.read(p)
+    assert first.payload == {"n": 1}
+    assert second.payload == {"n": 2}
+    store.ack(p, first.position)
+    assert store.read(p)[0] == second
     assert store.status()[p].depth == 1
     assert store.status()[p].oldest_pending is not None
 
@@ -32,7 +31,6 @@ def test_exclusive_lease_takeover(store, monkeypatch):
     now += 11
     assert not store.renew(0, "a")
     assert other.claim(0, "b")
-    assert not store.ack(0, "0", "a")
     store.release(0, "a")
     assert other.renew(0, "b")
     other.release(0, "b")
@@ -77,16 +75,16 @@ def test_different_rate_windows_do_not_prune_each_other(store, monkeypatch):
 
 
 def test_partition_backpressure_boundary(store):
-    p = partition_for("alice")
-    with store._connection(True) as conn:
-        conn.executemany(
-            "INSERT INTO events(partition,payload,created) VALUES (?, '{}', 1)",
-            [(p,)] * 10000,
-        )
-    store.publish("alice", {})  # specified backpressure is strictly above 10,000
+    from src.shared_state import MAX_PENDING_EVENTS
+
+    store.publish("alice", [{}] * (MAX_PENDING_EVENTS - 1))
     with pytest.raises(QueueFull):
-        store.publish("alice", {})
-    assert store.status()[p].depth == 10001
+        store.publish("alice", [{"n": 1}, {"n": 2}])
+    assert store.status()[partition_for("alice")].depth == MAX_PENDING_EVENTS - 1
+    store.publish("alice", [{}])
+    with pytest.raises(QueueFull):
+        store.publish("alice", [{}])
+    assert store.status()[partition_for("alice")].depth == MAX_PENDING_EVENTS
 
 
 def test_store_factory_precedence(config_module, monkeypatch, tmp_path):

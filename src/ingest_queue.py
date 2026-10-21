@@ -1,12 +1,13 @@
 """In-process queue consumer; blocking ingest and DB calls run on daemon threads.
 
 Delivery is at least once: write each event, then acknowledge it in the store.
-A crash before ack or a stalled owner resuming after takeover can duplicate an
-event. PR 1c will group writes into one transaction per batch, then ack.
+A crash mid-pass or a stalled owner resuming after takeover can redeliver up
+to one pass (500 events). PR 1c will group writes into one transaction per batch, then ack.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
 import threading
@@ -22,7 +23,6 @@ from .shared_state import LEASE_SECONDS, Event, QueueFull, SharedState, get_shar
 
 log = logging.getLogger(__name__)
 POLL_SECONDS = 0.25
-RENEW_SECONDS = 2.0
 
 
 TRANSIENT_DB_ERRORS = (
@@ -34,78 +34,33 @@ TRANSIENT_DB_ERRORS = (
 )
 
 
-def publish(user_id: str, payload: dict) -> None:
+def publish(user_id: str, payloads: list[dict]) -> None:
     try:
-        get_shared_state().publish(user_id, {**payload, "user_id": user_id})
+        get_shared_state().publish(
+            user_id, [{**payload, "user_id": user_id} for payload in payloads]
+        )
     except (QueueFull, sqlite3.OperationalError) as exc:
         raise HTTPException(
             503, "collector is busy, retry later", headers={"Retry-After": "5"}
         ) from exc
 
 
-class LeaseLost(Exception):
-    pass
-
-
 class Consumer:
     def __init__(self, store: SharedState | None = None):
         self.store = store if store is not None else get_shared_state()
         self.owner = uuid.uuid4().hex
-        self.partitions: set[int] = set()
-        self.records_completed: dict[str, int] = {}
-        self.events: dict[int, str] = {}
-        self.worker: threading.Thread | None = None
-        self.renew_at: dict[int, float] = {}
-        self.lock = threading.Lock()
         self.stop_event = threading.Event()
-        self.active_partition: int | None = None
-        self.processing_since: float | None = None
-
-    def _renew_if_due(self, partition: int) -> None:
-        now = time.monotonic()
-        with self.lock:
-            due = self.renew_at.get(partition, 0)
-        if now < due:
-            return
-        if not self.store.renew(partition, self.owner):
-            raise LeaseLost()
-        with self.lock:
-            self.renew_at[partition] = now + LEASE_SECONDS / 2
-
-    def _progress(self) -> None:
-        partition = self.active_partition
-        with self.lock:
-            if partition not in self.partitions:
-                raise LeaseLost()
-        assert partition is not None
-        self._renew_if_due(partition)
+        self.worker: threading.Thread | None = None
 
     def _process(self, event: Event) -> None:
         payload = event.payload
         if payload["kind"] == "otlp":
-            from .otlp import _ingest_records
+            from .otlp import _parse_log_record
 
-            partition = self.active_partition
-            assert partition is not None
-            start = self.records_completed.get(event.position, 0)
-
-            def record_completed() -> None:
-                with self.lock:
-                    if partition not in self.partitions:
-                        raise LeaseLost()
-                    self.records_completed[event.position] = (
-                        self.records_completed.get(event.position, start) + 1
-                    )
-
-            _ingest_records(
-                payload["records"][start:],
+            _parse_log_record(
+                *payload["record"],
                 user_id=payload["user_id"],
                 device_id=payload["device_id"],
-                progress=self._progress,
-                record_completed=record_completed,
-                partition=partition,
-                event_id=event.position,
-                record_start=start,
             )
         elif payload["kind"] == "usage":
             from .recorder import record_usage
@@ -118,34 +73,35 @@ class Consumer:
         else:
             raise ValueError("unknown queue event kind")
 
-    def drain(self, *, limit: int = 500) -> int:
-        """Synchronously process available events; tests call this without sleeps."""
-        processed = 0
-        pending = {status.partition for status in self.store.status() if status.depth}
-        for partition in sorted(pending):
+    def drain(self) -> int:
+        done = 0
+        for partition in sorted(s.partition for s in self.store.status() if s.depth):
             if self.stop_event.is_set():
                 break
-            if partition not in self.partitions:
-                if not self.store.claim(partition, self.owner):
-                    continue
-                with self.lock:
-                    self.partitions.add(partition)
-                    self.renew_at[partition] = time.monotonic() + LEASE_SECONDS / 2
-            for event in self.store.read(partition, limit=limit):
-                self.processing_since = time.monotonic()
-                try:
+            if not self.store.claim(partition, self.owner):
+                continue
+            last = None
+            renew_at = time.monotonic() + LEASE_SECONDS / 2
+            try:
+                for event in self.store.read(partition):
                     if self.stop_event.is_set():
-                        raise LeaseLost()
-                    self._renew_if_due(partition)
+                        break
+                    now = time.monotonic()
+                    if now >= renew_at:
+                        if not self.store.renew(partition, self.owner):
+                            break
+                        renew_at = now + LEASE_SECONDS / 2
                     try:
-                        self.active_partition = partition
-                        self.events[partition] = event.position
                         self._process(event)
-                    except (LeaseLost, *TRANSIENT_DB_ERRORS):
-                        raise
+                    except TRANSIENT_DB_ERRORS as exc:
+                        log.warning(
+                            "Ingest partition unavailable partition=%s error=%s",
+                            partition,
+                            type(exc).__name__,
+                        )
+                        break
                     except Exception as exc:
-                        # Never interpolate exception text: parsers and drivers
-                        # may include raw attributes or SQL parameter values.
+                        # Exception text can contain record bodies or SQL values.
                         log.warning(
                             "Skipping ingest event user=%s device=%s kind=%s error=%s message=processing-failed",
                             event.payload.get("user_id"),
@@ -153,48 +109,17 @@ class Consumer:
                             event.payload.get("kind"),
                             type(exc).__name__,
                         )
-                    self._progress()
-                    if not self.store.ack(partition, event.position, self.owner):
-                        raise LeaseLost()
-                    self.records_completed.pop(event.position, None)
-                    self.events.pop(partition, None)
-                    processed += 1
-                except LeaseLost:
-                    self._drop(partition)
-                    break
-                except TRANSIENT_DB_ERRORS as exc:
-                    log.warning(
-                        "Ingest partition unavailable partition=%s error=%s",
-                        partition,
-                        type(exc).__name__,
-                    )
-                    break
+                    last = event.position
+                    done += 1
+            finally:
+                try:
+                    if last is not None:
+                        self.store.ack(partition, last)
                 finally:
-                    self.active_partition = None
-                    self.processing_since = None
-            # Once drained, let a newly started consumer claim future work.
-            # A publish racing this check is harmless: either this owner keeps
-            # the lease for its next poll or a successor claims it after release.
-            if partition in self.partitions and (
-                self.stop_event.is_set() or not self.store.read(partition, limit=1)
-            ):
-                self._drop(partition)
-        return processed
-
-    def _drop(self, partition: int) -> None:
-        with self.lock:
-            self.partitions.discard(partition)
-            event_id = self.events.pop(partition, None)
-            if event_id is not None:
-                self.records_completed.pop(event_id, None)
-            self.renew_at.pop(partition, None)
-        self.store.release(partition, self.owner)
+                    self.store.release(partition, self.owner)
+        return done
 
     def _run(self) -> None:
-        # ponytail: a hung DB call blocks this process's consumer; bound it with
-        # a DB statement timeout if it bites. Renewal pauses for stalled work
-        # so another worker can take over after lease expiry. If a stale call
-        # returns after takeover, its writes may duplicate the event.
         while not self.stop_event.is_set():
             try:
                 self.drain()
@@ -202,44 +127,16 @@ class Consumer:
                 log.warning("Ingest consumer unavailable error=%s", type(exc).__name__)
             self.stop_event.wait(POLL_SECONDS)
 
-    def _renew(self) -> None:
-        while not self.stop_event.wait(RENEW_SECONDS):
-            since = self.processing_since
-            if since is not None and time.monotonic() - since > LEASE_SECONDS / 4:
-                continue
-            with self.lock:
-                partitions = list(self.partitions)
-            for partition in partitions:
-                try:
-                    self._renew_if_due(partition)
-                except LeaseLost:
-                    self._drop(partition)
-                except Exception as exc:
-                    log.warning(
-                        "Ingest lease renewal failed error=%s", type(exc).__name__
-                    )
-
     def start(self) -> None:
         self.worker = threading.Thread(
             target=self._run, name="tokenage-ingest", daemon=True
         )
         self.worker.start()
-        threading.Thread(
-            target=self._renew, name="tokenage-leases", daemon=True
-        ).start()
 
     def close(self) -> None:
         self.stop_event.set()
-        if self.worker is not None and self.worker is not threading.current_thread():
-            self.worker.join(timeout=3)
-        for partition in list(self.partitions):
-            # close may be called from inside an event in synchronous drains.
-            # That event releases its lease after finishing and acknowledging.
-            if self.active_partition == partition and (
-                self.worker is None or self.worker is threading.current_thread()
-            ):
-                continue
-            self._drop(partition)
+        if self.worker is not None:
+            self.worker.join(3)
 
 
 @asynccontextmanager
@@ -249,16 +146,4 @@ async def consumer_lifespan():
     try:
         yield consumer
     finally:
-        consumer.close()
-
-
-def drain() -> int:
-    """Test helper: drain without launching lifespan/background threads."""
-    consumer = Consumer()
-    try:
-        total = 0
-        while count := consumer.drain():
-            total += count
-        return total
-    finally:
-        consumer.close()
+        await asyncio.to_thread(consumer.close)

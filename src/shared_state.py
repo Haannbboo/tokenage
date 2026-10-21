@@ -1,8 +1,7 @@
 """Shared transient state, with a durable partitioned queue.
 
-Delivery is at least once; consumers write events before acknowledging them.
-Positions are opaque strings at the interface boundary (Redis stream IDs can
-implement the same contract). SQLite uses monotonically increasing row IDs.
+Queue consumers write before acknowledging; acks remove all events through a
+finished position. Correlation mappings defer updates until record writes succeed.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ from typing import Any, Protocol
 
 PARTITIONS = 16
 LEASE_SECONDS = 10
-MAX_PENDING_EVENTS = 10_000
+MAX_PENDING_EVENTS = 50_000
 
 
 def partition_for(user_id: str) -> int:
@@ -42,7 +41,6 @@ class QueueFull(Exception):
 class Event:
     position: str
     payload: dict[str, Any]
-    created_at: float
 
 
 @dataclass(frozen=True)
@@ -54,22 +52,18 @@ class PartitionStatus:
 
 
 class SharedState(Protocol):
-    def publish(self, user_id: str, payload: dict[str, Any]) -> str: ...
-    def read(
-        self, partition: int, after: str = "0", limit: int = 500
-    ) -> list[Event]: ...
-    def ack(self, partition: int, position: str, owner: str) -> bool: ...
+    def publish(self, user_id: str, payloads: list[dict[str, Any]]) -> None: ...
+    def read(self, partition: int, limit: int = 500) -> list[Event]: ...
+    def ack(self, partition: int, position: str) -> None: ...
     def claim(self, partition: int, owner: str, ttl: float = LEASE_SECONDS) -> bool: ...
     def renew(self, partition: int, owner: str, ttl: float = LEASE_SECONDS) -> bool: ...
     def release(self, partition: int, owner: str) -> None: ...
     def status(self) -> list[PartitionStatus]: ...
-    def keys(self, namespace: str) -> list[str]: ...
     def get(self, namespace: str, key: str) -> Any: ...
     def set(
         self, namespace: str, key: str, value: Any, ttl: float, cap: int | None = None
     ) -> None: ...
     def pop(self, namespace: str, key: str) -> Any: ...
-    def delete(self, namespace: str, key: str) -> None: ...
     def rate_limit(self, key: str, limit: int, window: float = 60) -> int | None: ...
 
 
@@ -117,45 +111,35 @@ class SQLiteSharedState:
         finally:
             conn.close()
 
-    def publish(self, user_id: str, payload: dict[str, Any]) -> str:
+    def publish(self, user_id: str, payloads: list[dict[str, Any]]) -> None:
         partition = partition_for(user_id)
-        encoded = json.dumps(payload)
+        rows = [(partition, json.dumps(payload), time.time()) for payload in payloads]
         with self._connection(True) as conn:
-            if (
-                conn.execute(
-                    "SELECT count(*) FROM events WHERE partition=?", (partition,)
-                ).fetchone()[0]
-                > MAX_PENDING_EVENTS
-            ):
+            pending = conn.execute(
+                "SELECT count(*) FROM events WHERE partition=?", (partition,)
+            ).fetchone()[0]
+            if pending + len(rows) > MAX_PENDING_EVENTS:
                 raise QueueFull()
-            row = conn.execute(
-                "INSERT INTO events(partition,payload,created) VALUES (?,?,?)",
-                (partition, encoded, time.time()),
+            conn.executemany(
+                "INSERT INTO events(partition,payload,created) VALUES (?,?,?)", rows
             )
-            return str(row.lastrowid)
 
-    def read(self, partition: int, after: str = "0", limit: int = 500) -> list[Event]:
+    def read(self, partition: int, limit: int = 500) -> list[Event]:
         with self._connection() as conn:
             return [
-                Event(str(row[0]), json.loads(row[1]), row[2])
+                Event(str(row[0]), json.loads(row[1]))
                 for row in conn.execute(
-                    "SELECT id,payload,created FROM events WHERE partition=? AND id>? ORDER BY id LIMIT ?",
-                    (partition, int(after), limit),
+                    "SELECT id,payload FROM events WHERE partition=? ORDER BY id LIMIT ?",
+                    (partition, limit),
                 )
             ]
 
-    def ack(self, partition: int, position: str, owner: str) -> bool:
+    def ack(self, partition: int, position: str) -> None:
         with self._connection(True) as conn:
-            if not conn.execute(
-                "SELECT 1 FROM leases WHERE partition=? AND owner=? AND expires>?",
-                (partition, owner, time.time()),
-            ).fetchone():
-                return False
             conn.execute(
                 "DELETE FROM events WHERE partition=? AND id<=?",
                 (partition, int(position)),
             )
-            return True
 
     def claim(self, partition: int, owner: str, ttl: float = LEASE_SECONDS) -> bool:
         now = time.time()
@@ -203,16 +187,6 @@ class SQLiteSharedState:
                 for p in range(PARTITIONS)
             ]
 
-    def keys(self, namespace: str) -> list[str]:
-        with self._connection() as conn:
-            return [
-                row[0]
-                for row in conn.execute(
-                    "SELECT key FROM kv WHERE namespace=? AND expires>?",
-                    (namespace, time.time()),
-                )
-            ]
-
     def get(self, namespace: str, key: str) -> Any:
         with self._connection() as conn:
             row = conn.execute(
@@ -248,9 +222,6 @@ class SQLiteSharedState:
             ).fetchone()
             conn.execute("DELETE FROM kv WHERE namespace=? AND key=?", (namespace, key))
             return json.loads(row[0]) if row and row[1] > time.time() else None
-
-    def delete(self, namespace: str, key: str) -> None:
-        self.pop(namespace, key)
 
     def rate_limit(self, key: str, limit: int, window: float = 60) -> int | None:
         now = time.time()
@@ -307,7 +278,7 @@ def defer_updates():
         store = get_shared_state()
         for (namespace, key), value in updates.items():
             if value is _DELETED:
-                store.delete(namespace, key)
+                store.pop(namespace, key)
             else:
                 store.set(namespace, key, value, CORRELATION_TTL_SECONDS)
     finally:
@@ -342,17 +313,11 @@ class SharedMapping(MutableMapping[str, Any]):
         if pending is not None:
             pending[self.namespace, key] = _DELETED
         else:
-            get_shared_state().delete(self.namespace, key)
+            get_shared_state().pop(self.namespace, key)
 
     def __iter__(self) -> Iterator[str]:
-        keys = dict.fromkeys(get_shared_state().keys(self.namespace))
-        for (namespace, key), value in (_pending.get() or {}).items():
-            if namespace == self.namespace:
-                if value is _DELETED:
-                    keys.pop(key, None)
-                else:
-                    keys[key] = None
-        return iter(keys)
+        # Correlation maps are accessed by key, never scanned.
+        raise NotImplementedError
 
     def __len__(self) -> int:
-        return sum(1 for _ in self)
+        raise NotImplementedError

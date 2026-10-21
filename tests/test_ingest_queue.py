@@ -24,18 +24,20 @@ def test_poison_event_does_not_block_200_events(
     for n in range(200):
         store.publish(
             user_id,
-            {
-                "kind": "usage",
-                "user_id": user_id,
-                "device_id": device_id,
-                "fields": {
-                    "n": n,
-                    "model": "test-model",
-                    "provider": "anthropic",
-                    "endpoint": "test",
-                    "prompt_tokens": 1,
-                },
-            },
+            [
+                {
+                    "kind": "usage",
+                    "user_id": user_id,
+                    "device_id": device_id,
+                    "fields": {
+                        "n": n,
+                        "model": "test-model",
+                        "provider": "anthropic",
+                        "endpoint": "test",
+                        "prompt_tokens": 1,
+                    },
+                }
+            ],
         )
     consumer = Consumer(store)
     process_usage = consumer._process
@@ -62,8 +64,8 @@ def test_graceful_close_finishes_and_acks_inflight_event(
     from src.shared_state import get_shared_state, partition_for
 
     store = get_shared_state()
-    store.publish("user", {"kind": "usage", "user_id": "user"})
-    store.publish("user", {"kind": "usage", "user_id": "user"})
+    store.publish("user", [{"kind": "usage", "user_id": "user"}])
+    store.publish("user", [{"kind": "usage", "user_id": "user"}])
     consumer = Consumer(store)
     started, release = threading.Event(), threading.Event()
     threads = []
@@ -100,7 +102,7 @@ def test_tool_and_usage_survive_consumer_takeover(api_module, fresh_db):
     from src.auth import resolve_token
     from src.auth.tokens import mint_token
     from src.ingest_queue import Consumer
-    from src.shared_state import get_shared_state, partition_for
+    from src.shared_state import get_shared_state
 
     token, user = mint_token(
         "tools@example.com", kind="ingest", db_path=fresh_db.db_path
@@ -123,12 +125,14 @@ def test_tool_and_usage_survive_consumer_takeover(api_module, fresh_db):
         }
         store.publish(
             user.id,
-            {
-                "kind": "otlp",
-                "user_id": user.id,
-                "device_id": auth_token.device_id,
-                "records": [[record, "opencode", "session"]],
-            },
+            [
+                {
+                    "kind": "otlp",
+                    "user_id": user.id,
+                    "device_id": auth_token.device_id,
+                    "record": [record, "opencode", "session"],
+                }
+            ],
         )
 
     enqueue(
@@ -141,7 +145,6 @@ def test_tool_and_usage_survive_consumer_takeover(api_module, fresh_db):
     )
     first = Consumer(store)
     assert first.drain() == 1
-    first._drop(partition_for(user.id))
     enqueue(
         {
             "event.name": "opencode.message_completed",
@@ -176,7 +179,7 @@ def test_server_status_reports_queue_without_http(
     monkeypatch.setattr(ops, "_config_path", lambda: tmp_path / "missing.yaml")
     monkeypatch.setattr(ops, "_ctl", lambda *a: None)
     store = get_shared_state()
-    store.publish("status-user", {})
+    store.publish("status-user", [{}])
     store.claim(partition_for("status-user"), "test-owner")
     assert ops.status() == 0
     output = capsys.readouterr().out
@@ -210,7 +213,7 @@ def test_transient_db_failure_keeps_event_pending(api_module, fresh_db, monkeypa
     from src.shared_state import get_shared_state, partition_for
 
     store = get_shared_state()
-    store.publish("user", {"kind": "usage", "user_id": "user"})
+    store.publish("user", [{"kind": "usage", "user_id": "user"}])
     consumer = Consumer(store)
 
     def fail(event):
@@ -218,22 +221,10 @@ def test_transient_db_failure_keeps_event_pending(api_module, fresh_db, monkeypa
 
     monkeypatch.setattr(consumer, "_process", fail)
     assert consumer.drain() == 0
-    assert partition_for("user") in consumer.partitions
+    assert store.status()[partition_for("user")].owner is None
     assert store.status()[partition_for("user")].depth == 1
     monkeypatch.setattr(consumer, "_process", lambda event: None)
     assert consumer.drain() == 1
-
-
-def test_close_acks_already_finished_event(api_module, fresh_db, monkeypatch):
-    from src.ingest_queue import Consumer
-    from src.shared_state import get_shared_state
-
-    store = get_shared_state()
-    store.publish("user", {"kind": "usage", "user_id": "user"})
-    consumer = Consumer(store)
-    monkeypatch.setattr(consumer, "_process", lambda event: consumer.close())
-    assert consumer.drain() == 1
-    assert sum(p.depth for p in store.status()) == 0
 
 
 def test_queued_otlp_contains_only_parser_metadata(api_module, fresh_db):
@@ -275,7 +266,7 @@ def test_queued_otlp_contains_only_parser_metadata(api_module, fresh_db):
     queued = get_shared_state().read(partition_for(user.id))
     assert len(queued) == 1
     assert "SECRET" not in json.dumps(queued[0].payload)
-    assert queued[0].payload["records"][0][0]["attributes"][0] == {
+    assert queued[0].payload["record"][0]["attributes"][0] == {
         "key": "prompt_length",
         "value": {"intValue": 13},
     }
@@ -321,47 +312,6 @@ def test_rate_store_unavailable_returns_503(api_module, monkeypatch):
     assert exc.value.status_code == 503
 
 
-def test_lease_is_renewed_while_processing_blocks(api_module, fresh_db, monkeypatch):
-    import src.ingest_queue as queue
-    from src.shared_state import get_shared_state, partition_for
-
-    monkeypatch.setattr(queue, "RENEW_SECONDS", 0.01)
-    now = 1000.0
-    monkeypatch.setattr("src.shared_state.time.time", lambda: now)
-    store = get_shared_state()
-    store.publish("user", {"kind": "usage", "user_id": "user"})
-    consumer = queue.Consumer(store)
-    started, release, renewed, finished = (threading.Event() for _ in range(4))
-    original_renew = store.renew
-
-    def renew(*args, **kwargs):
-        result = original_renew(*args, **kwargs)
-        if threading.current_thread().name == "tokenage-leases":
-            renewed.set()
-        return result
-
-    def process(event):
-        started.set()
-        release.wait(5)
-        finished.set()
-
-    monkeypatch.setattr(store, "renew", renew)
-    monkeypatch.setattr(consumer, "_process", process)
-    consumer.start()
-    try:
-        assert started.wait(5)
-        renewed.clear()
-        consumer.renew_at[partition_for("user")] = 0
-        now += 9
-        assert renewed.wait(5)
-        now += 2
-        assert not store.claim(partition_for("user"), "other")
-    finally:
-        release.set()
-        consumer.close()
-        assert finished.wait(5)
-
-
 def test_failed_partition_does_not_starve_later_partition(
     api_module, fresh_db, monkeypatch
 ):
@@ -375,7 +325,7 @@ def test_failed_partition_does_not_starve_later_partition(
     first, last = users[0], users[-1]
     assert partition_for(first) < partition_for(last)
     for user in (first, last):
-        store.publish(user, {"kind": "usage", "user_id": user})
+        store.publish(user, [{"kind": "usage", "user_id": user}])
     consumer = Consumer(store)
     processed = []
 
@@ -413,18 +363,21 @@ def _queue_otlp(store, user_id, device_id, values, service="opencode"):
                 "retry-session",
             ]
         )
-    return store.publish(
+    store.publish(
         user_id,
-        {
-            "kind": "otlp",
-            "user_id": user_id,
-            "device_id": device_id,
-            "records": records,
-        },
+        [
+            {
+                "kind": "otlp",
+                "user_id": user_id,
+                "device_id": device_id,
+                "record": record,
+            }
+            for record in records
+        ],
     )
 
 
-def test_otlp_retry_resumes_at_failed_record(api_module, fresh_db, monkeypatch):
+def test_otlp_transient_failure_keeps_failed_record(api_module, fresh_db, monkeypatch):
     from sqlalchemy.exc import OperationalError
 
     import src.otlp as otlp
@@ -464,12 +417,10 @@ def test_otlp_retry_resumes_at_failed_record(api_module, fresh_db, monkeypatch):
 
     monkeypatch.setattr(otlp, "record_usage", flaky)
     consumer = Consumer(store)
-    assert consumer.drain() == 0
+    assert consumer.drain() == 1
     assert store.status()[partition_for(user.id)].depth == 1
-    assert list(consumer.records_completed.values()) == [1]
     assert consumer.drain() == 1
     assert attempts == ["retry-0", "retry-1", "retry-1"]
-    assert consumer.records_completed == {}
     with fresh_db.database_module.get_engine().connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM usage")).scalar_one() == 2
         assert (
@@ -543,7 +494,7 @@ def test_correlation_survives_transient_usage_failure(
         )
     _queue_otlp(store, user.id, auth.device_id, events, service)
     consumer = Consumer(store)
-    assert consumer.drain() == 1
+    assert consumer.drain() == len(events)
     usage_event = {
         "opencode": "opencode.message_completed",
         "codex_cli_rs": "codex.sse_event",
@@ -629,13 +580,12 @@ def test_drained_partition_is_available_to_new_consumer(
 
     store = get_shared_state()
     partition = partition_for("user")
-    store.publish("user", {"kind": "test"})
+    store.publish("user", [{"kind": "test"}])
     first = Consumer(store)
     monkeypatch.setattr(first, "_process", lambda event: None)
     assert first.drain() == 1
-    assert partition not in first.partitions
     assert store.status()[partition].owner is None
-    store.publish("user", {"kind": "test"})
+    store.publish("user", [{"kind": "test"}])
     second = Consumer(store)
     seen = []
     monkeypatch.setattr(second, "_process", seen.append)
@@ -659,217 +609,8 @@ def test_large_export_renews_lease_only_when_due(api_module, fresh_db, monkeypat
     # Freeze the clock: renewals depend on elapsed time, never record count.
     monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: 1000.0)
     consumer = Consumer(store)
-    assert consumer.drain() == 1
-    assert renew.call_count <= 1
-
-
-def _postcommit_setup(fresh_db):
-    from src.auth import resolve_token
-    from src.auth.tokens import mint_token
-
-    token, user = mint_token("p@example.com", kind="ingest", db_path=fresh_db.db_path)
-    _, auth = resolve_token(token)
-    return user, auth
-
-
-def _postcommit_codex(store, user, auth):
-    c = {"conversation.id": "conv", "prompt.id": "p"}
-    _queue_otlp(
-        store,
-        user.id,
-        auth.device_id,
-        [
-            {
-                **c,
-                "event.name": "codex.tool_decision",
-                "call_id": "tool",
-                "tool_name": "Bash",
-            },
-            {
-                **c,
-                "event.name": "codex.sse_event",
-                "event.kind": "response.completed",
-                "model": "m",
-                "input_token_count": 10,
-                "output_token_count": 5,
-            },
-        ],
-        "codex_cli_rs",
-    )
-
-
-def _postcommit_counts(fresh_db):
-    with fresh_db.database_module.get_engine().connect() as conn:
-        return (
-            conn.execute(text("SELECT count(*) FROM usage")).scalar_one(),
-            conn.execute(text("SELECT count(*) FROM tool_calls")).scalar_one(),
-        )
-
-
-def test_tool_call_write_fails_after_usage_commit(api_module, fresh_db, monkeypatch):
-    from sqlalchemy.exc import OperationalError
-
-    import src.otlp as otlp
-    from src.ingest_queue import Consumer
-    from src.shared_state import get_shared_state
-
-    user, auth = _postcommit_setup(fresh_db)
-    store = get_shared_state()
-    _postcommit_codex(store, user, auth)
-    orig, failed = otlp.record_tool_call, []
-
-    def flaky(**kw):
-        if not failed:
-            failed.append(1)
-            raise OperationalError("", {}, Exception("x"))
-        return orig(**kw)
-
-    monkeypatch.setattr(otlp, "record_tool_call", flaky)
-    c = Consumer(store)
-    assert c.drain() == 1
-    assert c.drain() == 0
-    assert _postcommit_counts(fresh_db)[0] == 1
-
-
-def test_state_flush_fails_after_usage_commit(api_module, fresh_db, monkeypatch):
-    import sqlite3
-
-    from src.ingest_queue import Consumer
-    from src.shared_state import get_shared_state
-
-    user, auth = _postcommit_setup(fresh_db)
-    store = get_shared_state()
-    monkeypatch.setattr("src.shared_state.get_shared_state", lambda: store)
-    _postcommit_codex(store, user, auth)
-    c = Consumer(store)
-    failed = []
-    for name in ("set", "delete"):
-        orig = getattr(store, name)
-
-        def flaky(*a, _orig=orig, **k):
-            if not failed and _postcommit_counts(fresh_db)[0] == 1:
-                failed.append(a[:2])
-                raise sqlite3.OperationalError("database is locked")
-            return _orig(*a, **k)
-
-        monkeypatch.setattr(store, name, flaky)
-    assert c.drain() == 1
-    assert c.drain() == 0
-    assert failed
-    assert _postcommit_counts(fresh_db)[0] == 1
-
-
-def test_stalled_processing_stops_lease_renewal(api_module, fresh_db, monkeypatch):
-    from unittest.mock import Mock
-
-    import src.ingest_queue as queue
-    from src.shared_state import get_shared_state, partition_for
-
-    store = get_shared_state()
-    consumer = queue.Consumer(store)
-    partition = partition_for("hung-user")
-    now = 1000.0
-    monkeypatch.setattr("src.shared_state.time.time", lambda: now)
-    monkeypatch.setattr(queue.time, "monotonic", lambda: now)
-    assert store.claim(partition, consumer.owner)
-    consumer.partitions.add(partition)
-    consumer.processing_since = now
-    now += queue.LEASE_SECONDS + 1
-    wait = iter([False, True])
-    monkeypatch.setattr(consumer.stop_event, "wait", lambda _: next(wait))
-    renew = Mock(wraps=store.renew)
-    monkeypatch.setattr(store, "renew", renew)
-    consumer._renew()
+    assert consumer.drain() == 500
     assert renew.call_count == 0
-    assert store.claim(partition, "successor")
-
-
-@pytest.mark.parametrize("kind", ["otlp", "usage"])
-def test_dropped_partition_does_not_abort_other_partitions(
-    api_module, fresh_db, monkeypatch, caplog, kind
-):
-    import src.otlp as otlp
-    from src.ingest_queue import Consumer
-    from src.shared_state import get_shared_state, partition_for
-
-    users = sorted({str(i) for i in range(100)}, key=partition_for)
-    first, last = users[0], users[-1]
-    store = get_shared_state()
-    if kind == "otlp":
-        _queue_otlp(store, first, "device", [{}])
-    else:
-        store.publish(first, {"kind": "usage", "user_id": first})
-    store.publish(last, {"kind": "usage", "user_id": last})
-    consumer = Consumer(store)
-    process = consumer._process
-    seen = []
-    monkeypatch.setattr(
-        otlp, "_parse_log_record", lambda *a, **kw: consumer._drop(partition_for(first))
-    )
-
-    def drop_mid_record(event):
-        if event.payload["user_id"] == last:
-            seen.append(event)
-        elif kind == "otlp":
-            process(event)
-        else:
-            consumer._drop(partition_for(first))
-
-    monkeypatch.setattr(consumer, "_process", drop_mid_record)
-    assert consumer.drain() == 1
-    assert len(seen) == 1
-    assert store.status()[partition_for(first)].depth == 1
-    assert "KeyError" not in caplog.text
-    assert "Skipping" not in caplog.text
-
-
-def test_due_renewal_rejects_stolen_lease_before_next_record(
-    api_module, fresh_db, monkeypatch
-):
-    import src.otlp as otlp
-    from src.ingest_queue import Consumer, LeaseLost
-    from src.shared_state import LEASE_SECONDS, get_shared_state, partition_for
-
-    store = get_shared_state()
-    partition = partition_for("user")
-    now = 1000.0
-    monkeypatch.setattr("src.shared_state.time.time", lambda: now)
-    monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: now)
-    _queue_otlp(store, "user", "device", [{}, {}])
-    consumer = Consumer(store)
-    calls = []
-
-    def parse_then_steal(*args, **kwargs):
-        nonlocal now
-        calls.append(1)
-        now += LEASE_SECONDS + 1
-        assert store.claim(partition, "successor")
-
-    monkeypatch.setattr(otlp, "_parse_log_record", parse_then_steal)
-    assert consumer.drain() == 0
-    assert calls == [1]
-    assert store.status()[partition].depth == 1
-    with pytest.raises(LeaseLost):
-        consumer._renew_if_due(partition)
-
-
-def test_slow_renewal_deadline_uses_call_start(api_module, fresh_db, monkeypatch):
-    from src.ingest_queue import Consumer
-    from src.shared_state import LEASE_SECONDS, get_shared_state
-
-    consumer = Consumer(get_shared_state())
-    now = 1000.0
-    monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: now)
-
-    def slow_renew(*args):
-        nonlocal now
-        now += LEASE_SECONDS
-        return True
-
-    monkeypatch.setattr(consumer.store, "renew", slow_renew)
-    consumer._renew_if_due(0)
-    assert consumer.renew_at[0] == 1000.0 + LEASE_SECONDS / 2
-    assert consumer.renew_at[0] < now
 
 
 def test_close_timeout_leaves_unfinished_event_pending(
@@ -879,7 +620,7 @@ def test_close_timeout_leaves_unfinished_event_pending(
     from src.shared_state import get_shared_state, partition_for
 
     store = get_shared_state()
-    store.publish("user", {"kind": "usage", "user_id": "user"})
+    store.publish("user", [{"kind": "usage", "user_id": "user"}])
     consumer = Consumer(store)
     started, release = threading.Event(), threading.Event()
 
@@ -899,36 +640,89 @@ def test_close_timeout_leaves_unfinished_event_pending(
         assert waits == [3]
         status = store.status()[partition_for("user")]
         assert status.depth == 1
-        assert status.owner is None
+        assert status.owner == consumer.owner
     finally:
         release.set()
         join(5)
     assert not consumer.worker.is_alive()
-    assert store.status()[partition_for("user")].depth == 1
+    assert store.status()[partition_for("user")].depth == 0
 
 
-def test_lease_drop_clears_record_retry_progress(api_module, fresh_db, monkeypatch):
-    from sqlalchemy.exc import OperationalError
-
+def test_otlp_poison_is_skipped_without_body_in_logs(
+    api_module, fresh_db, monkeypatch, caplog
+):
     import src.otlp as otlp
     from src.ingest_queue import Consumer
     from src.shared_state import get_shared_state, partition_for
 
     store = get_shared_state()
-    event_id = _queue_otlp(store, "user", "device", [{}, {}])
-    consumer = Consumer(store)
+    _queue_otlp(store, "user", "device", [{}, {}])
+    calls = []
+
+    def parse(record, *args, **kwargs):
+        calls.append(record)
+        if len(calls) == 1:
+            raise ValueError("SECRET BODY and SECRET TOKEN")
+
+    monkeypatch.setattr(otlp, "_parse_log_record", parse)
+    with caplog.at_level(logging.WARNING):
+        assert Consumer(store).drain() == 2
+    assert len(calls) == 2
+    assert store.status()[partition_for("user")].depth == 0
+    assert "ValueError" in caplog.text
+    assert "kind=otlp" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+def test_worker_renews_when_due_and_acks_once_per_pass(
+    api_module, fresh_db, monkeypatch
+):
+    from unittest.mock import Mock
+
+    import src.otlp as otlp
+    from src.ingest_queue import Consumer
+    from src.shared_state import get_shared_state
+
+    store = get_shared_state()
+    _queue_otlp(store, "user", "device", [{}] * 4)
+    now = 1000.0
+    monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: now)
+
+    def parse(*args, **kwargs):
+        nonlocal now
+        now += 3
+
+    renew = Mock(wraps=store.renew)
+    ack = Mock(wraps=store.ack)
+    monkeypatch.setattr(store, "renew", renew)
+    monkeypatch.setattr(store, "ack", ack)
+    monkeypatch.setattr(otlp, "_parse_log_record", parse)
+    assert Consumer(store).drain() == 4
+    assert renew.call_count == 1
+    assert ack.call_count == 1
+
+
+def test_worker_stops_pass_after_lease_takeover(api_module, fresh_db, monkeypatch):
+    import src.otlp as otlp
+    from src.ingest_queue import Consumer
+    from src.shared_state import LEASE_SECONDS, get_shared_state, partition_for
+
+    store = get_shared_state()
+    partition = partition_for("user")
+    _queue_otlp(store, "user", "device", [{}, {}])
+    now = 1000.0
+    monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: now)
+    monkeypatch.setattr("src.shared_state.time.time", lambda: now)
     calls = []
 
     def parse(*args, **kwargs):
+        nonlocal now
         calls.append(1)
-        if len(calls) == 2:
-            raise OperationalError("", {}, Exception("temporary"))
+        now += LEASE_SECONDS + 1
+        assert store.claim(partition, "successor")
 
     monkeypatch.setattr(otlp, "_parse_log_record", parse)
-    assert consumer.drain() == 0
-    assert consumer.records_completed == {event_id: 1}
-    consumer._drop(partition_for("user"))
-    assert consumer.records_completed == {}
-    assert consumer.events == {}
-    assert consumer.drain() == 1
-    assert len(calls) == 4  # A lease drop intentionally loses the checkpoint.
+    assert Consumer(store).drain() == 1
+    assert calls == [1]
+    assert store.status()[partition].depth == 1
+    assert store.status()[partition].owner == "successor"

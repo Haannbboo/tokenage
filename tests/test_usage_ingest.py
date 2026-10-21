@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.ingest_queue import drain
+from tests.conftest import drain
 
 
 def _report(**overrides) -> dict:

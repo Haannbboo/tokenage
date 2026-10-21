@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.ingest_queue import drain
+from tests.conftest import drain
 
 TS = 1776384000000000  # 2026-04-17T00:00:00+00:00
 

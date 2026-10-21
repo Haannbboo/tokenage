@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from src.ingest_queue import drain
+from tests.conftest import drain
 
 OWNER = "owner@localhost"
 SESSION_COOKIE = "tokenage_session"

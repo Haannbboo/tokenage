@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from src.ingest_queue import drain
+from tests.conftest import drain
 
 
 def _ratelimit():
@@ -700,7 +700,6 @@ def test_codex_websocket_request_sets_request_latency(otlp_module, monkeypatch):
     """response.completed has no duration; subtract the send timestamp instead."""
     captured = {}
     monkeypatch.setattr(otlp_module, "record_usage", _capture_usage(captured))
-    otlp_module.codex_state.clear()
 
     otlp_module._parse_log_record(
         {
@@ -750,7 +749,6 @@ def test_codex_api_request_duration_sets_request_latency(otlp_module, monkeypatc
     """HTTP mode: api_request carries the request's own duration."""
     captured = {}
     monkeypatch.setattr(otlp_module, "record_usage", _capture_usage(captured))
-    otlp_module.codex_state.clear()
 
     otlp_module._parse_log_record(
         {
@@ -795,7 +793,6 @@ def test_codex_api_request_duration_sets_request_latency(otlp_module, monkeypatc
 def test_codex_latency_stays_empty_without_request_start(otlp_module, monkeypatch):
     captured = {}
     monkeypatch.setattr(otlp_module, "record_usage", _capture_usage(captured))
-    otlp_module.codex_state.clear()
 
     otlp_module._parse_log_record(
         {
@@ -1922,7 +1919,7 @@ def test_health_routes_stay_unauthenticated(otlp_module, monkeypatch):
     assert client.post("/v1/traces", json={}).status_code == 200
 
 
-def test_logs_are_shed_when_too_many_batches_are_pending(
+def test_logs_are_shed_when_too_many_records_are_pending(
     otlp_module, fresh_db, monkeypatch
 ):
     from src.auth.tokens import mint_token
@@ -1930,13 +1927,13 @@ def test_logs_are_shed_when_too_many_batches_are_pending(
     token, user = mint_token(
         "busy@example.com", kind="ingest", db_path=fresh_db.db_path
     )
-    from src.shared_state import get_shared_state, partition_for
+    from src.shared_state import MAX_PENDING_EVENTS, get_shared_state, partition_for
 
     store = get_shared_state()
     with store._connection(True) as conn:
         conn.executemany(
             "INSERT INTO events(partition,payload,created) VALUES (?, '{}', 1)",
-            [(partition_for(user.id),)] * 10001,
+            [(partition_for(user.id),)] * MAX_PENDING_EVENTS,
         )
 
     response = TestClient(otlp_module.app).post(
@@ -1945,7 +1942,7 @@ def test_logs_are_shed_when_too_many_batches_are_pending(
 
     assert response.status_code == 503
     assert response.headers["retry-after"] == "5"
-    assert store.status()[partition_for(user.id)].depth == 10001
+    assert store.status()[partition_for(user.id)].depth == MAX_PENDING_EVENTS
 
 
 def test_logs_are_processed_off_the_event_loop(otlp_module, fresh_db, monkeypatch):

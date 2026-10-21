@@ -4,7 +4,7 @@ from unittest.mock import ANY
 import pytest
 from fastapi.testclient import TestClient
 
-from src.ingest_queue import drain
+from tests.conftest import drain
 
 
 def test_usage_daily_endpoint_exists(api_module):

@@ -370,3 +370,14 @@ def _isolated_shared_state_home(tmp_path, monkeypatch, request):
         return
     monkeypatch.setenv("TOKENAGE_HOME", str(tmp_path / ".tokenage"))
     monkeypatch.delenv("TOKENAGE_QUEUE_URL", raising=False)
+
+
+def drain() -> int:
+    """Drain available ingest work without lifespan/background threads."""
+    from src.ingest_queue import Consumer
+
+    consumer = Consumer()
+    total = 0
+    while count := consumer.drain():
+        total += count
+    return total

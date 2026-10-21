@@ -3,9 +3,8 @@ import logging
 import os
 import time
 import uuid
-from collections.abc import Callable, Iterator, MutableMapping
+from collections.abc import Iterator, MutableMapping
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request
@@ -13,22 +12,13 @@ from fastapi import FastAPI, HTTPException, Request
 from src.config.app import CONFIG
 
 from .database import init_db
-from .ingest_queue import TRANSIENT_DB_ERRORS, consumer_lifespan, publish
+from .ingest_queue import consumer_lifespan, publish
 from .provider_parser import parse_provider_metadata
 from .ratelimit import resolve_ingest_request_async
 from .recorder import record_tool_call, record_usage, update_tool_call_duration
 from .shared_state import SharedMapping, defer_updates
 
 log = logging.getLogger(__name__)
-_usage_committed: ContextVar[bool] = ContextVar("otlp_usage_committed", default=False)
-
-
-def _write_usage(**fields):
-    usage = record_usage(**fields)
-    _usage_committed.set(True)
-    return usage
-
-
 CLAUDE_EVENT = "claude_code.api_request"
 CODEX_EVENT = "codex.sse_event"
 CODEX_API_REQUEST_EVENT = "codex.api_request"
@@ -528,7 +518,7 @@ def _parse_opencode_record(
         user_id=user_id,
     )
     tool_calls = fields.pop("_tool_info", [])
-    usage = _write_usage(**fields, device_id=device_id)
+    usage = record_usage(**fields, device_id=device_id)
     if usage:
         for tool_info in tool_calls:
             record_tool_call(
@@ -838,7 +828,7 @@ def _parse_log_record_with_state(
             record, attrs, usage_session_id or "", user_id=user_id
         )
         if fields is not None:
-            usage = _write_usage(**fields, device_id=device_id)
+            usage = record_usage(**fields, device_id=device_id)
             if usage:
                 prompt_id = _attr(attrs, "prompt.id")
                 prompt_key = _scoped_id(prompt_id, user_id) if prompt_id else None
@@ -867,7 +857,7 @@ def _parse_log_record_with_state(
         fields = _extract_codex_fields(record, attrs, service_name, user_id=user_id)
         if fields is not None:
             tool_calls = fields.pop("_tool_info", [])
-            usage = _write_usage(**fields, device_id=device_id)
+            usage = record_usage(**fields, device_id=device_id)
             if usage:
                 for tool_info in tool_calls:
                     record_tool_call(
@@ -1032,63 +1022,6 @@ def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
                 yield record, service_name, session_id
 
 
-def _ingest_records(
-    records: list[tuple[dict, str, str]],
-    *,
-    user_id: str,
-    device_id: str,
-    progress: Callable[[], None] | None = None,
-    record_completed: Callable[[], None] | None = None,
-    partition: int | None = None,
-    event_id: str | None = None,
-    record_start: int = 0,
-) -> None:
-    for index, (record, service_name, session_id) in enumerate(
-        records, start=record_start
-    ):
-        if progress is not None:
-            progress()
-        token = _usage_committed.set(False)
-        try:
-            _parse_log_record(
-                record, service_name, session_id, user_id=user_id, device_id=device_id
-            )
-        except Exception as exc:
-            if _usage_committed.get():
-                # Usage already committed: retrying optional enrichment would
-                # double-count it. PR 1c will use one transaction per batch, then ack.
-                log.warning(
-                    "Ingest enrichment failed partition=%s event=%s record=%s error=%s",
-                    partition,
-                    event_id,
-                    index,
-                    type(exc).__name__,
-                )
-            elif isinstance(exc, TRANSIENT_DB_ERRORS):
-                raise
-            else:
-                _log_poison_record(record, service_name, user_id, device_id, exc)
-        finally:
-            _usage_committed.reset(token)
-        if record_completed is not None:
-            record_completed()
-
-
-def _log_poison_record(record, service_name, user_id, device_id, exc):
-    try:
-        event_name = _attr(record.get("attributes", []), "event.name")
-    except Exception:
-        event_name = None
-    log.warning(
-        "Skipping OTLP event user=%s device=%s service=%s event=%s error=%s message=processing-failed",
-        user_id,
-        device_id,
-        service_name,
-        event_name,
-        type(exc).__name__,
-    )
-
-
 @app.post("/v1/logs")
 async def receive_logs(request: Request):
     # Auth + rate limit + body cap — all before any record is parsed.
@@ -1113,14 +1046,14 @@ async def receive_logs(request: Request):
     await run_in_threadpool(
         publish,
         user_id,
-        {
-            "kind": "otlp",
-            "device_id": device_id,
-            "records": [
-                (_queue_record(record), service, session)
-                for record, service, session in records
-            ],
-        },
+        [
+            {
+                "kind": "otlp",
+                "device_id": device_id,
+                "record": (_queue_record(record), service, session),
+            }
+            for record, service, session in records
+        ],
     )
     if rejected:
         # OTLP partial success: still 200 so the exporter does not retry the same

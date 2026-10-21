@@ -663,7 +663,7 @@ def ingest_usage(request: Request, report: UsageReport):
         base_url_source="proxy_config",
         tool_calls=[(tc.tool_use_id, tc.tool_name) for tc in report.tool_calls],
     )
-    publish(user_id, {"kind": "usage", "device_id": device_id, "fields": fields})
+    publish(user_id, [{"kind": "usage", "device_id": device_id, "fields": fields}])
     return Response(status_code=204)
 
 

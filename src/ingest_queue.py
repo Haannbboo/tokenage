@@ -160,6 +160,9 @@ class Consumer:
                 device_id=payload["device_id"],
                 progress=self._progress,
                 record_completed=record_completed,
+                partition=partition,
+                event_id=event.position,
+                record_start=start,
             )
         elif payload["kind"] == "usage":
             from .recorder import record_usage

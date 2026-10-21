@@ -5,6 +5,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator, MutableMapping
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request
@@ -19,6 +20,14 @@ from .recorder import record_tool_call, record_usage, update_tool_call_duration
 from .shared_mapping import SharedMapping, defer_updates
 
 log = logging.getLogger(__name__)
+_usage_committed: ContextVar[bool] = ContextVar("otlp_usage_committed", default=False)
+
+
+def _write_usage(**fields):
+    usage = record_usage(**fields)
+    _usage_committed.set(True)
+    return usage
+
 
 CLAUDE_EVENT = "claude_code.api_request"
 CODEX_EVENT = "codex.sse_event"
@@ -519,7 +528,7 @@ def _parse_opencode_record(
         user_id=user_id,
     )
     tool_calls = fields.pop("_tool_info", [])
-    usage = record_usage(**fields, device_id=device_id)
+    usage = _write_usage(**fields, device_id=device_id)
     if usage:
         for tool_info in tool_calls:
             record_tool_call(
@@ -829,7 +838,7 @@ def _parse_log_record_with_state(
             record, attrs, usage_session_id or "", user_id=user_id
         )
         if fields is not None:
-            usage = record_usage(**fields, device_id=device_id)
+            usage = _write_usage(**fields, device_id=device_id)
             if usage:
                 prompt_id = _attr(attrs, "prompt.id")
                 prompt_key = _scoped_id(prompt_id, user_id) if prompt_id else None
@@ -858,7 +867,7 @@ def _parse_log_record_with_state(
         fields = _extract_codex_fields(record, attrs, service_name, user_id=user_id)
         if fields is not None:
             tool_calls = fields.pop("_tool_info", [])
-            usage = record_usage(**fields, device_id=device_id)
+            usage = _write_usage(**fields, device_id=device_id)
             if usage:
                 for tool_info in tool_calls:
                     record_tool_call(
@@ -1030,32 +1039,54 @@ def _ingest_records(
     device_id: str,
     progress: Callable[[], None] | None = None,
     record_completed: Callable[[], None] | None = None,
+    partition: int | None = None,
+    event_id: str | None = None,
+    record_start: int = 0,
 ) -> None:
-    for record, service_name, session_id in records:
+    for index, (record, service_name, session_id) in enumerate(
+        records, start=record_start
+    ):
         if progress is not None:
             progress()
+        token = _usage_committed.set(False)
         try:
             _parse_log_record(
                 record, service_name, session_id, user_id=user_id, device_id=device_id
             )
-        except TRANSIENT_DB_ERRORS:
-            raise
         except Exception as exc:
-            try:
-                event_name = _attr(record.get("attributes", []), "event.name")
-            except Exception:
-                event_name = None
-            log.warning(
-                "Skipping OTLP event user=%s device=%s service=%s event=%s error=%s message=processing-failed",
-                user_id,
-                device_id,
-                service_name,
-                event_name,
-                type(exc).__name__,
-            )
-
+            if _usage_committed.get():
+                # Usage already committed: retrying optional enrichment would
+                # double-count it. PR 1c will make these writes atomic instead.
+                log.warning(
+                    "Ingest enrichment failed partition=%s event=%s record=%s error=%s",
+                    partition,
+                    event_id,
+                    index,
+                    type(exc).__name__,
+                )
+            elif isinstance(exc, TRANSIENT_DB_ERRORS):
+                raise
+            else:
+                _log_poison_record(record, service_name, user_id, device_id, exc)
+        finally:
+            _usage_committed.reset(token)
         if record_completed is not None:
             record_completed()
+
+
+def _log_poison_record(record, service_name, user_id, device_id, exc):
+    try:
+        event_name = _attr(record.get("attributes", []), "event.name")
+    except Exception:
+        event_name = None
+    log.warning(
+        "Skipping OTLP event user=%s device=%s service=%s event=%s error=%s message=processing-failed",
+        user_id,
+        device_id,
+        service_name,
+        event_name,
+        type(exc).__name__,
+    )
 
 
 @app.post("/v1/logs")

@@ -732,3 +732,99 @@ def test_large_export_renews_lease_only_when_due(api_module, fresh_db, monkeypat
     consumer = Consumer(store)
     assert consumer.drain() == 1
     assert renew.call_count <= 1
+
+
+def _postcommit_setup(fresh_db):
+    from src.auth import resolve_token
+    from src.auth.tokens import mint_token
+
+    token, user = mint_token("p@example.com", kind="ingest", db_path=fresh_db.db_path)
+    _, auth = resolve_token(token)
+    return user, auth
+
+
+def _postcommit_codex(store, user, auth):
+    c = {"conversation.id": "conv", "prompt.id": "p"}
+    _queue_otlp(
+        store,
+        user.id,
+        auth.device_id,
+        [
+            {
+                **c,
+                "event.name": "codex.tool_decision",
+                "call_id": "tool",
+                "tool_name": "Bash",
+            },
+            {
+                **c,
+                "event.name": "codex.sse_event",
+                "event.kind": "response.completed",
+                "model": "m",
+                "input_token_count": 10,
+                "output_token_count": 5,
+            },
+        ],
+        "codex_cli_rs",
+    )
+
+
+def _postcommit_counts(fresh_db):
+    with fresh_db.database_module.get_engine().connect() as conn:
+        return (
+            conn.execute(text("SELECT count(*) FROM usage")).scalar_one(),
+            conn.execute(text("SELECT count(*) FROM tool_calls")).scalar_one(),
+        )
+
+
+def test_tool_call_write_fails_after_usage_commit(api_module, fresh_db, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    import src.otlp as otlp
+    from src.ingest_queue import Consumer
+    from src.shared_state import get_shared_state
+
+    user, auth = _postcommit_setup(fresh_db)
+    store = get_shared_state()
+    _postcommit_codex(store, user, auth)
+    orig, failed = otlp.record_tool_call, []
+
+    def flaky(**kw):
+        if not failed:
+            failed.append(1)
+            raise OperationalError("", {}, Exception("x"))
+        return orig(**kw)
+
+    monkeypatch.setattr(otlp, "record_tool_call", flaky)
+    c = Consumer(store)
+    assert c.drain() == 1
+    assert c.drain() == 0
+    assert _postcommit_counts(fresh_db)[0] == 1
+
+
+def test_state_flush_fails_after_usage_commit(api_module, fresh_db, monkeypatch):
+    import sqlite3
+
+    from src.ingest_queue import Consumer
+    from src.shared_state import get_shared_state
+
+    user, auth = _postcommit_setup(fresh_db)
+    store = get_shared_state()
+    monkeypatch.setattr("src.shared_mapping.get_shared_state", lambda: store)
+    _postcommit_codex(store, user, auth)
+    c = Consumer(store)
+    failed = []
+    for name in ("set", "delete"):
+        orig = getattr(store, name)
+
+        def flaky(*a, _orig=orig, **k):
+            if not failed and _postcommit_counts(fresh_db)[0] == 1:
+                failed.append(a[:2])
+                raise sqlite3.OperationalError("database is locked")
+            return _orig(*a, **k)
+
+        monkeypatch.setattr(store, name, flaky)
+    assert c.drain() == 1
+    assert c.drain() == 0
+    assert failed
+    assert _postcommit_counts(fresh_db)[0] == 1

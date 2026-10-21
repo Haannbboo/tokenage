@@ -29,10 +29,9 @@ def test_exclusive_lease_takeover(store, monkeypatch):
     assert not other.claim(0, "b")
     assert not other.claim(0, "a")
     now += 11
-    assert not store.renew(0, "a")
     assert other.claim(0, "b")
     store.release(0, "a")
-    assert other.renew(0, "b")
+    assert other.status()[0].owner == "b"
     other.release(0, "b")
     assert store.claim(0, "a")
 
@@ -63,15 +62,6 @@ def test_sliding_rate_window_shared(store, monkeypatch):
     assert store.rate_limit("a", 2) == 60
     now += 61
     assert other.rate_limit("a", 2) is None
-
-
-def test_different_rate_windows_do_not_prune_each_other(store, monkeypatch):
-    now = 1000.0
-    monkeypatch.setattr("src.shared_state.time.time", lambda: now)
-    assert store.rate_limit("long", 1, 3600) is None
-    now += 100
-    assert store.rate_limit("short", 1, 60) is None
-    assert store.rate_limit("long", 1, 3600) == 3500
 
 
 def test_partition_backpressure_boundary(store):

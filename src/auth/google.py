@@ -9,7 +9,6 @@ there is no client-side signed session.
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 import httpx
@@ -145,7 +144,7 @@ def _store_entry(
     get_shared_state().set(
         namespace,
         key,
-        {**data, "exp": time.time() + ttl_seconds},
+        data,
         ttl_seconds,
         cap=max_pending,
     )

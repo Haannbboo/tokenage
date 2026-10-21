@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as DatabaseTimeout
 
@@ -33,7 +33,6 @@ POLL_SECONDS = 0.25
 
 
 TRANSIENT_DB_ERRORS = (
-    sqlite3.OperationalError,
     StoreUnavailable,
     DisconnectionError,
     InterfaceError,
@@ -47,10 +46,18 @@ def publish(user_id: str, payloads: list[dict]) -> None:
         get_shared_state().publish(
             user_id, [{**payload, "user_id": user_id} for payload in payloads]
         )
-    except (QueueFull, StoreUnavailable) as exc:
+    except QueueFull as exc:
         raise HTTPException(
             503, "collector is busy, retry later", headers={"Retry-After": "5"}
         ) from exc
+
+
+def store_unavailable_response(request: Request, exc: StoreUnavailable) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "shared store unavailable, retry later"},
+        headers={"Retry-After": "5"},
+    )
 
 
 class Consumer:
@@ -59,6 +66,7 @@ class Consumer:
         self.owner = uuid.uuid4().hex
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
+        self.retry_delay = POLL_SECONDS
 
     def _process(self, event: Event) -> None:
         payload = event.payload
@@ -83,25 +91,24 @@ class Consumer:
 
     def drain(self) -> int:
         done = 0
+        self.retry_delay = POLL_SECONDS
         for partition in sorted(s.partition for s in self.store.status() if s.depth):
             if self.stop_event.is_set():
                 break
             if not self.store.claim(partition, self.owner):
                 continue
             last = None
-            renew_at = time.monotonic() + LEASE_SECONDS / 2
+            deadline = time.monotonic() + LEASE_SECONDS / 2
             try:
                 for event in self.store.read(partition):
                     if self.stop_event.is_set():
                         break
-                    now = time.monotonic()
-                    if now >= renew_at:
-                        if not self.store.renew(partition, self.owner):
-                            break
-                        renew_at = now + LEASE_SECONDS / 2
+                    if time.monotonic() >= deadline:
+                        break
                     try:
                         self._process(event)
                     except TRANSIENT_DB_ERRORS as exc:
+                        self.retry_delay = 5
                         log.warning(
                             "Ingest partition unavailable partition=%s error=%s",
                             partition,
@@ -132,8 +139,9 @@ class Consumer:
             try:
                 self.drain()
             except Exception as exc:
+                self.retry_delay = 5
                 log.warning("Ingest consumer unavailable error=%s", type(exc).__name__)
-            self.stop_event.wait(POLL_SECONDS)
+            self.stop_event.wait(self.retry_delay)
 
     def start(self) -> None:
         self.worker = threading.Thread(

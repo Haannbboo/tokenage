@@ -109,7 +109,6 @@ def test_state_store_roundtrip(api_module, isolated_home):
     assert entry == {
         "nonce": "n1",
         "redirect_uri": "http://x/auth/google/callback",
-        "exp": pytest.approx(time.time() + 300, abs=60),
     }
     # Single-use: a second pop of the same state is a miss.
     assert auth_google.pop_oauth_state("s1") is None

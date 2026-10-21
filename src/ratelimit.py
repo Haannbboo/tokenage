@@ -13,12 +13,10 @@ from typing import NoReturn
 from fastapi import HTTPException, Request
 
 from src.config.app import CONFIG
-from src.shared_state import StoreUnavailable, get_shared_state
+from src.shared_state import get_shared_state
 
 from .auth import resolve_token
 from .auth.tokens import hash_token
-
-WINDOW_SECONDS = 60
 
 _rate_limit_lock = threading.Lock()
 _invalid_token_cache: OrderedDict[str, float] = OrderedDict()
@@ -37,14 +35,7 @@ def rate_limit_hit(key: str, limit_name: str) -> int | None:
 
     Returns None when allowed, else the seconds until a slot frees up.
     """
-    try:
-        return get_shared_state().rate_limit(
-            key, CONFIG["rate_limits"][limit_name], WINDOW_SECONDS
-        )
-    except StoreUnavailable as exc:
-        raise HTTPException(
-            503, "rate limiter unavailable", headers={"Retry-After": "5"}
-        ) from exc
+    return get_shared_state().rate_limit(key, CONFIG["rate_limits"][limit_name])
 
 
 def check_rate_limit(key: str, limit_name: str) -> None:

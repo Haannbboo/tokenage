@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import drain
@@ -1021,7 +1022,6 @@ def test_tool_buffers_are_scoped_by_authenticated_user(otlp_module):
 def test_tool_buffer_entries_expire_after_ten_minutes(
     otlp_module, fresh_db, monkeypatch
 ):
-    client = _authed_client(otlp_module, fresh_db)
     now = time.time()
     monkeypatch.setattr("src.shared_state.time.time", lambda: now)
     otlp_module._claude_tool_buffer["test-user:stale"] = [
@@ -1031,9 +1031,6 @@ def test_tool_buffer_entries_expire_after_ten_minutes(
     otlp_module._claude_tool_buffer["test-user:fresh"] = [
         {"tool_name": "bash", "tool_use_id": "toolu_2", "ts": int(now * 1000)}
     ]
-    response = client.post("/v1/logs", json={})
-    drain()
-    assert response.status_code == 200
     assert "test-user:stale" not in otlp_module._claude_tool_buffer
     assert "test-user:fresh" in otlp_module._claude_tool_buffer
 
@@ -1636,7 +1633,6 @@ def test_auth_lookup_timeout_returns_503(otlp_module, monkeypatch):
     monkeypatch.setattr(_ratelimit(), "resolve_ingest_user", blocked_lookup)
 
     response = TestClient(otlp_module.app).post("/v1/logs", json=_minimal_otlp_body())
-    drain()
 
     assert response.status_code == 503
     assert response.json() == {"detail": "authentication unavailable"}
@@ -1653,7 +1649,6 @@ def test_auth_enabled_missing_header_returns_401(otlp_module, monkeypatch):
 
     client = TestClient(otlp_module.app)
     response = client.post("/v1/logs", json=_minimal_otlp_body())
-    drain()
 
     assert response.status_code == 401
     assert response.json()["detail"] == "invalid token"
@@ -1673,7 +1668,6 @@ def test_repeated_invalid_token_skips_db_lookup(otlp_module, monkeypatch):
 
     for _ in range(3):
         response = client.post("/v1/logs", json=_minimal_otlp_body(), headers=headers)
-        drain()
         assert response.status_code == 401
     assert len(lookups) == 1
 
@@ -1697,7 +1691,6 @@ def test_auth_enabled_wrong_kind_token_returns_401(otlp_module, monkeypatch, fre
         json=_minimal_otlp_body(),
         headers={"x-tokenage-token": token},
     )
-    drain()
 
     assert response.status_code == 401
     assert len(captured) == 0
@@ -1729,7 +1722,6 @@ def test_auth_enabled_revoked_token_returns_401(otlp_module, monkeypatch, fresh_
         json=_minimal_otlp_body(),
         headers={"x-tokenage-token": token},
     )
-    drain()
 
     assert response.status_code == 401
     assert len(captured) == 0
@@ -1996,3 +1988,37 @@ def test_logs_are_processed_off_the_event_loop(otlp_module, fresh_db, monkeypatc
 
     asyncio.run(run())
     assert threads and threads[0] is not threading.main_thread()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {
+            "resourceLogs": [
+                {
+                    "resource": {
+                        "attributes": [
+                            {
+                                "key": "service.name",
+                                "value": {"stringValue": "gemini-cli"},
+                            }
+                        ]
+                    },
+                    "scopeLogs": [{"logRecords": [{}]}],
+                }
+            ]
+        },
+    ],
+)
+def test_logs_without_ingestable_records_skip_publish(
+    otlp_module, fresh_db, monkeypatch, body
+):
+    from src.shared_state import StoreUnavailable
+
+    def unavailable(*args):
+        raise StoreUnavailable()
+
+    monkeypatch.setattr(otlp_module, "publish", unavailable)
+    response = _authed_client(otlp_module, fresh_db).post("/v1/logs", json=body)
+    assert response.status_code == 200

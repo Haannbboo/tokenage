@@ -98,7 +98,7 @@ def test_graceful_close_finishes_and_acks_inflight_event(
         closer.join(5)
 
 
-def test_tool_and_usage_survive_consumer_takeover(api_module, fresh_db):
+def test_tool_and_usage_correlate_across_consumers(api_module, fresh_db):
     from src.auth import resolve_token
     from src.auth.tokens import mint_token
     from src.ingest_queue import Consumer
@@ -273,8 +273,9 @@ def test_queued_otlp_contains_only_parser_metadata(api_module, fresh_db):
 
 
 @pytest.mark.parametrize("error_name", ["QueueFull", "StoreUnavailable"])
-def test_usage_queue_unavailable_returns_retryable_503(
-    api_module, fresh_db, monkeypatch, error_name
+@pytest.mark.parametrize("path", ["/ingest/v1/usage", "/otlp/v1/logs"])
+def test_queue_unavailable_returns_retryable_503(
+    api_module, fresh_db, monkeypatch, error_name, path
 ):
     from fastapi.testclient import TestClient
 
@@ -290,37 +291,55 @@ def test_usage_queue_unavailable_returns_retryable_503(
         raise getattr(shared_state, error_name)()
 
     monkeypatch.setattr(get_shared_state(), "publish", full)
+    from tests.test_otlp import _minimal_otlp_body
+
     response = TestClient(api_module.app).post(
-        "/ingest/v1/usage",
-        json={"provider": "test", "model": "test-model", "endpoint": "test"},
+        path,
+        json={"provider": "test", "model": "test-model", "endpoint": "test"}
+        if path == "/ingest/v1/usage"
+        else _minimal_otlp_body(),
         headers={"x-tokenage-token": token},
     )
     assert response.status_code == 503
     assert response.headers["retry-after"] == "5"
 
 
-def test_rate_store_unavailable_returns_503(api_module, monkeypatch):
-    from fastapi import HTTPException
+@pytest.mark.parametrize("path", ["/usage", "/ingest/v1/usage", "/otlp/v1/logs"])
+def test_rate_store_unavailable_returns_503(api_module, fresh_db, monkeypatch, path):
+    from fastapi.testclient import TestClient
 
-    from src.ratelimit import rate_limit_hit
+    from src.auth.tokens import mint_token
     from src.shared_state import StoreUnavailable, get_shared_state
+
+    token, _ = mint_token(
+        "rate@example.com",
+        kind="cli" if path == "/usage" else "ingest",
+        db_path=fresh_db.db_path,
+    )
 
     def unavailable(*args):
         raise StoreUnavailable()
 
     monkeypatch.setattr(get_shared_state(), "rate_limit", unavailable)
-    with pytest.raises(HTTPException) as exc:
-        rate_limit_hit("test", "api_per_minute")
-    assert exc.value.status_code == 503
+    client = TestClient(api_module.app)
+    response = (
+        client.get(path, headers={"Authorization": f"Bearer {token}"})
+        if path == "/usage"
+        else client.post(
+            path,
+            json={"provider": "test", "model": "test-model", "endpoint": "test"},
+            headers={"x-tokenage-token": token},
+        )
+    )
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"
 
 
 def test_failed_partition_does_not_starve_later_partition(
     api_module, fresh_db, monkeypatch
 ):
-    import sqlite3
-
     from src.ingest_queue import Consumer
-    from src.shared_state import get_shared_state, partition_for
+    from src.shared_state import StoreUnavailable, get_shared_state, partition_for
 
     store = get_shared_state()
     users = sorted({str(i) for i in range(100)}, key=partition_for)
@@ -333,7 +352,7 @@ def test_failed_partition_does_not_starve_later_partition(
 
     def process(event):
         if event.payload["user_id"] == first:
-            raise sqlite3.OperationalError("temporarily unavailable")
+            raise StoreUnavailable()
         processed.append(event)
 
     monkeypatch.setattr(consumer, "_process", process)
@@ -596,25 +615,6 @@ def test_drained_partition_is_available_to_new_consumer(
     assert store.status()[partition].depth == 0
 
 
-def test_large_export_renews_lease_only_when_due(api_module, fresh_db, monkeypatch):
-    from unittest.mock import Mock
-
-    import src.otlp as otlp
-    from src.ingest_queue import Consumer
-    from src.shared_state import get_shared_state
-
-    store = get_shared_state()
-    _queue_otlp(store, "user", "device", [{} for _ in range(1000)])
-    renew = Mock(wraps=store.renew)
-    monkeypatch.setattr(store, "renew", renew)
-    monkeypatch.setattr(otlp, "_parse_log_record", lambda *args, **kwargs: None)
-    # Freeze the clock: renewals depend on elapsed time, never record count.
-    monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: 1000.0)
-    consumer = Consumer(store)
-    assert consumer.drain() == 500
-    assert renew.call_count == 0
-
-
 def test_close_timeout_leaves_unfinished_event_pending(
     api_module, fresh_db, monkeypatch
 ):
@@ -676,32 +676,37 @@ def test_otlp_poison_is_skipped_without_body_in_logs(
     assert "SECRET" not in caplog.text
 
 
-def test_worker_renews_when_due_and_acks_once_per_pass(
+def test_pass_stops_at_deadline_and_next_pass_reclaims(
     api_module, fresh_db, monkeypatch
 ):
     from unittest.mock import Mock
 
-    import src.otlp as otlp
     from src.ingest_queue import Consumer
-    from src.shared_state import get_shared_state
+    from src.shared_state import LEASE_SECONDS, get_shared_state, partition_for
 
     store = get_shared_state()
-    _queue_otlp(store, "user", "device", [{}] * 4)
+    store.publish("user", [{"kind": "usage", "user_id": "user"}] * 4)
     now = 1000.0
     monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: now)
+    consumer = Consumer(store)
+    seen = []
 
-    def parse(*args, **kwargs):
+    def process(event):
         nonlocal now
-        now += 3
+        seen.append(event.position)
+        now += LEASE_SECONDS / 4
 
-    renew = Mock(wraps=store.renew)
     ack = Mock(wraps=store.ack)
-    monkeypatch.setattr(store, "renew", renew)
     monkeypatch.setattr(store, "ack", ack)
-    monkeypatch.setattr(otlp, "_parse_log_record", parse)
-    assert Consumer(store).drain() == 4
-    assert renew.call_count == 1
+    monkeypatch.setattr(consumer, "_process", process)
+    assert consumer.drain() == 2
     assert ack.call_count == 1
+    status = store.status()[partition_for("user")]
+    assert status.depth == 2
+    assert status.owner is None
+    assert consumer.drain() == 2
+    assert len(set(seen)) == 4
+    assert store.status()[partition_for("user")].depth == 0
 
 
 def test_worker_stops_pass_after_lease_takeover(api_module, fresh_db, monkeypatch):
@@ -728,3 +733,98 @@ def test_worker_stops_pass_after_lease_takeover(api_module, fresh_db, monkeypatc
     assert calls == [1]
     assert store.status()[partition].depth == 1
     assert store.status()[partition].owner == "successor"
+
+
+def test_status_handles_store_unavailable(api_module, monkeypatch, tmp_path, capsys):
+    from src import ops
+    from src.shared_state import StoreUnavailable, get_shared_state
+
+    conf = tmp_path / "supervisord.conf"
+    conf.touch()
+    monkeypatch.setattr(ops, "_conf", lambda: conf)
+    monkeypatch.setattr(ops, "_config_path", lambda: tmp_path / "missing.yaml")
+    monkeypatch.setattr(ops, "_ctl", lambda *args: None)
+
+    def unavailable():
+        raise StoreUnavailable()
+
+    monkeypatch.setattr(get_shared_state(), "status", unavailable)
+    assert ops.status() == 1
+    assert "Queue unavailable (StoreUnavailable)" in capsys.readouterr().out
+
+
+def test_ack_failure_keeps_events_pending_and_releases(api_module, monkeypatch):
+    from src.ingest_queue import Consumer
+    from src.shared_state import StoreUnavailable, get_shared_state, partition_for
+
+    store = get_shared_state()
+    store.publish("user", [{"kind": "usage", "user_id": "user"}])
+    consumer = Consumer(store)
+    monkeypatch.setattr(consumer, "_process", lambda event: None)
+
+    def unavailable(*args):
+        raise StoreUnavailable()
+
+    monkeypatch.setattr(store, "ack", unavailable)
+    with pytest.raises(StoreUnavailable):
+        consumer.drain()
+    status = store.status()[partition_for("user")]
+    assert status.depth == 1
+    assert status.owner is None
+
+
+def test_consumer_waits_after_transient_failure_then_resumes_polling(
+    api_module, monkeypatch
+):
+    from src.ingest_queue import POLL_SECONDS, Consumer
+    from src.shared_state import StoreUnavailable, get_shared_state
+
+    store = get_shared_state()
+    store.publish("user", [{"kind": "usage", "user_id": "user"}])
+    consumer = Consumer(store)
+    waits = []
+
+    def process(event):
+        if not waits:
+            raise StoreUnavailable()
+
+    def wait(delay):
+        waits.append(delay)
+        if len(waits) == 2:
+            consumer.stop_event.set()
+
+    monkeypatch.setattr(consumer, "_process", process)
+    monkeypatch.setattr(consumer.stop_event, "wait", wait)
+    consumer._run()
+    assert waits == [5, POLL_SECONDS]
+
+
+@pytest.mark.parametrize(
+    "path,provider",
+    [
+        ("/auth/local/login?code=x", "local"),
+        ("/auth/cli/exchange", "local"),
+        ("/auth/google/callback?state=x", "google"),
+    ],
+)
+def test_signin_store_unavailable_returns_503(api_module, monkeypatch, path, provider):
+    from fastapi.testclient import TestClient
+
+    from src.shared_state import StoreUnavailable, get_shared_state
+
+    monkeypatch.setitem(api_module.CONFIG["auth"], "provider", provider)
+
+    def unavailable(*args):
+        raise StoreUnavailable()
+
+    monkeypatch.setattr(get_shared_state(), "pop", unavailable)
+    client = TestClient(api_module.app)
+    response = (
+        client.post(
+            path, json={"code": "x", "code_verifier": "x", "installation_key": "a" * 43}
+        )
+        if path == "/auth/cli/exchange"
+        else client.get(path)
+    )
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"

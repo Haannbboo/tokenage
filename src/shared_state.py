@@ -57,10 +57,9 @@ class PartitionStatus:
 
 class SharedState(Protocol):
     def publish(self, user_id: str, payloads: list[dict[str, Any]]) -> None: ...
-    def read(self, partition: int, limit: int = 500) -> list[Event]: ...
+    def read(self, partition: int) -> list[Event]: ...
     def ack(self, partition: int, position: str) -> None: ...
-    def claim(self, partition: int, owner: str, ttl: float = LEASE_SECONDS) -> bool: ...
-    def renew(self, partition: int, owner: str, ttl: float = LEASE_SECONDS) -> bool: ...
+    def claim(self, partition: int, owner: str) -> bool: ...
     def release(self, partition: int, owner: str) -> None: ...
     def status(self) -> list[PartitionStatus]: ...
     def get(self, namespace: str, key: str) -> Any: ...
@@ -68,7 +67,7 @@ class SharedState(Protocol):
         self, namespace: str, key: str, value: Any, ttl: float, cap: int | None = None
     ) -> None: ...
     def pop(self, namespace: str, key: str) -> Any: ...
-    def rate_limit(self, key: str, limit: int, window: float = 60) -> int | None: ...
+    def rate_limit(self, key: str, limit: int) -> int | None: ...
 
 
 class SQLiteSharedState:
@@ -89,7 +88,6 @@ class SQLiteSharedState:
         except sqlite3.OperationalError as exc:
             raise StoreUnavailable() from exc
         with self._connection() as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, partition INTEGER NOT NULL,
@@ -137,13 +135,13 @@ class SQLiteSharedState:
                 "INSERT INTO events(partition,payload,created) VALUES (?,?,?)", rows
             )
 
-    def read(self, partition: int, limit: int = 500) -> list[Event]:
+    def read(self, partition: int) -> list[Event]:
         with self._connection() as conn:
             return [
                 Event(str(row[0]), json.loads(row[1]))
                 for row in conn.execute(
-                    "SELECT id,payload FROM events WHERE partition=? ORDER BY id LIMIT ?",
-                    (partition, limit),
+                    "SELECT id,payload FROM events WHERE partition=? ORDER BY id LIMIT 500",
+                    (partition,),
                 )
             ]
 
@@ -154,24 +152,13 @@ class SQLiteSharedState:
                 (partition, int(position)),
             )
 
-    def claim(self, partition: int, owner: str, ttl: float = LEASE_SECONDS) -> bool:
+    def claim(self, partition: int, owner: str) -> bool:
         now = time.time()
         with self._connection(True) as conn:
             return (
                 conn.execute(
                     "INSERT INTO leases VALUES (?,?,?) ON CONFLICT(partition) DO UPDATE SET owner=excluded.owner, expires=excluded.expires WHERE leases.expires<=?",
-                    (partition, owner, now + ttl, now),
-                ).rowcount
-                == 1
-            )
-
-    def renew(self, partition: int, owner: str, ttl: float = LEASE_SECONDS) -> bool:
-        now = time.time()
-        with self._connection(True) as conn:
-            return (
-                conn.execute(
-                    "UPDATE leases SET expires=? WHERE partition=? AND owner=? AND expires>?",
-                    (now + ttl, partition, owner, now),
+                    (partition, owner, now + LEASE_SECONDS, now),
                 ).rowcount
                 == 1
             )
@@ -236,7 +223,7 @@ class SQLiteSharedState:
             conn.execute("DELETE FROM kv WHERE namespace=? AND key=?", (namespace, key))
             return json.loads(row[0]) if row and row[1] > time.time() else None
 
-    def rate_limit(self, key: str, limit: int, window: float = 60) -> int | None:
+    def rate_limit(self, key: str, limit: int) -> int | None:
         now = time.time()
         with self._connection(True) as conn:
             conn.execute("DELETE FROM limits WHERE expires<?", (now,))
@@ -244,8 +231,8 @@ class SQLiteSharedState:
                 "SELECT count(*),min(ts) FROM limits WHERE key=?", (key,)
             ).fetchone()
             if count >= limit:
-                return max(1, math.ceil((oldest or now) + window - now))
-            conn.execute("INSERT INTO limits VALUES (?,?,?)", (key, now, now + window))
+                return max(1, math.ceil((oldest or now) + 60 - now))
+            conn.execute("INSERT INTO limits VALUES (?,?,?)", (key, now, now + 60))
             return None
 
 
@@ -275,8 +262,8 @@ def get_shared_state() -> SharedState:
 
 
 # One consumer thread processes a record at a time. Keep its state transitions
-# private until the record's database writes succeed, so a retry sees the same
-# correlation inputs (including tools from previously acknowledged events).
+# private until the record's database writes succeed. A partial state flush can
+# still leave a retry with changed correlation inputs and duplicate usage.
 _pending: ContextVar[dict | None] = ContextVar("correlation_updates", default=None)
 _DELETED = object()
 CORRELATION_TTL_SECONDS = 600

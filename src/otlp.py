@@ -1,7 +1,7 @@
+import asyncio
 import json
 import logging
 import os
-import time
 import uuid
 from collections.abc import Iterator, MutableMapping
 from contextlib import asynccontextmanager
@@ -12,11 +12,11 @@ from fastapi import FastAPI, HTTPException, Request
 from src.config.app import CONFIG
 
 from .database import init_db
-from .ingest_queue import consumer_lifespan, publish
+from .ingest_queue import consumer_lifespan, publish, store_unavailable_response
 from .provider_parser import parse_provider_metadata
 from .ratelimit import resolve_ingest_request_async
 from .recorder import record_tool_call, record_usage, update_tool_call_duration
-from .shared_state import SharedMapping, defer_updates
+from .shared_state import SharedMapping, StoreUnavailable, defer_updates
 
 log = logging.getLogger(__name__)
 CLAUDE_EVENT = "claude_code.api_request"
@@ -296,7 +296,6 @@ class PromptLengthTracker:
             return
 
         state = self._state.get(key, {"values": []})
-        state["ts"] = time.time_ns() // 1000
         state["values"].append(int(prompt_length))
         self._state[key] = state
 
@@ -533,8 +532,8 @@ def _parse_opencode_record(
             )
 
 
-def _codex_state_for(attrs: list, user_id: str) -> dict | None:
-    """Return the mutable per-conversation Codex state, creating it if needed.
+def _codex_state_for(attrs: list, user_id: str) -> tuple[str, dict] | None:
+    """Return the key and mutable per-conversation Codex state.
 
     Returns None for events without a conversation id (for example the
     `/models` api_request that Codex emits alongside a websocket session).
@@ -544,11 +543,7 @@ def _codex_state_for(attrs: list, user_id: str) -> dict | None:
     if not state_key:
         return None
     state_key = _scoped_id(state_key, user_id)
-    state = codex_state.get(state_key)
-    if state is None:
-        state = {"ts": time.time_ns() // 1000}
-        codex_state[state_key] = state
-    return state
+    return state_key, codex_state.get(state_key, {})
 
 
 def _handle_codex_state_event(attrs: list, user_id: str) -> bool:
@@ -566,32 +561,29 @@ def _handle_codex_state_event(attrs: list, user_id: str) -> bool:
 
     if event_name == "codex.websocket_request":
         start_ms = _codex_event_ts_ms(attrs)
-        state = _codex_state_for(attrs, user_id)
-        if state is not None and start_ms is not None:
+        entry = _codex_state_for(attrs, user_id)
+        if entry is not None and start_ms is not None:
+            key, state = entry
             state["start_ms"] = start_ms
-            codex_state[_scoped_id(str(_attr(attrs, "conversation.id")), user_id)] = (
-                state
-            )
+            codex_state[key] = state
         return True
 
     if event_kind == CODEX_API_REQUEST_EVENT or event_name == CODEX_API_REQUEST_EVENT:
         duration = _attr(attrs, "duration_ms")
-        state = _codex_state_for(attrs, user_id)
-        if state is not None and duration is not None:
+        entry = _codex_state_for(attrs, user_id)
+        if entry is not None and duration is not None:
+            key, state = entry
             state["duration_ms"] = int(duration)
-            codex_state[_scoped_id(str(_attr(attrs, "conversation.id")), user_id)] = (
-                state
-            )
+            codex_state[key] = state
         return True
 
     if event_kind == "response.created":
         duration = _attr(attrs, "duration_ms")
-        state = _codex_state_for(attrs, user_id)
-        if state is not None and duration is not None:
+        entry = _codex_state_for(attrs, user_id)
+        if entry is not None and duration is not None:
+            key, state = entry
             state["ttft_ms"] = int(duration)
-            codex_state[_scoped_id(str(_attr(attrs, "conversation.id")), user_id)] = (
-                state
-            )
+            codex_state[key] = state
         return True
 
     return False
@@ -917,6 +909,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="tokenage-otlp", lifespan=lifespan)
+app.exception_handler(StoreUnavailable)(store_unavailable_response)
 
 
 @app.get("/")
@@ -1041,20 +1034,19 @@ async def receive_logs(request: Request):
         )
         records = records[:max_records]
 
-    from starlette.concurrency import run_in_threadpool
-
-    await run_in_threadpool(
-        publish,
-        user_id,
-        [
-            {
-                "kind": "otlp",
-                "device_id": device_id,
-                "record": (_queue_record(record), service, session),
-            }
-            for record, service, session in records
-        ],
-    )
+    if records:
+        await asyncio.to_thread(
+            publish,
+            user_id,
+            [
+                {
+                    "kind": "otlp",
+                    "device_id": device_id,
+                    "record": (_queue_record(record), service, session),
+                }
+                for record, service, session in records
+            ],
+        )
     if rejected:
         # OTLP partial success: still 200 so the exporter does not retry the same
         # oversized batch forever, but the dropped count is reported, not hidden.

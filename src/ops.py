@@ -407,6 +407,26 @@ def status(args: list[str] | None = None) -> int:
         step("Port check")
         for line in issues or ["no issues"]:
             _say(line if issues else f"  ✓ {line}")
+    import sqlite3
+
+    from .shared_state import get_shared_state
+
+    step("Ingest queue")
+    now = time.time()
+    try:
+        partitions = get_shared_state().status()
+    except (ValueError, OSError, sqlite3.Error) as exc:
+        note(f"Queue unavailable ({type(exc).__name__})")
+        return 1
+    for partition in partitions:
+        lag = (
+            max(0, now - partition.oldest_pending)
+            if partition.oldest_pending is not None
+            else 0
+        )
+        note(
+            f"partition {partition.partition:02d}: depth={partition.depth} lag={lag:.1f}s owner={partition.owner or '-'}"
+        )
     return 0
 
 

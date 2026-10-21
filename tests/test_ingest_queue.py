@@ -207,6 +207,27 @@ def test_tool_and_usage_survive_consumer_takeover(api_module, fresh_db):
         )
 
 
+def test_server_status_reports_queue_without_http(
+    api_module, monkeypatch, tmp_path, capsys
+):
+    from src import ops
+    from src.shared_state import get_shared_state, partition_for
+
+    conf = tmp_path / "supervisord.conf"
+    conf.touch()
+    monkeypatch.setattr(ops, "_conf", lambda: conf)
+    monkeypatch.setattr(ops, "_config_path", lambda: tmp_path / "missing.yaml")
+    monkeypatch.setattr(ops, "_ctl", lambda *a: None)
+    store = get_shared_state()
+    store.publish("status-user", {})
+    store.claim(partition_for("status-user"), "test-owner")
+    assert ops.status() == 0
+    output = capsys.readouterr().out
+    assert "depth=1" in output
+    assert "lag=" in output
+    assert "owner=test-owner" in output
+
+
 def test_standalone_server_config_does_not_import_runtime(tmp_path):
     import os
     import subprocess

@@ -42,7 +42,15 @@ def _connect_args(db_url: str) -> dict[str, Any]:
     if db_url.startswith("sqlite:///"):
         return {"check_same_thread": False}
     if db_url.startswith("postgresql"):
-        return {"connect_timeout": DB_CONNECT_TIMEOUT_SECONDS}
+        # A silently dropped connection otherwise stalls the consumer for ~15 min
+        # while its lease expires. Keepalives detect the dead peer sooner.
+        return {
+            "connect_timeout": DB_CONNECT_TIMEOUT_SECONDS,
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 3,
+        }
     return {}
 
 

@@ -304,6 +304,63 @@ def test_queue_unavailable_returns_retryable_503(
     assert response.headers["retry-after"] == "5"
 
 
+@pytest.mark.parametrize(
+    "error_name",
+    ["OperationalError", "DisconnectionError", "InterfaceError", "TimeoutError"],
+)
+@pytest.mark.parametrize(
+    "app_name,path",
+    [
+        ("api", "/ingest/v1/usage"),
+        ("api", "/otlp/v1/logs"),
+        ("api", "/usage"),
+        ("otlp", "/v1/logs"),
+    ],
+)
+def test_auth_db_failure_returns_retryable_503(
+    api_module, fresh_db, monkeypatch, error_name, app_name, path
+):
+    from fastapi.testclient import TestClient
+    from sqlalchemy import exc
+
+    from src import otlp
+    from src.auth import tokens
+    from tests.test_otlp import _minimal_otlp_body
+
+    token, _ = tokens.mint_token(
+        "outage@example.com",
+        kind="cli" if path == "/usage" else "ingest",
+        db_path=fresh_db.db_path,
+    )
+    error_type = getattr(exc, error_name)
+    error = (
+        error_type("SELECT secret", {}, Exception("private connection details"))
+        if issubclass(error_type, exc.DBAPIError)
+        else error_type("private connection details")
+    )
+
+    def unavailable(*args):
+        raise error
+
+    monkeypatch.setattr(tokens, "get_engine", unavailable)
+    client = TestClient(api_module.app if app_name == "api" else otlp.app)
+    response = (
+        client.get(path, headers={"Authorization": f"Bearer {token}"})
+        if path == "/usage"
+        else client.post(
+            path,
+            json={"provider": "test", "model": "test-model", "endpoint": "test"}
+            if path == "/ingest/v1/usage"
+            else _minimal_otlp_body(),
+            headers={"x-tokenage-token": token},
+        )
+    )
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"
+    assert "secret" not in response.text
+    assert "private" not in response.text
+
+
 @pytest.mark.parametrize("path", ["/usage", "/ingest/v1/usage", "/otlp/v1/logs"])
 def test_rate_store_unavailable_returns_503(api_module, fresh_db, monkeypatch, path):
     from fastapi.testclient import TestClient

@@ -52,7 +52,8 @@ def publish(user_id: str, payloads: list[dict]) -> None:
         ) from exc
 
 
-def store_unavailable_response(request: Request, exc: StoreUnavailable) -> JSONResponse:
+def store_unavailable_response(request: Request, exc: Exception) -> JSONResponse:
+    # Clients retry 503, not 500, including DB failures before ingest is queued.
     return JSONResponse(
         status_code=503,
         content={"detail": "shared store unavailable, retry later"},

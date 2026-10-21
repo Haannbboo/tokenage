@@ -12,11 +12,16 @@ from fastapi import FastAPI, HTTPException, Request
 from src.config.app import CONFIG
 
 from .database import init_db
-from .ingest_queue import consumer_lifespan, publish, store_unavailable_response
+from .ingest_queue import (
+    TRANSIENT_DB_ERRORS,
+    consumer_lifespan,
+    publish,
+    store_unavailable_response,
+)
 from .provider_parser import parse_provider_metadata
 from .ratelimit import resolve_ingest_request_async
 from .recorder import record_tool_call, record_usage, update_tool_call_duration
-from .shared_state import SharedMapping, StoreUnavailable, defer_updates
+from .shared_state import SharedMapping, defer_updates
 
 log = logging.getLogger(__name__)
 CLAUDE_EVENT = "claude_code.api_request"
@@ -909,7 +914,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="tokenage-otlp", lifespan=lifespan)
-app.exception_handler(StoreUnavailable)(store_unavailable_response)
+for error in TRANSIENT_DB_ERRORS:
+    app.exception_handler(error)(store_unavailable_response)
 
 
 @app.get("/")

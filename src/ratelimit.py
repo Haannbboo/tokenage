@@ -119,5 +119,8 @@ async def resolve_ingest_request_async(request: Request) -> tuple[str, str]:
         )
     except TimeoutError as exc:
         raise HTTPException(
-            status_code=503, detail="authentication unavailable"
+            # Clients retry 503, not 500, when authentication cannot reach the DB.
+            status_code=503,
+            detail="authentication unavailable",
+            headers={"Retry-After": "5"},
         ) from exc

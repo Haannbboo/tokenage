@@ -71,13 +71,17 @@ from .database import (
     upsert_model_price,
     upsert_session_evaluation,
 )
-from .ingest_queue import consumer_lifespan, publish, store_unavailable_response
+from .ingest_queue import (
+    TRANSIENT_DB_ERRORS,
+    consumer_lifespan,
+    publish,
+    store_unavailable_response,
+)
 from .otlp import app as otlp_app
 from .pricing.costs import resolve_cost_match
 from .pricing.models import ResolvedCost
 from .pricing.snapshots import enrich_rows
 from .ratelimit import rate_limit_hit, resolve_ingest_request
-from .shared_state import StoreUnavailable
 from .utils import normalize_model_name
 
 logger = logging.getLogger(__name__)
@@ -145,7 +149,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="tokenage-api", lifespan=lifespan)
-app.exception_handler(StoreUnavailable)(store_unavailable_response)
+for error in TRANSIENT_DB_ERRORS:
+    app.exception_handler(error)(store_unavailable_response)
 app.include_router(auth_router)
 # One process, one port: the collector keeps its own app (still runnable as
 # `uvicorn src.otlp:app`). Starlette skips a mounted app's lifespan; ours runs
@@ -186,7 +191,11 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         # Token lookup hits the database: keep it off the event loop, which the
         # mounted OTLP collector shares.
-        resolved = await asyncio.to_thread(_resolve_request_user, request)
+        try:
+            resolved = await asyncio.to_thread(_resolve_request_user, request)
+        except TRANSIENT_DB_ERRORS as exc:
+            # Middleware runs outside FastAPI's route exception handlers.
+            return store_unavailable_response(request, exc)
         if resolved is None:
             return JSONResponse(status_code=401, content=AUTH_GATE_LOGIN_REQUIRED)
         user, auth_token = resolved
@@ -195,7 +204,7 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
                 retry_after = await asyncio.to_thread(
                     rate_limit_hit, f"api:{user.id}", "api_per_minute"
                 )
-            except StoreUnavailable as exc:
+            except TRANSIENT_DB_ERRORS as exc:
                 # Middleware runs outside FastAPI's route exception handlers.
                 return store_unavailable_response(request, exc)
             if retry_after is not None:

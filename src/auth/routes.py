@@ -136,7 +136,7 @@ def get_current_user(request: Request) -> User:
     """Resolve the request to a user; never None.
 
     Raises 401 for anything unresolved (one message for all cases — callers
-    must not learn which). DB errors propagate as 500: fail closed.
+    must not learn which). DB outages return a retryable 503: fail closed.
     """
     user = getattr(request.state, "user", None)
     if user is not None:

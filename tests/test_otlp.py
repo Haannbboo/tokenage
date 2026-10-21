@@ -1636,6 +1636,7 @@ def test_auth_lookup_timeout_returns_503(otlp_module, monkeypatch):
 
     assert response.status_code == 503
     assert response.json() == {"detail": "authentication unavailable"}
+    assert response.headers["retry-after"] == "5"
 
 
 def test_auth_enabled_missing_header_returns_401(otlp_module, monkeypatch):

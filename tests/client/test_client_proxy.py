@@ -465,27 +465,37 @@ def test_post_report_failure_logs_without_secrets_and_never_retries(
 
 
 @pytest.mark.parametrize("status", [429, 503])
+@pytest.mark.parametrize("retry_after", [0, 7, 100])
+@pytest.mark.parametrize("jitter", [0.0, 0.5, 1.0])
 def test_post_report_retries_backpressure_after_retry_after(
-    cfg, signed_in, monkeypatch, caplog, status
+    cfg, signed_in, monkeypatch, caplog, status, retry_after, jitter
 ):
-    statuses = iter([status, status, 204])
-    sleeps = []
+    statuses = iter([status] * 5 + [204])
+    sleeps, bounds = [], []
+
+    def uniform(low, high):
+        bounds.append((low, high))
+        return low + jitter * (high - low)
 
     def fake_post(url, **kw):
         return httpx.Response(
             next(statuses),
-            headers={"retry-after": "7"},
+            headers={"retry-after": str(retry_after)},
             request=httpx.Request("POST", url),
         )
 
     monkeypatch.setattr(proxy_report.httpx, "post", fake_post)
     monkeypatch.setattr(proxy_report.time, "sleep", sleeps.append)
+    monkeypatch.setattr(proxy_report.random, "uniform", uniform)
     reports = []
     make_client(cfg, Upstream(ok_json), reports).post(
         "/v1/chat/completions", json={"model": "test-model"}
     )
     proxy_report.post_report(reports[0])
-    assert sleeps == [7.0, 7.0]
+    delays = [min(60, max(retry_after, 1) * 2**n) for n in range(5)]
+    assert bounds == [(d / 2, d) for d in delays]
+    assert sleeps == [d / 2 + jitter * d / 2 for d in delays]
+    assert all(d / 2 <= sleep <= d <= 60 for sleep, d in zip(sleeps, delays))
     assert "dropped" not in caplog.text
 
 

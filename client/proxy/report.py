@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import threading
 import time
 from collections.abc import Callable
@@ -16,7 +17,7 @@ from client.proxy.usage import extract_usage
 from protocol.usage_report import ToolCallReport, UsageReport
 
 REPORT_TIMEOUT_SECONDS = 10.0
-RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_RETRIES = 5
 MAX_RETRY_DELAY_SECONDS = 60.0
 # Bounds reports waiting out a 429/503 at once; beyond this they drop.
 _retry_slots = threading.BoundedSemaphore(100)
@@ -90,7 +91,12 @@ def post_report(report: UsageReport) -> None:
             ):
                 break
             try:
-                time.sleep(_retry_delay(response))
+                # Exponential backoff and jitter avoid a retry storm knocking
+                # the DB over again after recovery. This is a background thread.
+                delay = min(
+                    MAX_RETRY_DELAY_SECONDS, _retry_delay(response) * 2**attempt
+                )
+                time.sleep(random.uniform(delay / 2, delay))
             finally:
                 _retry_slots.release()
         logger.warning("usage report dropped: rate limited or unavailable")

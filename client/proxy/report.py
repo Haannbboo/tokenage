@@ -18,7 +18,7 @@ from protocol.usage_report import ToolCallReport, UsageReport
 REPORT_TIMEOUT_SECONDS = 10.0
 RATE_LIMIT_RETRIES = 3
 MAX_RETRY_DELAY_SECONDS = 60.0
-# Bounds reports waiting out a 429 at once; beyond this they drop.
+# Bounds reports waiting out a 429/503 at once; beyond this they drop.
 _retry_slots = threading.BoundedSemaphore(100)
 logger = logging.getLogger("tokenage.client.proxy")
 
@@ -63,8 +63,8 @@ def build_report(
 def post_report(report: UsageReport) -> None:
     """POST with the device's ingest token; log and drop on failure.
 
-    Only a 429 is retried (the server rejected it before recording, so a retry
-    can't duplicate a row), after `Retry-After`, up to RATE_LIMIT_RETRIES times.
+    Retry 429 and 503 backpressure responses after `Retry-After`, up to
+    RATE_LIMIT_RETRIES times (the server rejected them before enqueueing).
     """
     try:
         creds = load_credentials() or {}
@@ -80,7 +80,7 @@ def post_report(report: UsageReport) -> None:
                 headers={"x-tokenage-token": token},
                 timeout=REPORT_TIMEOUT_SECONDS,
             )
-            if response.status_code != 429:
+            if response.status_code not in (429, 503):
                 response.raise_for_status()
                 return
             # ponytail: sleeping threads are the buffer, capped by _retry_slots;
@@ -93,7 +93,7 @@ def post_report(report: UsageReport) -> None:
                 time.sleep(_retry_delay(response))
             finally:
                 _retry_slots.release()
-        logger.warning("usage report dropped: rate limited")
+        logger.warning("usage report dropped: rate limited or unavailable")
     except Exception as exc:
         # The message never includes headers, so the token stays out of logs.
         logger.warning("usage report dropped: %s", type(exc).__name__)

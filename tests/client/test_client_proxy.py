@@ -464,8 +464,11 @@ def test_post_report_failure_logs_without_secrets_and_never_retries(
     assert "ing-tok" not in caplog.text
 
 
-def test_post_report_retries_429_after_retry_after(cfg, signed_in, monkeypatch, caplog):
-    statuses = iter([429, 429, 204])
+@pytest.mark.parametrize("status", [429, 503])
+def test_post_report_retries_backpressure_after_retry_after(
+    cfg, signed_in, monkeypatch, caplog, status
+):
+    statuses = iter([status, status, 204])
     sleeps = []
 
     def fake_post(url, **kw):
@@ -498,14 +501,15 @@ def test_retry_delay_honors_http_date_and_falls_back_on_garbage():
     assert delay("not a date") == 5.0
 
 
-def test_post_report_gives_up_after_bounded_429_retries(
-    cfg, signed_in, monkeypatch, caplog
+@pytest.mark.parametrize("status", [429, 503])
+def test_post_report_gives_up_after_bounded_backpressure_retries(
+    cfg, signed_in, monkeypatch, caplog, status
 ):
     calls = []
 
     def fake_post(url, **kw):
         calls.append(url)
-        return httpx.Response(429, request=httpx.Request("POST", url))
+        return httpx.Response(status, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(proxy_report.httpx, "post", fake_post)
     monkeypatch.setattr(proxy_report.time, "sleep", lambda s: None)

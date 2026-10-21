@@ -542,3 +542,107 @@ def test_failed_partition_does_not_starve_later_partition(
     assert consumer.drain() == 1
     assert len(processed) == 1
     assert store.status()[partition_for(first)].depth == 1
+
+
+def _queue_otlp(store, user_id, device_id, values, service="opencode"):
+    records = []
+    for fields in values:
+        records.append(
+            [
+                {
+                    "timeUnixNano": "1776384000000000000",
+                    "attributes": [
+                        {
+                            "key": key,
+                            "value": {
+                                "intValue"
+                                if isinstance(value, int)
+                                else "stringValue": value
+                            },
+                        }
+                        for key, value in fields.items()
+                    ],
+                },
+                service,
+                "retry-session",
+            ]
+        )
+    return store.publish(
+        user_id,
+        {
+            "kind": "otlp",
+            "user_id": user_id,
+            "device_id": device_id,
+            "records": records,
+        },
+    )
+
+
+@pytest.mark.parametrize("takeover", [False, True])
+def test_otlp_retry_resumes_at_failed_record(
+    api_module, fresh_db, monkeypatch, takeover
+):
+    from sqlalchemy.exc import OperationalError
+
+    import src.otlp as otlp
+    from src.auth import resolve_token
+    from src.auth.tokens import mint_token
+    from src.ingest_queue import Consumer
+    from src.shared_state import get_shared_state, partition_for
+
+    token, user = mint_token(
+        "record-retry@example.com", kind="ingest", db_path=fresh_db.db_path
+    )
+    _, auth = resolve_token(token)
+    store = get_shared_state()
+    _queue_otlp(
+        store,
+        user.id,
+        auth.device_id,
+        [
+            {
+                "event.name": "opencode.message_completed",
+                "message.id": str(n),
+                "model": f"retry-{n}",
+                "input_token_count": 10,
+                "output_token_count": 5,
+            }
+            for n in range(2)
+        ],
+    )
+    original = otlp.record_usage
+    attempts = []
+
+    def flaky(**fields):
+        attempts.append(fields["model"])
+        if attempts == ["retry-0", "retry-1"]:
+            raise OperationalError("", {}, Exception("temporary failure"))
+        return original(**fields)
+
+    monkeypatch.setattr(otlp, "record_usage", flaky)
+    consumer = Consumer(store)
+    assert consumer.drain() == 0
+    if takeover:
+        consumer._drop(partition_for(user.id))
+        consumer = Consumer(store)
+    assert consumer.drain() == 1
+    assert attempts == ["retry-0", "retry-1", "retry-1"]
+    with fresh_db.database_module.get_engine().connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM usage")).scalar_one() == 2
+        assert (
+            conn.execute(
+                text("SELECT sum(request_count) FROM usage_hourly")
+            ).scalar_one()
+            == 2
+        )
+        for column in (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "total_cost_usd",
+        ):
+            usage = conn.execute(text(f"SELECT sum({column}) FROM usage")).scalar_one()
+            hourly = conn.execute(
+                text(f"SELECT sum({column}) FROM usage_hourly")
+            ).scalar_one()
+            assert usage == hourly

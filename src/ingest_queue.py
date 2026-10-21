@@ -46,7 +46,7 @@ def publish(user_id: str, payload: dict) -> None:
 
 
 def _offset(position: str) -> str:
-    return position.split(":", 1)[0]
+    return position.split(":", 1)[0].split("/", 1)[0]
 
 
 class LeaseLost(Exception):
@@ -82,7 +82,7 @@ class Consumer:
             ).scalar_one()
             parts = old.split(":")
             offset = (
-                _offset(old)
+                old.split(":", 1)[0]
                 if len(parts) < 3 or parts[1] == self.store.identity
                 else "0"
             )
@@ -131,11 +131,34 @@ class Consumer:
         if payload["kind"] == "otlp":
             from .otlp import _ingest_records
 
+            partition = self.active_partition
+            assert partition is not None
+            checkpoint = self.positions[partition].split(":", 1)[0].split("/")
+            start = (
+                int(checkpoint[2])
+                if len(checkpoint) == 3 and checkpoint[1] == event.position
+                else 0
+            )
+            completed = start
+
+            def record_completed() -> None:
+                nonlocal completed
+                completed += 1
+                expected = self.positions[partition]
+                value = self.commit_position(
+                    partition,
+                    expected,
+                    f"{_offset(expected)}/{event.position}/{completed}",
+                )
+                with self.lock:
+                    self.positions[partition] = value
+
             _ingest_records(
-                payload["records"],
+                payload["records"][start:],
                 user_id=payload["user_id"],
                 device_id=payload["device_id"],
                 progress=self._progress,
+                record_completed=record_completed,
             )
         elif payload["kind"] == "usage":
             from .recorder import record_usage
@@ -212,7 +235,9 @@ class Consumer:
                             event.payload.get("kind"),
                             type(exc).__name__,
                         )
-                    position = self.commit_position(partition, position, event.position)
+                    position = self.commit_position(
+                        partition, self.positions[partition], event.position
+                    )
                     with self.lock:
                         self.positions[partition] = position
                     if not self.store.ack(partition, event.position, self.owner):

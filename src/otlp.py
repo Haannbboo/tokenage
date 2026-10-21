@@ -1011,6 +1011,7 @@ def _ingest_records(
     user_id: str,
     device_id: str,
     progress: Callable[[], None] | None = None,
+    record_completed: Callable[[], None] | None = None,
 ) -> None:
     for record, service_name, session_id in records:
         if progress is not None:
@@ -1034,6 +1035,9 @@ def _ingest_records(
                 event_name,
                 type(exc).__name__,
             )
+
+        if record_completed is not None:
+            record_completed()
 
 
 @app.post("/v1/logs")

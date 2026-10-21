@@ -51,7 +51,12 @@ def test_poison_event_does_not_block_200_events(
         assert consumer.drain() == 200
     with fresh_db.database_module.get_engine().connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM usage")).scalar_one() == 199
-    assert _offset(consumer.positions[partition_for(user_id)]) == last
+    with fresh_db.database_module.get_engine().connect() as conn:
+        position = conn.execute(
+            text("SELECT position FROM queue_positions WHERE partition=:p"),
+            {"p": partition_for(user_id)},
+        ).scalar_one()
+    assert _offset(position) == last
     assert "SECRET PROMPT" not in caplog.text
     assert "ValueError" in caplog.text
     assert store.status()[partition_for(user_id)].depth == 0
@@ -776,3 +781,26 @@ def test_correlation_survives_transient_usage_failure(
                 ).scalar_one()
                 == 1
             )
+
+
+def test_drained_partition_is_available_to_new_consumer(
+    api_module, fresh_db, monkeypatch
+):
+    from src.ingest_queue import Consumer
+    from src.shared_state import get_shared_state, partition_for
+
+    store = get_shared_state()
+    partition = partition_for("user")
+    store.publish("user", {"kind": "test"})
+    first = Consumer(store)
+    monkeypatch.setattr(first, "_process", lambda event: None)
+    assert first.drain() == 1
+    assert partition not in first.positions
+    assert store.status()[partition].owner is None
+    store.publish("user", {"kind": "test"})
+    second = Consumer(store)
+    seen = []
+    monkeypatch.setattr(second, "_process", seen.append)
+    assert second.drain() == 1
+    assert len(seen) == 1
+    assert store.status()[partition].depth == 0

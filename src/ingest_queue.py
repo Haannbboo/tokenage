@@ -256,6 +256,13 @@ class Consumer:
                 finally:
                     self.active_partition = None
                     self.processing_since = None
+            # Once drained, let a newly started consumer claim future work.
+            # A publish racing this check is harmless: either this owner keeps
+            # the lease for its next poll or a successor claims it after release.
+            if partition in self.positions and not self.store.read(
+                partition, _offset(self.positions[partition]), 1
+            ):
+                self._drop(partition)
         return processed
 
     def _drop(self, partition: int) -> None:

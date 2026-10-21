@@ -726,12 +726,9 @@ def test_postgres_connect_args_bound_database_waits(database_module):
 
     assert _connect_args("postgresql+psycopg://db.example/usage") == {
         "connect_timeout": 5,
-        "keepalives": 1,
-        "keepalives_idle": 30,
-        "keepalives_interval": 10,
-        "keepalives_count": 3,
+        "tcp_user_timeout": 30_000,
     }
-    assert _connect_args("postgresql://db.example/usage")["keepalives"] == 1
+    assert _connect_args("postgresql://db.example/usage")["tcp_user_timeout"] == 30_000
     assert _connect_args("sqlite:///usage.db") == {"check_same_thread": False}
     assert _connect_args("mysql://db.example/usage") == {}
 

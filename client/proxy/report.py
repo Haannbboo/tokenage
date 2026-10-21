@@ -19,8 +19,8 @@ from protocol.usage_report import ToolCallReport, UsageReport
 REPORT_TIMEOUT_SECONDS = 10.0
 RATE_LIMIT_RETRIES = 5
 MAX_RETRY_DELAY_SECONDS = 60.0
-# Bounds reports waiting out a 429/503 at once; beyond this they drop.
-_retry_slots = threading.BoundedSemaphore(100)
+# Cap threads/memory when the server is unreachable, including initial requests.
+_report_slots = threading.BoundedSemaphore(100)
 logger = logging.getLogger("tokenage.client.proxy")
 
 
@@ -64,8 +64,7 @@ def build_report(
 def post_report(report: UsageReport) -> None:
     """POST with the device's ingest token; log and drop on failure.
 
-    Retry 429 and 503 backpressure responses after `Retry-After`, up to
-    RATE_LIMIT_RETRIES times (the server rejected them before enqueueing).
+    Retry backpressure and transport failures up to RATE_LIMIT_RETRIES times.
     """
     try:
         creds = load_credentials() or {}
@@ -75,30 +74,29 @@ def post_report(report: UsageReport) -> None:
             return
         payload = report.model_dump(mode="json")
         for attempt in range(RATE_LIMIT_RETRIES + 1):
-            response = httpx.post(
-                f"{server_url.rstrip('/')}/ingest/v1/usage",
-                json=payload,
-                headers={"x-tokenage-token": token},
-                timeout=REPORT_TIMEOUT_SECONDS,
-            )
-            if response.status_code not in (429, 503):
-                response.raise_for_status()
-                return
-            # ponytail: sleeping threads are the buffer, capped by _retry_slots;
-            # a persistent queue only if drops under sustained limiting matter.
-            if attempt == RATE_LIMIT_RETRIES or not _retry_slots.acquire(
-                blocking=False
-            ):
-                break
+            response = None
             try:
-                # Exponential backoff and jitter avoid a retry storm knocking
-                # the DB over again after recovery. This is a background thread.
-                delay = min(
-                    MAX_RETRY_DELAY_SECONDS, _retry_delay(response) * 2**attempt
+                response = httpx.post(
+                    f"{server_url.rstrip('/')}/ingest/v1/usage",
+                    json=payload,
+                    headers={"x-tokenage-token": token},
+                    timeout=REPORT_TIMEOUT_SECONDS,
                 )
-                time.sleep(random.uniform(delay / 2, delay))
-            finally:
-                _retry_slots.release()
+                if response.status_code not in (429, 503):
+                    response.raise_for_status()
+                    return
+            except httpx.TransportError:
+                # Slow/unreachable servers are retryable; ambiguous timeout
+                # duplicates are acceptable.
+                pass
+            if attempt == RATE_LIMIT_RETRIES:
+                break
+            # Exponential backoff and jitter avoid a retry storm after recovery.
+            delay = min(
+                MAX_RETRY_DELAY_SECONDS,
+                (_retry_delay(response) if response is not None else 5.0) * 2**attempt,
+            )
+            time.sleep(random.uniform(delay / 2, delay))
         logger.warning("usage report dropped: rate limited or unavailable")
     except Exception as exc:
         # The message never includes headers, so the token stays out of logs.
@@ -118,12 +116,22 @@ def _retry_delay(response: httpx.Response) -> float:
 
 
 def send_in_background(report: UsageReport) -> None:
-    """Fire and forget, off the request path.
+    """Fire and forget, off the request path."""
+    if not _report_slots.acquire(blocking=False):
+        logger.warning("usage report dropped: too many pending")
+        return
 
-    ponytail: one short-lived thread per call; a queue worker if call volume
-    ever makes that matter.
-    """
-    threading.Thread(target=post_report, args=(report,), daemon=True).start()
+    def send() -> None:
+        try:
+            post_report(report)
+        finally:
+            _report_slots.release()
+
+    try:
+        threading.Thread(target=send, daemon=True).start()
+    except Exception:
+        _report_slots.release()
+        logger.warning("usage report dropped: thread start failed")
 
 
 ReportSink = Callable[[UsageReport], None]

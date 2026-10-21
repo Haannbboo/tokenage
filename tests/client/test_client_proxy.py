@@ -445,7 +445,7 @@ def test_post_report_sends_ingest_token_header(cfg, signed_in, monkeypatch):
     assert "event_id" not in kw["json"]
 
 
-def test_post_report_failure_logs_without_secrets_and_never_retries(
+def test_post_report_failure_logs_without_secrets_and_bounds_retries(
     cfg, signed_in, monkeypatch, caplog
 ):
     calls = []
@@ -455,13 +455,91 @@ def test_post_report_failure_logs_without_secrets_and_never_retries(
         raise httpx.ConnectError("boom ing-tok")
 
     monkeypatch.setattr(proxy_report.httpx, "post", fake_post)
+    monkeypatch.setattr(proxy_report.time, "sleep", lambda s: None)
     reports = []
     make_client(cfg, Upstream(ok_json), reports).post(
         "/v1/chat/completions", json={"model": "test-model"}
     )
     proxy_report.post_report(reports[0])  # must not raise
-    assert len(calls) == 1
+    assert len(calls) == proxy_report.RATE_LIMIT_RETRIES + 1
     assert "ing-tok" not in caplog.text
+
+
+@pytest.mark.parametrize("error", [httpx.ReadTimeout, httpx.ConnectError])
+def test_post_report_retries_transport_failure_then_delivers(
+    cfg, signed_in, monkeypatch, caplog, error
+):
+    calls, sleeps, bounds = [], [], []
+
+    def fake_post(url, **kw):
+        calls.append(kw)
+        if len(calls) == 1:
+            raise error("secret body ing-tok")
+        return httpx.Response(204, request=httpx.Request("POST", url))
+
+    def uniform(low, high):
+        bounds.append((low, high))
+        return high
+
+    monkeypatch.setattr(proxy_report.httpx, "post", fake_post)
+    monkeypatch.setattr(proxy_report.time, "sleep", sleeps.append)
+    monkeypatch.setattr(proxy_report.random, "uniform", uniform)
+    reports = []
+    make_client(cfg, Upstream(ok_json), reports).post(
+        "/v1/chat/completions", json={"model": "test-model"}
+    )
+    proxy_report.post_report(reports[0])
+    assert len(calls) == 2 and calls[0] == calls[1]
+    assert bounds == [(2.5, 5.0)] and sleeps == [5.0]
+    assert "dropped" not in caplog.text and "ing-tok" not in caplog.text
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_background_reports_bound_initial_threads_and_release_slots(
+    monkeypatch, caplog, failure
+):
+    pending = []
+    slots = proxy_report.threading.BoundedSemaphore(100)
+    monkeypatch.setattr(proxy_report, "_report_slots", slots)
+
+    class Thread:
+        def __init__(self, *, target, daemon):
+            self.target = target
+
+        def start(self):
+            pending.append(self.target)
+
+    def post(report):
+        if failure:
+            raise RuntimeError("failed")
+
+    monkeypatch.setattr(proxy_report.threading, "Thread", Thread)
+    monkeypatch.setattr(proxy_report, "post_report", post)
+    for _ in range(101):
+        proxy_report.send_in_background(None)
+    assert len(pending) == 100
+    assert "usage report dropped: too many pending" in caplog.text
+    for send in pending:
+        if failure:
+            with pytest.raises(RuntimeError):
+                send()
+        else:
+            send()
+    for _ in range(100):
+        assert slots.acquire(blocking=False)
+    assert not slots.acquire(blocking=False)
+
+
+def test_background_report_releases_slot_if_thread_start_fails(monkeypatch):
+    slots = proxy_report.threading.BoundedSemaphore(1)
+    monkeypatch.setattr(proxy_report, "_report_slots", slots)
+
+    def fail(**kwargs):
+        raise RuntimeError("cannot start thread")
+
+    monkeypatch.setattr(proxy_report.threading, "Thread", fail)
+    proxy_report.send_in_background(None)
+    assert slots.acquire(blocking=False)
 
 
 @pytest.mark.parametrize("status", [429, 503])

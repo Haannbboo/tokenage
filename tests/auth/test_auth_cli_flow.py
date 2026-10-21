@@ -304,7 +304,7 @@ def test_exchange_expired_code_fails(api_module, monkeypatch, fresh_db, isolated
     from src.shared_state import get_shared_state
 
     get_shared_state().set(
-        _routes_module().auth_google.CLI_CODE_FILE_NAME, code.replace("-", ""), {}, -1
+        _routes_module().auth_google.CLI_CODE_NAMESPACE, code.replace("-", ""), {}, -1
     )
 
     assert _exchange(client, code, "anything").status_code == 400
@@ -583,7 +583,7 @@ def test_cli_code_store_rejects_expired(api_module, isolated_home):
     auth_google.store_cli_code("old", {"user_id": "u"})
     from src.shared_state import get_shared_state
 
-    get_shared_state().set(auth_google.CLI_CODE_FILE_NAME, "old", {}, -1)
+    get_shared_state().set(auth_google.CLI_CODE_NAMESPACE, "old", {}, -1)
     assert auth_google.pop_cli_code("old") is None
 
 

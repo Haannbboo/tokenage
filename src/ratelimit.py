@@ -5,7 +5,6 @@ Windows are shared across server processes; invalid-token caching stays local.
 
 import asyncio
 import concurrent.futures
-import sqlite3
 import threading
 import time
 from collections import OrderedDict
@@ -14,7 +13,7 @@ from typing import NoReturn
 from fastapi import HTTPException, Request
 
 from src.config.app import CONFIG
-from src.shared_state import get_shared_state
+from src.shared_state import StoreUnavailable, get_shared_state
 
 from .auth import resolve_token
 from .auth.tokens import hash_token
@@ -42,7 +41,7 @@ def rate_limit_hit(key: str, limit_name: str) -> int | None:
         return get_shared_state().rate_limit(
             key, CONFIG["rate_limits"][limit_name], WINDOW_SECONDS
         )
-    except sqlite3.OperationalError as exc:
+    except StoreUnavailable as exc:
         raise HTTPException(
             503, "rate limiter unavailable", headers={"Retry-After": "5"}
         ) from exc

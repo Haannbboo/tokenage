@@ -22,14 +22,14 @@ from src.shared_state import get_shared_state
 
 logger = logging.getLogger(__name__)
 
-STATE_FILE_NAME = "oauth_state.json"
+OAUTH_STATE_NAMESPACE = "oauth-state"
 STATE_TTL_SECONDS = 5 * 60
 MAX_PENDING_STATES = 512
 
 # One-time CLI and browser login codes share the same store and TTL.
-CLI_CODE_FILE_NAME = "cli_codes.json"
+CLI_CODE_NAMESPACE = "cli-codes"
 CLI_CODE_TTL_SECONDS = 300
-LOGIN_CODE_FILE_NAME = "login_codes.json"
+LOGIN_CODE_NAMESPACE = "login-codes"
 
 # Google endpoints are pinned (no discovery-document fetch at runtime); the
 # only outbound calls are the token exchange and the JWKS fetch.
@@ -110,31 +110,33 @@ async def verify_id_token(token: dict[str, Any], nonce: str) -> dict[str, Any]:
 
 def store_oauth_state(state: str, data: dict[str, Any]) -> None:
     """Persist a single-use OAuth state for five minutes."""
-    _store_entry(STATE_FILE_NAME, state, data, STATE_TTL_SECONDS, MAX_PENDING_STATES)
+    _store_entry(
+        OAUTH_STATE_NAMESPACE, state, data, STATE_TTL_SECONDS, MAX_PENDING_STATES
+    )
 
 
 def pop_oauth_state(state: str) -> dict[str, Any] | None:
-    return _pop_entry(STATE_FILE_NAME, state)
+    return _pop_entry(OAUTH_STATE_NAMESPACE, state)
 
 
 def store_cli_code(code: str, data: dict[str, Any]) -> None:
     _store_entry(
-        CLI_CODE_FILE_NAME, code, data, CLI_CODE_TTL_SECONDS, MAX_PENDING_STATES
+        CLI_CODE_NAMESPACE, code, data, CLI_CODE_TTL_SECONDS, MAX_PENDING_STATES
     )
 
 
 def pop_cli_code(code: str) -> dict[str, Any] | None:
-    return _pop_entry(CLI_CODE_FILE_NAME, code)
+    return _pop_entry(CLI_CODE_NAMESPACE, code)
 
 
 def store_login_code(code: str) -> None:
     _store_entry(
-        LOGIN_CODE_FILE_NAME, code, {}, CLI_CODE_TTL_SECONDS, MAX_PENDING_STATES
+        LOGIN_CODE_NAMESPACE, code, {}, CLI_CODE_TTL_SECONDS, MAX_PENDING_STATES
     )
 
 
 def pop_login_code(code: str) -> dict[str, Any] | None:
-    return _pop_entry(LOGIN_CODE_FILE_NAME, code)
+    return _pop_entry(LOGIN_CODE_NAMESPACE, code)
 
 
 def _store_entry(

@@ -33,6 +33,10 @@ def partition_for(user_id: str) -> int:
     )
 
 
+class StoreUnavailable(Exception):
+    """The shared store is temporarily unavailable."""
+
+
 class QueueFull(Exception):
     """The user's partition is over its pending-event limit."""
 
@@ -77,8 +81,13 @@ class SQLiteSharedState:
         os.chmod(self.path, 0o600)
         # Keep WAL open across short operation connections. Closing the last
         # connection otherwise checkpoints/deletes WAL on every operation.
-        self._anchor = sqlite3.connect(self.path, timeout=5, check_same_thread=False)
-        self._anchor.execute("PRAGMA journal_mode=WAL")
+        try:
+            self._anchor = sqlite3.connect(
+                self.path, timeout=5, check_same_thread=False
+            )
+            self._anchor.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError as exc:
+            raise StoreUnavailable() from exc
         with self._connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
@@ -100,16 +109,20 @@ class SQLiteSharedState:
 
     @contextmanager
     def _connection(self, write: bool = False):
-        conn = sqlite3.connect(self.path, timeout=5)
+        conn = None
         try:
+            conn = sqlite3.connect(self.path, timeout=5)
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA busy_timeout=5000")
             if write:
                 conn.execute("BEGIN IMMEDIATE")
             with conn:
                 yield conn
+        except sqlite3.OperationalError as exc:
+            raise StoreUnavailable() from exc
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     def publish(self, user_id: str, payloads: list[dict[str, Any]]) -> None:
         partition = partition_for(user_id)

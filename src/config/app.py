@@ -8,8 +8,6 @@ from ..utils import replace_contents as _replace_contents
 from . import merge as merge_helpers
 from .models import expand_path, get_config_path, get_tracker_home
 
-CONFIG_ENV_VAR = "TOKENAGE_CONFIG"
-
 merge_missing_config_defaults = merge_helpers.merge_missing_config_defaults
 sync_config_file_with_defaults = merge_helpers.sync_config_file_with_defaults
 

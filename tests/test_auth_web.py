@@ -120,7 +120,7 @@ def test_state_store_rejects_expired_and_missing(api_module, isolated_home):
     auth_google.store_oauth_state("old", {"nonce": "n", "redirect_uri": "u"})
     from src.shared_state import get_shared_state
 
-    get_shared_state().set(auth_google.STATE_FILE_NAME, "old", {}, -1)
+    get_shared_state().set(auth_google.OAUTH_STATE_NAMESPACE, "old", {}, -1)
 
     assert auth_google.pop_oauth_state("old") is None
     assert auth_google.pop_oauth_state("never-seen") is None
@@ -132,10 +132,10 @@ def test_state_store_prunes_expired_on_insert(api_module, isolated_home):
     from src.shared_state import get_shared_state
 
     store = get_shared_state()
-    store.set(auth_google.STATE_FILE_NAME, "a", {}, -1)
+    store.set(auth_google.OAUTH_STATE_NAMESPACE, "a", {}, -1)
     auth_google.store_oauth_state("b", {"nonce": "n", "redirect_uri": "u"})
-    assert store.get(auth_google.STATE_FILE_NAME, "a") is None
-    assert store.get(auth_google.STATE_FILE_NAME, "b") is not None
+    assert store.get(auth_google.OAUTH_STATE_NAMESPACE, "a") is None
+    assert store.get(auth_google.OAUTH_STATE_NAMESPACE, "b") is not None
 
 
 def test_state_store_caps_pending_entries(api_module, isolated_home, monkeypatch):
@@ -256,7 +256,9 @@ def test_google_callback_expired_state(api_module, monkeypatch, fresh_db):
 
     from src.shared_state import get_shared_state
 
-    get_shared_state().set(_routes_module().auth_google.STATE_FILE_NAME, state, {}, -1)
+    get_shared_state().set(
+        _routes_module().auth_google.OAUTH_STATE_NAMESPACE, state, {}, -1
+    )
 
     callback = client.get(
         f"/auth/google/callback?code=the-code&state={state}", follow_redirects=False

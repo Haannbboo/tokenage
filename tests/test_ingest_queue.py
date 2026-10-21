@@ -272,18 +272,22 @@ def test_queued_otlp_contains_only_parser_metadata(api_module, fresh_db):
     }
 
 
-def test_usage_queue_full_returns_retryable_503(api_module, fresh_db, monkeypatch):
+@pytest.mark.parametrize("error_name", ["QueueFull", "StoreUnavailable"])
+def test_usage_queue_unavailable_returns_retryable_503(
+    api_module, fresh_db, monkeypatch, error_name
+):
     from fastapi.testclient import TestClient
 
+    from src import shared_state
     from src.auth.tokens import mint_token
-    from src.shared_state import QueueFull, get_shared_state
+    from src.shared_state import get_shared_state
 
     token, _ = mint_token(
         "busy-usage@example.com", kind="ingest", db_path=fresh_db.db_path
     )
 
     def full(*args):
-        raise QueueFull()
+        raise getattr(shared_state, error_name)()
 
     monkeypatch.setattr(get_shared_state(), "publish", full)
     response = TestClient(api_module.app).post(
@@ -296,15 +300,13 @@ def test_usage_queue_full_returns_retryable_503(api_module, fresh_db, monkeypatc
 
 
 def test_rate_store_unavailable_returns_503(api_module, monkeypatch):
-    import sqlite3
-
     from fastapi import HTTPException
 
     from src.ratelimit import rate_limit_hit
-    from src.shared_state import get_shared_state
+    from src.shared_state import StoreUnavailable, get_shared_state
 
     def unavailable(*args):
-        raise sqlite3.OperationalError("locked")
+        raise StoreUnavailable()
 
     monkeypatch.setattr(get_shared_state(), "rate_limit", unavailable)
     with pytest.raises(HTTPException) as exc:

@@ -93,7 +93,7 @@ def migrate_database(db_path: str | None = None) -> list[str]:
     There are no upgrade steps for schemas older than this one.
     """
     engine = get_engine(db_path)
-    init_db(db_path)
+    init_db(db_path)  # create_all: missing tables, with their indexes
     applied: list[str] = []
     insp = inspect(engine)
     if engine.dialect.name == "postgresql":

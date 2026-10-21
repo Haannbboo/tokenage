@@ -150,11 +150,27 @@ def test_signin_code_cross_instance_pop(api_module):
 
     google.store_oauth_state("oauth", {"nonce": "n"})
     other = SQLiteSharedState(get_shared_state().path)
-    assert other.pop(google.STATE_FILE_NAME, "oauth")["nonce"] == "n"
+    assert other.pop(google.OAUTH_STATE_NAMESPACE, "oauth")["nonce"] == "n"
     assert google.pop_oauth_state("oauth") is None
     google.store_cli_code("cli", {"user_id": "u"})
-    assert other.pop(google.CLI_CODE_FILE_NAME, "cli")["user_id"] == "u"
+    assert other.pop(google.CLI_CODE_NAMESPACE, "cli")["user_id"] == "u"
     assert google.pop_cli_code("cli") is None
     google.store_login_code("login")
-    assert other.pop(google.LOGIN_CODE_FILE_NAME, "login") is not None
+    assert other.pop(google.LOGIN_CODE_NAMESPACE, "login") is not None
     assert google.pop_login_code("login") is None
+
+
+def test_store_translates_sqlite_unavailability(tmp_path, monkeypatch):
+    import sqlite3
+
+    from src.shared_state import SQLiteSharedState, StoreUnavailable
+
+    store = SQLiteSharedState(tmp_path / "unavailable.db")
+
+    def unavailable(*args, **kwargs):
+        raise sqlite3.OperationalError("SECRET DATABASE URL")
+
+    monkeypatch.setattr("src.shared_state.sqlite3.connect", unavailable)
+    with pytest.raises(StoreUnavailable) as exc:
+        store.read(0)
+    assert "SECRET" not in str(exc.value)

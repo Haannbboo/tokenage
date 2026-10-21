@@ -19,7 +19,14 @@ from fastapi import HTTPException
 from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as DatabaseTimeout
 
-from .shared_state import LEASE_SECONDS, Event, QueueFull, SharedState, get_shared_state
+from .shared_state import (
+    LEASE_SECONDS,
+    Event,
+    QueueFull,
+    SharedState,
+    StoreUnavailable,
+    get_shared_state,
+)
 
 log = logging.getLogger(__name__)
 POLL_SECONDS = 0.25
@@ -27,6 +34,7 @@ POLL_SECONDS = 0.25
 
 TRANSIENT_DB_ERRORS = (
     sqlite3.OperationalError,
+    StoreUnavailable,
     DisconnectionError,
     InterfaceError,
     OperationalError,
@@ -39,7 +47,7 @@ def publish(user_id: str, payloads: list[dict]) -> None:
         get_shared_state().publish(
             user_id, [{**payload, "user_id": user_id} for payload in payloads]
         )
-    except (QueueFull, sqlite3.OperationalError) as exc:
+    except (QueueFull, StoreUnavailable) as exc:
         raise HTTPException(
             503, "collector is busy, retry later", headers={"Retry-After": "5"}
         ) from exc

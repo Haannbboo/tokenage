@@ -67,6 +67,8 @@ PROJECT_MODULES = [
     "src.schema_migrations",
     "src.otlp",
     "src.ratelimit",
+    "src.shared_state",
+    "src.ingest_queue",
     "src.recorder",
     "src.utils",
     "src.provider_parser",
@@ -103,6 +105,7 @@ def isolated_home(
     )
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TOKENAGE_HOME", str(config_dir))
     monkeypatch.setenv("TOKENAGE_CONFIG", str(config_path))
     clear_project_modules()
     # Patch CONFIG["db"] so cached modules see the test's DB path.
@@ -358,3 +361,12 @@ def _loopback_test_client(monkeypatch: pytest.MonkeyPatch) -> None:
         original(self, app, *args, **kwargs)
 
     monkeypatch.setattr(TestClient, "__init__", init)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_shared_state_home(tmp_path, monkeypatch, request):
+    """Every test gets its own transient store, including fresh_db-only tests."""
+    if "scripts" in request.path.parts or "client" in request.path.parts:
+        return
+    monkeypatch.setenv("TOKENAGE_HOME", str(tmp_path / ".tokenage"))
+    monkeypatch.delenv("TOKENAGE_QUEUE_URL", raising=False)

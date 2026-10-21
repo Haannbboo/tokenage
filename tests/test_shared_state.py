@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from src.shared_state import SQLiteSharedState, partition_for
+from src.shared_state import QueueFull, SQLiteSharedState, partition_for
 
 
 @pytest.fixture(params=[SQLiteSharedState])
@@ -82,8 +82,6 @@ def test_different_rate_windows_do_not_prune_each_other(store, monkeypatch):
 
 
 def test_partition_backpressure_boundary(store):
-    from src.shared_state import QueueFull
-
     p = partition_for("alice")
     with store._connection(True) as conn:
         conn.executemany(
@@ -94,3 +92,60 @@ def test_partition_backpressure_boundary(store):
     with pytest.raises(QueueFull):
         store.publish("alice", {})
     assert store.status()[p].depth == 10001
+
+
+def test_store_factory_precedence(config_module, monkeypatch, tmp_path):
+    from src.shared_state import get_shared_state
+
+    default = get_shared_state()
+    assert default.path.endswith("/.tokenage/state.db")
+    config_module.CONFIG["queue"] = {"url": f"sqlite:///{tmp_path / 'configured.db'}"}
+    assert get_shared_state().path == str(tmp_path / "configured.db")
+    monkeypatch.setenv("TOKENAGE_QUEUE_URL", f"sqlite:///{tmp_path / 'env.db'}")
+    assert get_shared_state().path == str(tmp_path / "env.db")
+    monkeypatch.setenv("TOKENAGE_QUEUE_URL", "redis://secret@host/0")
+    with pytest.raises(ValueError, match="Unsupported queue URL scheme") as exc:
+        get_shared_state()
+    assert "secret" not in str(exc.value)
+
+
+def test_server_config_uses_config_path(config_module, tmp_path, monkeypatch):
+    from src.config.server_config import load_server_config
+
+    path = tmp_path / "custom.yaml"
+    path.write_text("server: {host: 0.0.0.0, api_port: 9876}\n")
+    monkeypatch.setenv("TOKENAGE_CONFIG", str(path))
+    assert load_server_config().api_port == 9876
+    assert load_server_config().host == "0.0.0.0"
+    monkeypatch.delenv("TOKENAGE_CONFIG")
+    home = tmp_path / "other"
+    home.mkdir()
+    (home / "config.yaml").write_text("server: {api_port: 8765}\n")
+    monkeypatch.setenv("TOKENAGE_HOME", str(home))
+    assert load_server_config().api_port == 8765
+
+
+def test_concurrent_claim_and_pop_have_one_winner(store):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    other = type(store)(store.path)
+    barrier = Barrier(2)
+
+    def claim(pair):
+        instance, owner = pair
+        barrier.wait()
+        return instance.claim(3, owner)
+
+    with ThreadPoolExecutor(2) as pool:
+        assert sum(pool.map(claim, [(store, "a"), (other, "b")])) == 1
+    store.set("codes", "once", {"nonce": "n"}, 60)
+    barrier = Barrier(2)
+
+    def pop(instance):
+        barrier.wait()
+        return instance.pop("codes", "once")
+
+    with ThreadPoolExecutor(2) as pool:
+        values = list(pool.map(pop, [store, other]))
+    assert sum(value is not None for value in values) == 1

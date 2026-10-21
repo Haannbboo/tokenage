@@ -12,7 +12,9 @@ import json
 import math
 import os
 import sqlite3
+import threading
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +52,8 @@ class PartitionStatus:
 
 
 class SharedState(Protocol):
+    identity: str
+
     def publish(self, user_id: str, payload: dict[str, Any]) -> str: ...
     def read(
         self, partition: int, after: str = "0", limit: int = 500
@@ -59,6 +63,7 @@ class SharedState(Protocol):
     def renew(self, partition: int, owner: str, ttl: float = LEASE_SECONDS) -> bool: ...
     def release(self, partition: int, owner: str) -> None: ...
     def status(self) -> list[PartitionStatus]: ...
+    def keys(self, namespace: str) -> list[str]: ...
     def get(self, namespace: str, key: str) -> Any: ...
     def set(
         self, namespace: str, key: str, value: Any, ttl: float, cap: int | None = None
@@ -76,9 +81,14 @@ class SQLiteSharedState:
         fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
         os.close(fd)
         os.chmod(self.path, 0o600)
+        # Keep WAL open across short operation connections. Closing the last
+        # connection otherwise checkpoints/deletes WAL on every operation.
+        self._anchor = sqlite3.connect(self.path, timeout=5, check_same_thread=False)
+        self._anchor.execute("PRAGMA journal_mode=WAL")
         with self._connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
+                CREATE TABLE IF NOT EXISTS store_meta (id INTEGER PRIMARY KEY, identity TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, partition INTEGER NOT NULL,
                     payload TEXT NOT NULL, created REAL NOT NULL);
@@ -94,6 +104,15 @@ class SQLiteSharedState:
                 CREATE INDEX IF NOT EXISTS limits_key ON limits(key, ts);
                 CREATE INDEX IF NOT EXISTS limits_expiry ON limits(expires);
             """)
+
+        with self._connection(True) as conn:
+            conn.execute(
+                "INSERT INTO store_meta VALUES (1, ?) ON CONFLICT(id) DO NOTHING",
+                (uuid.uuid4().hex,),
+            )
+            self.identity = conn.execute(
+                "SELECT identity FROM store_meta WHERE id=1"
+            ).fetchone()[0]
 
     @contextmanager
     def _connection(self, write: bool = False):
@@ -194,6 +213,16 @@ class SQLiteSharedState:
                 for p in range(PARTITIONS)
             ]
 
+    def keys(self, namespace: str) -> list[str]:
+        with self._connection() as conn:
+            return [
+                row[0]
+                for row in conn.execute(
+                    "SELECT key FROM kv WHERE namespace=? AND expires>?",
+                    (namespace, time.time()),
+                )
+            ]
+
     def get(self, namespace: str, key: str) -> Any:
         with self._connection() as conn:
             row = conn.execute(
@@ -244,3 +273,28 @@ class SQLiteSharedState:
                 return max(1, math.ceil((oldest or now) + window - now))
             conn.execute("INSERT INTO limits VALUES (?,?,?)", (key, now, now + window))
             return None
+
+
+_store_lock = threading.Lock()
+_store_url: str | None = None
+_store: SharedState | None = None
+
+
+def get_shared_state() -> SharedState:
+    """Resolve the deployment store. The environment is a raw URL override."""
+    from src.config.app import CONFIG
+    from src.config.models import get_tracker_home
+
+    url = os.environ.get("TOKENAGE_QUEUE_URL") or (CONFIG.get("queue") or {}).get("url")
+    url = url or f"sqlite:///{Path(get_tracker_home()) / 'state.db'}"
+    if not isinstance(url, str) or not url.startswith("sqlite:///"):
+        # Do not include a URL: it may contain credentials.
+        raise ValueError(
+            "Unsupported queue URL scheme; this release supports sqlite:///"
+        )
+    global _store_url, _store
+    with _store_lock:
+        if url != _store_url or _store is None:
+            _store = SQLiteSharedState(os.path.expanduser(url[10:]))
+            _store_url = url
+        return _store

@@ -14,3 +14,13 @@ def expand_path(path: str) -> str:
 
 def get_tracker_home() -> str:
     return expand_path(os.environ.get(TRACKER_HOME_ENV_VAR, DEFAULT_TRACKER_HOME))
+
+
+def get_config_path(path: str | None = None) -> str:
+    if path:
+        return expand_path(path)
+    return expand_path(
+        os.environ.get(
+            "TOKENAGE_CONFIG", os.path.join(get_tracker_home(), "config.yaml")
+        )
+    )

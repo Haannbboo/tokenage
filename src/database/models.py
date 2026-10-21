@@ -193,12 +193,13 @@ class Usage(Base):
     base_url: Mapped[BaseUrl | None] = relationship(back_populates="usages")
 
 
-class UsageDaily(Base):
-    __tablename__ = "usage_daily"
+class UsageHourly(Base):
+    __tablename__ = "usage_hourly"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
-    date: Mapped[str] = mapped_column(String, nullable=False)
+    # UTC hour start, epoch seconds (usage.ts // 3_600_000_000 * 3600).
+    hour: Mapped[int] = mapped_column(BigInteger, nullable=False)
     provider: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
     client_source: Mapped[str] = mapped_column(
@@ -267,13 +268,13 @@ class UsageDaily(Base):
 
 
 Index(
-    "uq_usage_daily",
-    UsageDaily.date,
-    UsageDaily.provider,
-    UsageDaily.model,
-    UsageDaily.client_source,
-    UsageDaily.user_id,
-    UsageDaily.device_id,
+    "uq_usage_hourly",
+    UsageHourly.user_id,
+    UsageHourly.hour,
+    UsageHourly.provider,
+    UsageHourly.model,
+    UsageHourly.client_source,
+    UsageHourly.device_id,
     unique=True,
 )
 

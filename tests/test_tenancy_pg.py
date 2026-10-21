@@ -17,11 +17,11 @@ def _table_column_names(engine, table_name: str) -> set[str]:
     return {c["name"] for c in inspect(engine).get_columns(table_name)}
 
 
-def _daily_row(engine):
+def _hourly_row(engine):
     with engine.connect() as connection:
         return connection.execute(
             text(
-                "SELECT user_id, request_count, prompt_tokens FROM usage_daily "
+                "SELECT user_id, request_count, prompt_tokens FROM usage_hourly "
                 "ORDER BY id"
             )
         ).all()
@@ -57,7 +57,7 @@ def _make_usage(*, user_id: str = "u0", **overrides):
 
 def _seed_users(engine, *user_ids: str) -> None:
     # _make_usage rows reference device "test-device"; seed it under the first
-    # user so the usage/usage_daily FK resolves.
+    # user so the usage/usage_hourly FK resolves.
     with engine.begin() as connection:
         for user_id in user_ids:
             connection.execute(
@@ -81,16 +81,14 @@ def test_fresh_migrate_creates_tenancy_shapes(pg_db, pg_engine):
 
     migrate_database(pg_db)
 
-    for table in ("usage", "usage_daily", "sessions", "tool_calls", "evaluation_jobs"):
+    for table in ("usage", "usage_hourly", "sessions", "tool_calls", "evaluation_jobs"):
         columns = {c["name"]: c for c in inspect(pg_engine).get_columns(table)}
         assert columns["user_id"]["nullable"] is False
 
-    daily_indexes = {
-        index["name"]: index for index in inspect(pg_engine).get_indexes("usage_daily")
+    hourly_indexes = {
+        index["name"]: index for index in inspect(pg_engine).get_indexes("usage_hourly")
     }
-    assert daily_indexes["uq_usage_daily"]["unique"]
-    assert "uq_usage_daily_local" not in daily_indexes
-    assert "uq_usage_daily_user" not in daily_indexes
+    assert hourly_indexes["uq_usage_hourly"]["unique"]
 
     for table, index_name in [
         ("usage", "ix_usage_user_id"),
@@ -106,15 +104,14 @@ def test_fresh_migrate_creates_tenancy_shapes(pg_db, pg_engine):
 
 
 def test_migrate_tightens_a_nullable_tenancy_schema(pg_db, pg_engine):
-    """A pre-NOT-NULL database: nullable user_id, partial usage_daily indexes,
-    no sessions FK. migrate_database converges it and is then a no-op."""
+    """A pre-NOT-NULL database: nullable user_id, no sessions FK. migrate_database converges it and is then a no-op."""
     from src.schema_migrations import migrate_database
 
     migrate_database(pg_db)
     with pg_engine.begin() as connection:
         for table in (
             "usage",
-            "usage_daily",
+            "usage_hourly",
             "sessions",
             "tool_calls",
             "evaluation_jobs",
@@ -127,45 +124,38 @@ def test_migrate_tightens_a_nullable_tenancy_schema(pg_db, pg_engine):
                 connection.execute(
                     text(f'ALTER TABLE sessions DROP CONSTRAINT "{fk["name"]}"')
                 )
-        connection.execute(text("DROP INDEX uq_usage_daily"))
-        connection.execute(
-            text(
-                "CREATE UNIQUE INDEX uq_usage_daily_local ON usage_daily "
-                "(date, provider, model, client_source) WHERE user_id IS NULL"
-            )
-        )
 
     changes = set(migrate_database(pg_db))
 
     assert "sessions.user_id_fk" in changes
     assert "usage.user_id_not_null" in changes
-    assert "usage_daily.drop_uq_usage_daily_local" in changes
-    assert "usage_daily.uq_usage_daily" in changes
-    for table in ("usage", "usage_daily", "sessions", "tool_calls", "evaluation_jobs"):
+    for table in ("usage", "usage_hourly", "sessions", "tool_calls", "evaluation_jobs"):
         columns = {c["name"]: c for c in inspect(pg_engine).get_columns(table)}
         assert columns["user_id"]["nullable"] is False
     assert migrate_database(pg_db) == []
 
 
-def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
+def test_upsert_hourly_aggregate_on_conflict_sums(pg_db, pg_engine):
     _seed_users(pg_engine, "u0", "u1")
 
-    _upsert_daily(_make_usage(), db_path=pg_db)
-    _upsert_daily(
+    _upsert_hourly(_make_usage(), db_path=pg_db)
+    _upsert_hourly(
         _make_usage(prompt_tokens=20, completion_tokens=10, total_tokens=30),
         db_path=pg_db,
     )
 
-    rows = _daily_row(pg_engine)
+    rows = _hourly_row(pg_engine)
     assert len(rows) == 1
     assert rows[0].user_id == "u0"
     assert rows[0].request_count == 2
     assert rows[0].prompt_tokens == 120
 
-    _upsert_daily(_make_usage(user_id="u1", prompt_tokens=7), db_path=pg_db)
-    _upsert_daily(_make_usage(user_id="u1", prompt_tokens=1, status=429), db_path=pg_db)
+    _upsert_hourly(_make_usage(user_id="u1", prompt_tokens=7), db_path=pg_db)
+    _upsert_hourly(
+        _make_usage(user_id="u1", prompt_tokens=1, status=429), db_path=pg_db
+    )
 
-    rows = _daily_row(pg_engine)
+    rows = _hourly_row(pg_engine)
     assert len(rows) == 2
     by_user = {row.user_id: row for row in rows}
     assert by_user["u0"].request_count == 2
@@ -174,13 +164,13 @@ def test_upsert_daily_aggregate_on_conflict_sums(pg_db, pg_engine):
     assert by_user["u1"].prompt_tokens == 8
 
 
-def test_upsert_daily_aggregate_concurrent_writes_sum(pg_db, pg_engine):
+def test_upsert_hourly_aggregate_concurrent_writes_sum(pg_db, pg_engine):
     _seed_users(pg_engine, "u0")
 
     thread_count = 8
 
     def worker():
-        _upsert_daily(
+        _upsert_hourly(
             _make_usage(prompt_tokens=1, completion_tokens=0, total_tokens=1),
             db_path=pg_db,
         )
@@ -191,7 +181,7 @@ def test_upsert_daily_aggregate_concurrent_writes_sum(pg_db, pg_engine):
     for thread in threads:
         thread.join()
 
-    rows = _daily_row(pg_engine)
+    rows = _hourly_row(pg_engine)
     assert len(rows) == 1
     assert rows[0].request_count == thread_count
     assert rows[0].prompt_tokens == thread_count
@@ -235,12 +225,12 @@ def test_session_upsert_isolates_tenants_and_fails_cleanly_on_collision(
     assert row.user_id == "u1"
 
 
-def _upsert_daily(usage, db_path=None):
+def _upsert_hourly(usage, db_path=None):
     from sqlalchemy.orm import Session
 
     from src.database import get_engine
-    from src.database.usage import upsert_daily_aggregate
+    from src.database.usage import upsert_hourly_aggregate
 
     with Session(get_engine(db_path)) as session:
-        upsert_daily_aggregate(session, usage)
+        upsert_hourly_aggregate(session, usage)
         session.commit()

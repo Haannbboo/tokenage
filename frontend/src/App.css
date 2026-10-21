@@ -1605,16 +1605,6 @@
   opacity: 0.7;
 }
 
-.status-link {
-  cursor: pointer;
-  text-decoration: underline;
-  transition: opacity 0.2s;
-}
-
-.status-link:hover {
-  opacity: 0.7;
-}
-
 /* Auth: user identity (navbar settings tab, settings devices panel) */
 .user-avatar {
   width: 28px;

@@ -329,7 +329,7 @@ def test_usage_summary_endpoint_passes_client_source(api_module, monkeypatch):
         captured.update(kwargs)
         return []
 
-    monkeypatch.setattr(api_module, "summarize_usage_daily", fake_summary)
+    monkeypatch.setattr(api_module, "summarize_usage_by_model", fake_summary)
 
     response = TestClient(api_module.app).get(
         "/usage/summary", params={"client_source": "opencode"}
@@ -338,7 +338,7 @@ def test_usage_summary_endpoint_passes_client_source(api_module, monkeypatch):
     assert captured["client_source"] == "opencode"
 
 
-def test_usage_daily_endpoint_passes_params(api_module, monkeypatch):
+def test_usage_by_period_endpoint_passes_params(api_module, monkeypatch):
     captured = {}
 
     def fake_aggregate(**kwargs):
@@ -445,7 +445,6 @@ def test_usage_by_tool_endpoint(api_module, monkeypatch):
         params={
             "since": "2026-01-01",
             "client_source": "claude-code",
-            "status_429": "true",
         },
     )
     assert response.status_code == 200
@@ -456,9 +455,6 @@ def test_usage_by_tool_endpoint(api_module, monkeypatch):
     ]
     assert captured["since"] == "2026-01-01"
     assert captured["client_source"] == "claude-code"
-    assert captured["status_429"] is True
-    assert captured["status_4xx"] is False
-    assert captured["status_5xx"] is False
 
 
 def test_usage_by_provider_endpoint_includes_avg_effective_price_per_million(
@@ -584,6 +580,7 @@ def test_daily_by_dimension_endpoint_passes_all_filters(api_module, monkeypatch)
             "provider": "anthropic",
             "model": "claude-sonnet-4-6",
             "client_source": "claude-code",
+            "tz_offset": "-07:00",
         },
     )
     assert response.status_code == 200
@@ -596,6 +593,7 @@ def test_daily_by_dimension_endpoint_passes_all_filters(api_module, monkeypatch)
         "model": "claude-sonnet-4-6",
         "client_source": "claude-code",
         "device_id": None,
+        "tz_offset": "-07:00",
     }
 
 

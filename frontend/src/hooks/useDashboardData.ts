@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { DailyUsage, UsageSummary } from '../types'
-import { getSinceDate, getTimezoneOffset, resolveTimezone, FIXED_PROVIDER_COLORS, PALETTE, netThroughput } from '../utils'
+import { customBound, getSinceDate, getTimezoneOffset, resolveTimezone, FIXED_PROVIDER_COLORS, PALETTE, netThroughput } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -39,16 +39,12 @@ export function useDashboardData() {
   }, [summary]);
 
   const applyFilterParams = useCallback((url: URL) => {
-    const since = dateRange === 'custom' ? customSince : getSinceDate(dateRange)
-    const until = dateRange === 'custom' ? customUntil : null
+    const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
+    const until = dateRange === 'custom' ? customBound(customUntil) : null
 
     if (activeFilter) {
       if (activeFilter.provider) url.searchParams.set('provider', activeFilter.provider)
       if (activeFilter.model) url.searchParams.set('model', activeFilter.model)
-      if (activeFilter.only_failed) url.searchParams.set('only_failed', 'true')
-      if (activeFilter.status_429) url.searchParams.set('status_429', 'true')
-      if (activeFilter.status_4xx) url.searchParams.set('status_4xx', 'true')
-      if (activeFilter.status_5xx) url.searchParams.set('status_5xx', 'true')
     }
     if (activeSource) url.searchParams.set('client_source', activeSource)
     if (activeDevice) url.searchParams.set('device_id', activeDevice)
@@ -62,12 +58,8 @@ export function useDashboardData() {
     model: activeFilter?.model,
     client_source: activeSource,
     device_id: activeDevice,
-    since: dateRange === 'custom' ? customSince : getSinceDate(dateRange),
-    until: dateRange === 'custom' ? customUntil : null,
-    only_failed: activeFilter?.only_failed,
-    status_429: activeFilter?.status_429,
-    status_4xx: activeFilter?.status_4xx,
-    status_5xx: activeFilter?.status_5xx
+    since: dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange),
+    until: dateRange === 'custom' ? customBound(customUntil) : null,
   }), [activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil])
 
   // Dashboard fetch
@@ -96,10 +88,6 @@ export function useDashboardData() {
         if (activeFilter) {
           if (activeFilter.provider) heatmapUrl.searchParams.set('provider', activeFilter.provider)
           if (activeFilter.model) heatmapUrl.searchParams.set('model', activeFilter.model)
-          if (activeFilter.only_failed) heatmapUrl.searchParams.set('only_failed', 'true')
-          if (activeFilter.status_429) heatmapUrl.searchParams.set('status_429', 'true')
-          if (activeFilter.status_4xx) heatmapUrl.searchParams.set('status_4xx', 'true')
-          if (activeFilter.status_5xx) heatmapUrl.searchParams.set('status_5xx', 'true')
         }
         if (activeSource) heatmapUrl.searchParams.set('client_source', activeSource)
         if (activeDevice) heatmapUrl.searchParams.set('device_id', activeDevice)
@@ -142,8 +130,8 @@ export function useDashboardData() {
   // Sources fetch
   useEffect(() => {
     const controller = new AbortController()
-    const since = dateRange === 'custom' ? customSince : getSinceDate(dateRange)
-    const until = dateRange === 'custom' ? customUntil : null
+    const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
+    const until = dateRange === 'custom' ? customBound(customUntil) : null
     const url = new URL('/usage/sources', window.location.origin)
     if (since) url.searchParams.set('since', since)
     if (until) url.searchParams.set('until', until)
@@ -165,7 +153,6 @@ export function useDashboardData() {
     const totalTokens = data.reduce((sum, row) => sum + (row.total_tokens || 0), 0)
     const totalCost = data.reduce((sum, row) => sum + (row.total_cost_usd || 0), 0)
     const latencySum = data.reduce((sum, row) => sum + (row.latency_sum_ms || 0), 0)
-    const toolDurationSum = data.reduce((sum, row) => sum + (row.tool_duration_sum_ms || 0), 0)
 
     return {
       requests,
@@ -177,7 +164,7 @@ export function useDashboardData() {
       totalCost,
       avgEffectivePrice: requests === 0 ? 0 : totalCost / requests,
       avgEffectivePricePerMillion: totalTokens === 0 ? 0 : (totalCost / totalTokens) * 1_000_000,
-      avgThroughput: netThroughput(completionTokens, latencySum, toolDurationSum),
+      avgThroughput: netThroughput(completionTokens, latencySum),
       avgTokensPerRequest: requests === 0 ? 0 : totalTokens / requests
     }
   }, [summary])

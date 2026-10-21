@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { UsageRow, DateRangeOption, ActiveFilter } from '../types'
 import type { RequestLogColumnId } from './useRequestLogColumns'
-import { getSinceDate } from '../utils'
+import { customBound, getSinceDate } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -79,8 +79,8 @@ export function useLogsData(opts: {
       setError(null)
       setLogsLoading(true)
       try {
-        const since = opts.dateRange === 'custom' ? opts.customSince : getSinceDate(opts.dateRange)
-        const until = opts.dateRange === 'custom' ? opts.customUntil : null
+        const since = opts.dateRange === 'custom' ? customBound(opts.customSince) : getSinceDate(opts.dateRange)
+        const until = opts.dateRange === 'custom' ? customBound(opts.customUntil) : null
 
         const usageUrl = new URL('/usage', window.location.origin)
         usageUrl.searchParams.set('limit', String(limit))
@@ -88,10 +88,6 @@ export function useLogsData(opts: {
         if (opts.activeFilter) {
           if (opts.activeFilter.provider) usageUrl.searchParams.set('provider', opts.activeFilter.provider)
           if (opts.activeFilter.model) usageUrl.searchParams.set('model', opts.activeFilter.model)
-          if (opts.activeFilter.only_failed) usageUrl.searchParams.set('only_failed', 'true')
-          if (opts.activeFilter.status_429) usageUrl.searchParams.set('status_429', 'true')
-          if (opts.activeFilter.status_4xx) usageUrl.searchParams.set('status_4xx', 'true')
-          if (opts.activeFilter.status_5xx) usageUrl.searchParams.set('status_5xx', 'true')
         }
         if (opts.activeSource) usageUrl.searchParams.set('client_source', opts.activeSource)
         if (opts.sessionFilter) usageUrl.searchParams.set('session_id', opts.sessionFilter)
@@ -104,10 +100,6 @@ export function useLogsData(opts: {
         if (opts.activeFilter) {
           if (opts.activeFilter.provider) countUrl.searchParams.set('provider', opts.activeFilter.provider)
           if (opts.activeFilter.model) countUrl.searchParams.set('model', opts.activeFilter.model)
-          if (opts.activeFilter.only_failed) countUrl.searchParams.set('only_failed', 'true')
-          if (opts.activeFilter.status_429) countUrl.searchParams.set('status_429', 'true')
-          if (opts.activeFilter.status_4xx) countUrl.searchParams.set('status_4xx', 'true')
-          if (opts.activeFilter.status_5xx) countUrl.searchParams.set('status_5xx', 'true')
         }
         if (opts.activeSource) countUrl.searchParams.set('client_source', opts.activeSource)
         if (opts.sessionFilter) countUrl.searchParams.set('session_id', opts.sessionFilter)

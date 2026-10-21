@@ -50,29 +50,18 @@ describe('RequestTimeline per-tool color coding', () => {
     assert.match(timeline, /label:\s*t\('Output generation'\)/)
     assert.match(timeline, /className="request-timeline-total"/)
     assert.match(timeline, /formatLatency\(displayTotal\)/)
-    // Total reports end-to-end latency when known (session builds prefer latency
-    // over the drawn axis, which tools can overrun).
-    assert.match(timeline, /const displayTotal = latency > 0 \? latency : totalMs/)
+    // Total is the drawn span: generation plus the tools that followed it.
+    assert.match(timeline, /const displayTotal = totalMs/)
   })
 
-  test('generation ends at the first measured tool and residual time is Other', () => {
-    assert.match(timeline, /const hasMeasuredToolTimeline = hasExplicitStart && toolsWithTiming.length > 0/)
-    assert.match(timeline, /const generationEnd = hasMeasuredToolTimeline/)
-    assert.match(timeline, /const genDuration = Math\.max\(0, generationEnd - genStart\)/)
-    assert.match(timeline, /const otherSegments: TimelineSegment\[\]/)
-    assert.match(timeline, /id: 'other'/)
-    assert.match(timeline, /label: t\('Other'\)/)
-    // Sources without measured starts retain the existing complement fallback.
-    assert.match(timeline, /const toolBusyMs = mergedToolBusy\.reduce/)
-    assert.match(timeline, /const genDuration = Math\.max\(0, totalMs - genStart - toolBusyMs\)/)
-  })
-
-  test('prefers exact row-relative starts over the timestamp heuristic', () => {
-    // API-provided start_ms keeps parallel tools overlapping; the timestamp
-    // heuristic is only a fallback for sources without explicit starts.
-    assert.match(timeline, /const hasExplicitStart = timedTools\.every\(\(tc\) => tc\.start_ms != null\)/)
-    assert.match(timeline, /if \(hasDistinctTs && !hasExplicitStart\)/)
-    assert.match(timeline, /const start = Math\.max\(0, tc\.start_ms\)/)
+  test('latency is TTFT + generation; tools are laid out after it', () => {
+    // Every source reports latency without tool execution, so generation fills
+    // [ttft, latency] and tools start where generation ends.
+    assert.match(timeline, /const genDuration = Math\.max\(0, latency - genStart\)/)
+    assert.match(timeline, /const toolsStart = Math\.max\(latency, ttft\)/)
+    assert.match(timeline, /const start = toolsStart \+ Math\.max\(0, tc\.ts! - minTs\)/)
+    assert.doesNotMatch(timeline, /start_ms != null/)
+    assert.doesNotMatch(timeline, /toolBusyMs/)
   })
 
   test('sorts rows by their calculated start time', () => {

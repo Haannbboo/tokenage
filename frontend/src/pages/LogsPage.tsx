@@ -13,7 +13,7 @@ import { RequestTimeline, type TimelineTool } from '../components/RequestTimelin
 import { t } from '../i18n/index.ts'
 import {
   formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime,
-  value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, resolveTimezone, ToolBadge, getSinceDate, formatModelName, latencyIncludesToolTime,
+  value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, resolveTimezone, ToolBadge, getSinceDate, formatModelName, customBound,
 } from '../utils'
 import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
 import type { DateRangeOption } from '../types'
@@ -72,8 +72,8 @@ export function LogsPage() {
   const [availableTools, setAvailableTools] = useState<string[]>([])
   useEffect(() => {
     const controller = new AbortController()
-    const since = dateRange === 'custom' ? customSince : getSinceDate(dateRange)
-    const until = dateRange === 'custom' ? customUntil : null
+    const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
+    const until = dateRange === 'custom' ? customBound(customUntil) : null
     const url = new URL('/usage/tools', window.location.origin)
     if (since) url.searchParams.set('since', since)
     if (until) url.searchParams.set('until', until)
@@ -590,14 +590,10 @@ export function LogsPage() {
           <td style={{ padding: '8px', fontWeight: 600 }}>
             {(() => {
               const tokens = row.completion_tokens ?? row.total_tokens
-              const toolMs = row.tool_duration_ms ?? 0
               const latency = value(row.latency_ms)
-              const excluded = latencyIncludesToolTime(row.client_source) && toolMs > 0 && latency > toolMs
-              const netMs = excluded ? latency - toolMs : latency
-              const speed = formatSpeed(tokens, netMs)
-              const gross = excluded ? formatSpeed(tokens, latency) : ''
+              const speed = formatSpeed(tokens, latency)
               return speed ? (
-                <span title={`${formatNumber(tokens)} tokens / ${formatLatency(netMs)}${excluded ? ` gen (excl. ${formatLatency(toolMs)} tools, gross ${gross} / ${formatLatency(latency)})` : ''}`}>
+                <span title={`${formatNumber(tokens)} tokens / ${formatLatency(latency)}`}>
                   <span>{speed.split(' ')[0]}</span>
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400, marginLeft: '3px' }}>{speed.split(' ')[1]}</span>
                 </span>

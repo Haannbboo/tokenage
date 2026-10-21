@@ -123,19 +123,9 @@ export function formatSpeed(tokens: number | null | undefined, latencyMs: number
 export function netThroughput(
   completionTokens: number | null | undefined,
   latencyMs: number | null | undefined,
-  toolMs: number | null | undefined,
 ): number {
-  const net = Math.max(value(latencyMs) - value(toolMs), 0)
-  return net > 0 ? (value(completionTokens) * 1000) / net : 0
-}
-
-// Sources whose recorded latency is the full assistant-message lifetime and so
-// already includes tool execution time; mirrors the backend
-// TOOL_DURATION_IN_LATENCY_SOURCES. Only these net tool time out of throughput.
-const TOOL_DURATION_IN_LATENCY_SOURCES = new Set(['opencode', 'kilo'])
-
-export function latencyIncludesToolTime(clientSource?: string | null): boolean {
-  return !!clientSource && TOOL_DURATION_IN_LATENCY_SOURCES.has(clientSource)
+  const ms = value(latencyMs)
+  return ms > 0 ? (value(completionTokens) * 1000) / ms : 0
 }
 
 type DurationFormatOptions = {
@@ -175,6 +165,11 @@ export function formatTime(input: string | number, tz?: string) {
   }
   if (tz) options.timeZone = tz
   return new Intl.DateTimeFormat(undefined, options).format(date)
+}
+
+// The custom range is datetime-local (no zone); the API reads naive bounds as UTC.
+export function customBound(local: string): string {
+  return local && new Date(local).toISOString()
 }
 
 export function getSinceDate(option: DateRangeOption): string | null {
@@ -468,7 +463,6 @@ export type SessionInsight = {
   value: string
   detail: string
   tone?: 'warning' | 'danger' | 'success'
-  onlyFailed?: boolean
 }
 
 export function buildSessionInsights(sessions: import('./types').SessionSummary[]): SessionInsight[] {
@@ -536,7 +530,6 @@ export function buildSessionInsights(sessions: import('./types').SessionSummary[
       value: `${formatNumber(reliabilityWatch.failed_requests)} failed`,
       detail: `${reliabilityWatch.request_count > 0 ? Math.round((reliabilityWatch.successful_requests / reliabilityWatch.request_count) * 100) : 0}% success rate`,
       tone: 'danger',
-      onlyFailed: true,
     })
   }
 

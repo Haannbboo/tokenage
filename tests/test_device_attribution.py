@@ -47,12 +47,12 @@ def _usage(db, user_id, device_id, **kw):
     return db.Usage(**fields)
 
 
-def _daily(fresh_db):
+def _hourly(fresh_db):
     from src.database import get_engine
-    from src.database.models import UsageDaily
+    from src.database.models import UsageHourly
 
     with Session(get_engine(fresh_db.db_path)) as s:
-        return s.execute(select(UsageDaily)).scalars().all()
+        return s.execute(select(UsageHourly)).scalars().all()
 
 
 def test_ingest_report_attaches_token_device(api_module, fresh_db):
@@ -76,7 +76,7 @@ def test_ingest_report_attaches_token_device(api_module, fresh_db):
 
     with Session(get_engine(fresh_db.db_path)) as s:
         assert s.execute(select(Usage.device_id)).scalars().all() == [device_id]
-    assert [d.device_id for d in _daily(fresh_db)] == [device_id]
+    assert [d.device_id for d in _hourly(fresh_db)] == [device_id]
 
 
 def test_otlp_record_attaches_token_device(otlp_module, fresh_db):
@@ -128,17 +128,17 @@ def test_otlp_record_attaches_token_device(otlp_module, fresh_db):
         "/v1/logs", json=body, headers={"x-tokenage-token": token}
     )
     assert r.status_code == 200
-    assert [d.device_id for d in _daily(fresh_db)] == [device_id]
+    assert [d.device_id for d in _hourly(fresh_db)] == [device_id]
 
 
 def test_upsert_requires_device_id(fresh_db):
     db = fresh_db.database_module
     usage = _usage(db, "u1", None)
     with pytest.raises(ValueError, match="device_id"):
-        _upsert_daily(usage, db_path=fresh_db.db_path)
+        _upsert_hourly(usage, db_path=fresh_db.db_path)
     with pytest.raises(ValueError, match="device_id"):
         db.log_usage(usage, db_path=fresh_db.db_path)
-    assert _daily(fresh_db) == []
+    assert _hourly(fresh_db) == []
 
 
 def test_record_usage_requires_device_id(fresh_db):
@@ -150,11 +150,11 @@ def test_record_usage_requires_device_id(fresh_db):
         )
 
 
-def test_daily_rows_split_per_device_and_increment(fresh_db):
+def test_hourly_rows_split_per_device_and_increment(fresh_db):
     db = fresh_db.database_module
     for device in ("d1", "d2", "d1"):
         db.log_usage(_usage(db, "u1", device), db_path=fresh_db.db_path)
-    rows = {d.device_id: d.request_count for d in _daily(fresh_db)}
+    rows = {d.device_id: d.request_count for d in _hourly(fresh_db)}
     assert rows == {"d1": 2, "d2": 1}
 
 
@@ -169,9 +169,9 @@ def test_device_filter_and_unknown_bucket(fresh_db):
     with Session(get_engine(path)) as s:
         s.add(_usage(db, "u1", None))
         s.add(
-            db.UsageDaily(
+            db.UsageHourly(
                 user_id="u1",
-                date="2026-04-17",
+                hour=1776384000,  # 2026-04-17T00:00Z
                 provider="p",
                 model="m",
                 client_source="claude-code",
@@ -181,13 +181,14 @@ def test_device_filter_and_unknown_bucket(fresh_db):
         )
         s.commit()
 
+    # Unbounded counts read usage_hourly, whatever the raw table holds.
+    assert db.count_usage(user_id="u1", db_path=path) == 6
+    assert db.count_usage(user_id="u1", device_id="d1", db_path=path) == 1
+    assert db.count_usage(user_id="u1", device_id="unknown", db_path=path) == 4
+    # A range counts raw usage rows exactly, as the Logs page lists them.
     span = dict(since="2026-04-10T00:00:00Z", until="2026-04-20T00:00:00Z")
-    assert db.count_usage(user_id="u1", db_path=path, **span) == 6
-    assert db.count_usage(user_id="u1", device_id="d1", db_path=path, **span) == 1
-    assert db.count_usage(user_id="u1", device_id="unknown", db_path=path, **span) == 4
-    # sub-2-day range reads the raw usage table (one NULL-device row there)
-    day = dict(since="2026-04-17T00:00:00Z", until="2026-04-17T12:00:00Z")
-    assert db.count_usage(user_id="u1", device_id="unknown", db_path=path, **day) == 1
+    assert db.count_usage(user_id="u1", db_path=path, **span) == 3
+    assert db.count_usage(user_id="u1", device_id="unknown", db_path=path, **span) == 1
     by_device = {
         r["dimension"]: r["requests"]
         for r in db.aggregate_daily_by_dimension(
@@ -195,7 +196,7 @@ def test_device_filter_and_unknown_bucket(fresh_db):
         )
     }
     assert by_device == {"d1": 1, "d2": 1, None: 4}
-    summary = db.summarize_usage_daily(
+    summary = db.summarize_usage_by_model(
         user_id="u1", device_id="d2", db_path=path, **span
     )
     assert sum(r["requests"] for r in summary) == 1
@@ -237,32 +238,6 @@ def test_auth_devices_include_revoked(api_module, fresh_db):
     listed = client.get("/auth/devices", params={"include_revoked": "true"}).json()
     revoked = [d for d in listed["devices"] if d["id"] == device_id]
     assert revoked and revoked[0]["revoked_at"] is not None
-
-
-def test_migrate_adds_device_id_and_swaps_daily_index(fresh_db):
-    sm = fresh_db.schema_migrations_module
-    from src.database import get_engine, text
-
-    engine = get_engine(fresh_db.db_path)
-    with engine.begin() as conn:
-        conn.execute(text("DROP INDEX uq_usage_daily"))
-        conn.execute(
-            text(
-                "CREATE UNIQUE INDEX uq_usage_daily ON usage_daily "
-                "(date, provider, model, client_source, user_id)"
-            )
-        )
-    changes = sm.migrate_database(fresh_db.db_path)
-    assert "usage_daily.drop_uq_usage_daily_without_device" in changes
-    assert "usage_daily.uq_usage_daily" in changes
-    from sqlalchemy import inspect
-
-    cols = next(
-        i["column_names"]
-        for i in inspect(engine).get_indexes("usage_daily")
-        if i["name"] == "uq_usage_daily"
-    )
-    assert "device_id" in cols
 
 
 def test_migrate_drops_usage_client_ip(fresh_db):
@@ -334,12 +309,12 @@ def test_duplicate_merge_still_happens_on_same_device(fresh_db):
     assert _usage_rows(fresh_db) == ["d1"]
 
 
-def _upsert_daily(usage, db_path=None):
+def _upsert_hourly(usage, db_path=None):
     from sqlalchemy.orm import Session
 
     from src.database import get_engine
-    from src.database.usage import upsert_daily_aggregate
+    from src.database.usage import upsert_hourly_aggregate
 
     with Session(get_engine(db_path)) as session:
-        upsert_daily_aggregate(session, usage)
+        upsert_hourly_aggregate(session, usage)
         session.commit()

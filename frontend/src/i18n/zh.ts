@@ -247,7 +247,6 @@ export const zh: Record<string, string> = {
   'Biggest Token Burner': '最大令牌消耗',
   'Best Cache Saver': '最佳缓存节省',
   'View in Logs': '在日志中查看',
-  'View failed requests in logs': '在日志中查看失败请求',
   'Hide no-op': '隐藏无效会话',
   'Hide no-op and single-request sessions': '隐藏无操作和单请求会话',
   'Failed to fetch session data': '获取会话数据失败',
@@ -300,7 +299,6 @@ export const zh: Record<string, string> = {
   'Heuristic': '启发式',
   'LLM': 'LLM',
 
-  'Failed Requests': '失败请求',
 
   'Service Version': '服务版本',
   'Version': '版本',

@@ -8,7 +8,6 @@ export type TimelineTool = {
   duration_ms?: number | null
   ts?: number
   is_parallel?: boolean
-  start_ms?: number | null
 }
 
 export type TimelineCustomComponent = {
@@ -94,68 +93,36 @@ export function buildTimelineData({
 
   const toolsWithTiming: ToolWithTiming[] = []
 
-  // Exact row-relative starts (when the API provides them) keep tools that ran
-  // concurrently overlapping, so they take precedence over the ts heuristic.
-  const hasExplicitStart = timedTools.every((tc) => tc.start_ms != null)
-
-  // Check if tools have distinct timestamps
+  // Latency covers TTFT + output generation only (every source reports it
+  // without tool execution), and a tool runs after the step that called it, so
+  // tools are laid out from the end of generation.
+  const toolsStart = Math.max(latency, ttft)
   const timestamps = timedTools.map((t) => t.ts).filter((ts): ts is number => ts != null)
   const hasDistinctTs =
     timestamps.length === timedTools.length &&
     timestamps.length > 1 &&
     new Set(timestamps).size > 1
+  const sameTs = timestamps.length === timedTools.length && timestamps.length > 1 && !hasDistinctTs
 
-  if (hasDistinctTs && !hasExplicitStart) {
+  if (hasDistinctTs) {
     const minTs = Math.min(...timestamps)
     for (const tc of timedTools) {
       const dur = tc.duration_ms ?? 0
-      const start = ttft + Math.max(0, tc.ts! - minTs)
-      toolsWithTiming.push({
-        ...tc,
-        startMs: start,
-        endMs: start + dur,
-        durationMs: dur,
-      })
+      const start = toolsStart + Math.max(0, tc.ts! - minTs)
+      toolsWithTiming.push({ ...tc, startMs: start, endMs: start + dur, durationMs: dur })
     }
   } else {
-    // Check if tools have start_ms or explicit is_parallel
-    let currentOffset = ttft
+    let currentOffset = toolsStart
     for (const tc of timedTools) {
       const dur = tc.duration_ms ?? 0
-      if (tc.start_ms != null) {
-        const start = Math.max(0, tc.start_ms)
-        toolsWithTiming.push({
-          ...tc,
-          startMs: start,
-          endMs: start + dur,
-          durationMs: dur,
-        })
-      } else if (tc.is_parallel) {
-        // Parallel tools share the current offset
-        toolsWithTiming.push({
-          ...tc,
-          startMs: currentOffset,
-          endMs: currentOffset + dur,
-          durationMs: dur,
-        })
-      } else if (timestamps.length === timedTools.length && timestamps.length > 1 && new Set(timestamps).size === 1) {
-        // Tools recorded with identical start timestamps ran concurrently in parallel
-        toolsWithTiming.push({
-          ...tc,
-          startMs: currentOffset,
-          endMs: currentOffset + dur,
-          durationMs: dur,
-        })
-      } else {
-        // Sequential by default: each tool starts after previous finishes
-        toolsWithTiming.push({
-          ...tc,
-          startMs: currentOffset,
-          endMs: currentOffset + dur,
-          durationMs: dur,
-        })
-        currentOffset += dur
-      }
+      toolsWithTiming.push({
+        ...tc,
+        startMs: currentOffset,
+        endMs: currentOffset + dur,
+        durationMs: dur,
+      })
+      // Same-timestamp or flagged tools ran in parallel; others run in sequence.
+      if (!tc.is_parallel && !sameTs) currentOffset += dur
     }
   }
 
@@ -189,9 +156,8 @@ export function buildTimelineData({
   const toolMaxEnd =
     toolsWithTiming.length > 0 ? Math.max(...toolsWithTiming.map((t) => t.endMs)) : ttft
   const totalMs = Math.max(latency, toolMaxEnd, ttft)
-  // "Total" is the end-to-end latency when known; the axis may span further if
-  // tools overrun it.
-  const displayTotal = latency > 0 ? latency : totalMs
+  // "Total" is the drawn span: generation plus the tools that followed it.
+  const displayTotal = totalMs
 
   const rows: TimelineRowItem[] = []
 
@@ -288,127 +254,26 @@ export function buildTimelineData({
     }
   }
 
-  // 4. Output generation time
-  // Measured tool starts identify the model output preceding the first tool.
-  // Gaps after that are retained as an explicit Other interval rather than
-  // being mislabeled as another generation segment.
+  // 4. Output generation time: the rest of the latency after TTFT.
   const genStart = Math.max(0, Math.min(ttft, totalMs))
-  const hasMeasuredToolTimeline = hasExplicitStart && toolsWithTiming.length > 0
-  const generationEnd = hasMeasuredToolTimeline
-    ? Math.max(genStart, Math.min(totalMs, toolsWithTiming[0].startMs))
-    : totalMs
-  const clippedTools = toolsWithTiming
-    .map(
-      (t): [number, number] => [
-        Math.max(genStart, t.startMs),
-        Math.min(totalMs, t.endMs),
-      ],
-    )
-    .filter(([start, end]) => end > start)
-    .sort((a, b) => a[0] - b[0])
-  const mergedToolBusy: [number, number][] = []
-  for (const [start, end] of clippedTools) {
-    const last = mergedToolBusy[mergedToolBusy.length - 1]
-    if (last && start <= last[1]) {
-      last[1] = Math.max(last[1], end)
-    } else {
-      mergedToolBusy.push([start, end])
-    }
-  }
-
-  if (hasMeasuredToolTimeline) {
-    const genDuration = Math.max(0, generationEnd - genStart)
-    if (genDuration > 0) {
-      rows.push({
-        id: 'generation',
-        type: 'generation',
-        label: t('Output generation'),
-        startMs: genStart,
-        durationMs: genDuration,
-        segments: [
-          {
-            key: `generation:${genStart}`,
-            label: t('Output generation'),
-            startMs: genStart,
-            durationMs: genDuration,
-            color: GEN_COLOR,
-          },
-        ],
-      })
-    }
-
-    const otherSegments: TimelineSegment[] = []
-    let otherCursor = generationEnd
-    for (const [start, end] of mergedToolBusy) {
-      const clippedStart = Math.max(generationEnd, start)
-      const clippedEnd = Math.min(totalMs, end)
-      if (clippedEnd <= clippedStart) continue
-      if (clippedStart > otherCursor) {
-        otherSegments.push({
-          key: `other:${otherCursor}`,
-          label: t('Other'),
-          startMs: otherCursor,
-          durationMs: clippedStart - otherCursor,
-          color: '#94a3b8',
-        })
-      }
-      otherCursor = Math.max(otherCursor, clippedEnd)
-    }
-    if (totalMs > otherCursor) {
-      otherSegments.push({
-        key: `other:${otherCursor}`,
-        label: t('Other'),
-        startMs: otherCursor,
-        durationMs: totalMs - otherCursor,
-        color: '#94a3b8',
-      })
-    }
-    if (otherSegments.length > 0) {
-      rows.push({
-        id: 'other',
-        type: 'custom',
-        label: t('Other'),
-        startMs: otherSegments[0].startMs,
-        durationMs: otherSegments.reduce((sum, segment) => sum + segment.durationMs, 0),
-        segments: otherSegments,
-      })
-    }
-  } else {
-    const toolBusyMs = mergedToolBusy.reduce((sum, [start, end]) => sum + (end - start), 0)
-    const genDuration = Math.max(0, totalMs - genStart - toolBusyMs)
-    if (genDuration > 0) {
-      const genSegments: TimelineSegment[] = []
-      let cursor = genStart
-      for (const [start, end] of mergedToolBusy) {
-        if (start > cursor) {
-          genSegments.push({
-            key: `generation:${cursor}`,
-            label: t('Output generation'),
-            startMs: cursor,
-            durationMs: start - cursor,
-            color: GEN_COLOR,
-          })
-        }
-        cursor = Math.max(cursor, end)
-      }
-      if (totalMs > cursor) {
-        genSegments.push({
-          key: `generation:${cursor}`,
+  const genDuration = Math.max(0, latency - genStart)
+  if (genDuration > 0) {
+    rows.push({
+      id: 'generation',
+      type: 'generation',
+      label: t('Output generation'),
+      startMs: genStart,
+      durationMs: genDuration,
+      segments: [
+        {
+          key: `generation:${genStart}`,
           label: t('Output generation'),
-          startMs: cursor,
-          durationMs: totalMs - cursor,
+          startMs: genStart,
+          durationMs: genDuration,
           color: GEN_COLOR,
-        })
-      }
-      rows.push({
-        id: 'generation',
-        type: 'generation',
-        label: t('Output generation'),
-        startMs: genStart,
-        durationMs: genDuration,
-        segments: genSegments,
-      })
-    }
+        },
+      ],
+    })
   }
 
   // 5. Remaining extra components

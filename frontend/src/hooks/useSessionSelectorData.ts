@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { DateRangeOption, SessionSelectorRow } from '../types'
-import { getSinceDate } from '../utils'
+import { customBound, getSinceDate } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -21,8 +21,8 @@ export function useSessionSelectorData(opts: {
     async function fetchSessionSelectorData() {
       setError(null)
       try {
-        const since = opts.dateRange === 'custom' ? opts.customSince : getSinceDate(opts.dateRange)
-        const until = opts.dateRange === 'custom' ? opts.customUntil : null
+        const since = opts.dateRange === 'custom' ? customBound(opts.customSince) : getSinceDate(opts.dateRange)
+        const until = opts.dateRange === 'custom' ? customBound(opts.customUntil) : null
         const sessionsUrl = new URL('/sessions', window.location.origin)
         sessionsUrl.searchParams.set('view', 'selector')
         sessionsUrl.searchParams.set('sort_by', 'started')

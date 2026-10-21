@@ -646,3 +646,133 @@ def test_otlp_retry_resumes_at_failed_record(
                 text(f"SELECT sum({column}) FROM usage_hourly")
             ).scalar_one()
             assert usage == hourly
+
+
+@pytest.mark.parametrize("service", ["opencode", "codex_cli_rs", "claude-code"])
+def test_correlation_survives_transient_usage_failure(
+    api_module, fresh_db, monkeypatch, service
+):
+    from sqlalchemy.exc import OperationalError
+
+    import src.otlp as otlp
+    from src.auth import resolve_token
+    from src.auth.tokens import mint_token
+    from src.ingest_queue import Consumer
+    from src.shared_state import get_shared_state
+
+    token, user = mint_token(
+        "correlation-retry@example.com", kind="ingest", db_path=fresh_db.db_path
+    )
+    _, auth = resolve_token(token)
+    store = get_shared_state()
+    correlation = {
+        "message.id": "message",
+        "conversation.id": "conversation",
+        "prompt.id": "prompt",
+    }
+    tool_event = {
+        "opencode": "opencode.tool_decision",
+        "codex_cli_rs": "codex.tool_decision",
+        "claude-code": "tool_decision",
+    }[service]
+    events = [
+        {
+            **correlation,
+            "event.name": tool_event,
+            "call_id": "tool",
+            "tool_use_id": "tool",
+            "tool_name": "Bash",
+        }
+    ]
+    if service != "opencode":
+        events.append(
+            {
+                **correlation,
+                "event.name": "user_prompt"
+                if service == "claude-code"
+                else "codex.user_prompt",
+                "prompt_length": 42,
+            }
+        )
+    if service == "codex_cli_rs":
+        events.append(
+            {**correlation, "event.name": "codex.api_request", "duration_ms": 123}
+        )
+    _queue_otlp(store, user.id, auth.device_id, events, service)
+    consumer = Consumer(store)
+    assert consumer.drain() == 1
+    usage_event = {
+        "opencode": "opencode.message_completed",
+        "codex_cli_rs": "codex.sse_event",
+        "claude-code": "api_request",
+    }[service]
+    _queue_otlp(
+        store,
+        user.id,
+        auth.device_id,
+        [
+            {
+                **correlation,
+                "event.name": usage_event,
+                "event.kind": "response.completed",
+                "model": "test-model",
+                "input_token_count": 10,
+                "output_token_count": 5,
+                "input_tokens": 10,
+                "output_tokens": 5,
+            }
+        ],
+        service,
+    )
+    original = otlp.record_usage
+    failed = False
+
+    def flaky(**fields):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OperationalError("", {}, Exception("temporary failure"))
+        return original(**fields)
+
+    monkeypatch.setattr(otlp, "record_usage", flaky)
+    assert consumer.drain() == 0
+    assert consumer.drain() == 1
+    with fresh_db.database_module.get_engine().connect() as conn:
+        row = conn.execute(text("SELECT id,prompt_length,latency_ms FROM usage")).one()
+        # Claude associates a tool result with the last successful usage.
+        if service != "claude-code":
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM tool_calls WHERE usage_id=:u"),
+                    {"u": row.id},
+                ).scalar_one()
+                == 1
+            )
+        if service != "opencode":
+            assert row.prompt_length == 42
+        if service == "codex_cli_rs":
+            assert row.latency_ms == 123
+    if service == "claude-code":
+        _queue_otlp(
+            store,
+            user.id,
+            auth.device_id,
+            [
+                {
+                    **correlation,
+                    "event.name": "tool_result",
+                    "tool_use_id": "tool",
+                    "duration_ms": 12,
+                }
+            ],
+            service,
+        )
+        assert consumer.drain() == 1
+        with fresh_db.database_module.get_engine().connect() as conn:
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM tool_calls WHERE usage_id=:u"),
+                    {"u": row.id},
+                ).scalar_one()
+                == 1
+            )

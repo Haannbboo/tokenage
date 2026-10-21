@@ -16,7 +16,7 @@ from .ingest_queue import TRANSIENT_DB_ERRORS, consumer_lifespan, publish
 from .provider_parser import parse_provider_metadata
 from .ratelimit import resolve_ingest_request_async
 from .recorder import record_tool_call, record_usage, update_tool_call_duration
-from .shared_mapping import SharedMapping
+from .shared_mapping import SharedMapping, defer_updates
 
 log = logging.getLogger(__name__)
 
@@ -698,6 +698,24 @@ def _extract_codex_fields(
 
 
 def _parse_log_record(
+    record: dict,
+    service_name: str,
+    resource_session_id: str,
+    *,
+    user_id: str,
+    device_id: str,
+) -> None:
+    with defer_updates():
+        _parse_log_record_with_state(
+            record,
+            service_name,
+            resource_session_id,
+            user_id=user_id,
+            device_id=device_id,
+        )
+
+
+def _parse_log_record_with_state(
     record: dict,
     service_name: str,
     resource_session_id: str,

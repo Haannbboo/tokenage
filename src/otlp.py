@@ -4,10 +4,9 @@ import logging
 import os
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, MutableMapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
 
@@ -19,7 +18,7 @@ from .database import init_db
 from .provider_parser import parse_provider_metadata
 from .ratelimit import resolve_ingest_request_async
 from .recorder import record_tool_call, record_usage, update_tool_call_duration
-from .utils import secs_to_micros
+from .shared_mapping import SharedMapping
 
 log = logging.getLogger(__name__)
 
@@ -41,17 +40,17 @@ KNOWN_SERVICE_NAMES = (
 # request); `duration_ms` from codex.api_request in HTTP mode, where it is the
 # request's own duration. response.completed turns whichever is present into a
 # per-request latency.
-codex_state: dict = {}
+codex_state = SharedMapping("otlp:codex")
 
 # Tool-name buffers: keyed by correlation ID, values are lists of {tool_name, tool_use_id, ts}
-_claude_tool_buffer: dict[str, list[dict]] = {}
-_codex_tool_buffer: dict[str, list[dict]] = {}
-_opencode_tool_buffer: dict[str, list[dict]] = {}  # keyed by message.id
+_claude_tool_buffer = SharedMapping("otlp:claude-tools")
+_codex_tool_buffer = SharedMapping("otlp:codex-tools")
+_opencode_tool_buffer = SharedMapping("otlp:opencode-tools")  # keyed by message.id
 
 # Most recent Claude usage row per prompt.id: prompt_key -> (usage_id, session_id, ts_ms).
 # Claude's prompt.id spans a whole user turn, so this lets a trailing tool_result
 # attach to the request that produced it instead of the next one.
-_claude_last_usage: dict[str, tuple[str, str | None, int]] = {}
+_claude_last_usage = SharedMapping("otlp:claude-last-usage")
 # Fallback window when a usage row has no known latency, used to tell a
 # just-decided tool (still awaiting its result) from a result-less stale one.
 CLAUDE_TOOL_FLUSH_GRACE_MS = 2000
@@ -130,7 +129,7 @@ def _record_ts_ms(record: dict) -> int:
 
 
 def _buffer_tool_call(
-    buffer: dict[str, list[dict]],
+    buffer: MutableMapping[str, list[dict]],
     key: str | None,
     *,
     tool_name: str,
@@ -148,6 +147,7 @@ def _buffer_tool_call(
                 entry["tool_name"] = tool_name
             if duration_ms is not None:
                 entry["duration_ms"] = duration_ms
+            buffer[key] = entries
             return
     entries.append(
         {
@@ -158,9 +158,11 @@ def _buffer_tool_call(
         }
     )
 
+    buffer[key] = entries
+
 
 def _buffer_tool_duration(
-    buffer: dict[str, list[dict]],
+    buffer: MutableMapping[str, list[dict]],
     key: str | None,
     tool_use_id: str,
     duration_ms: int | None,
@@ -172,15 +174,17 @@ def _buffer_tool_duration(
     """
     if not key or duration_ms is None:
         return False
-    for entry in buffer.get(key, []):
+    entries = buffer.get(key, [])
+    for entry in entries:
         if entry["tool_use_id"] == tool_use_id:
             entry["duration_ms"] = duration_ms
+            buffer[key] = entries
             return True
     return False
 
 
 def _pop_buffered_tool(
-    buffer: dict[str, list[dict]], key: str | None, tool_use_id: str
+    buffer: MutableMapping[str, list[dict]], key: str | None, tool_use_id: str
 ) -> dict | None:
     """Remove and return a buffered tool call by id, or None when unmatched."""
     if not key or not tool_use_id:
@@ -193,6 +197,8 @@ def _pop_buffered_tool(
             entries.pop(index)
             if not entries:
                 del buffer[key]
+            else:
+                buffer[key] = entries
             return entry
     return None
 
@@ -265,20 +271,12 @@ def _state_key(identifier) -> str | None:
     return str(identifier)
 
 
-@dataclass
-class _PromptLengthState:
-    """Queued prompt-length values waiting for the matching usage event."""
-
-    values: list[int] = field(default_factory=list)
-    ts: int = 0
-
-
 class PromptLengthTracker:
     """Tracks prompt-event lengths until the later OTLP usage event is written."""
 
     def __init__(self, prompt_events: set[str]):
         self._prompt_events = prompt_events
-        self._state: dict[str, _PromptLengthState] = {}
+        self._state = SharedMapping("otlp:prompt-length")
 
     def record_prompt_event(
         self,
@@ -300,9 +298,10 @@ class PromptLengthTracker:
         if key is None:
             return
 
-        state = self._state.setdefault(key, _PromptLengthState())
-        state.ts = time.time_ns() // 1000
-        state.values.append(int(prompt_length))
+        state = self._state.get(key, {"values": []})
+        state["ts"] = time.time_ns() // 1000
+        state["values"].append(int(prompt_length))
+        self._state[key] = state
 
     def consume_for_usage_event(
         self,
@@ -324,25 +323,16 @@ class PromptLengthTracker:
         if not state:
             return 0
 
-        if not state.values:
+        if not state["values"]:
             del self._state[key]
             return 0
 
-        value = state.values.pop(0)
-        if not state.values:
+        value = state["values"].pop(0)
+        if not state["values"]:
             del self._state[key]
+        else:
+            self._state[key] = state
         return value
-
-    def evict_stale(self, ttl_seconds: int = 600) -> None:
-        """Drop old correlation entries so prompt-only events cannot accumulate forever."""
-        now = time.time_ns() // 1000
-        stale_keys = [
-            key
-            for key, state in self._state.items()
-            if now - state.ts > secs_to_micros(ttl_seconds)
-        ]
-        for key in stale_keys:
-            del self._state[key]
 
     def _key_for(
         self,
@@ -582,6 +572,9 @@ def _handle_codex_state_event(attrs: list, user_id: str) -> bool:
         state = _codex_state_for(attrs, user_id)
         if state is not None and start_ms is not None:
             state["start_ms"] = start_ms
+            codex_state[_scoped_id(str(_attr(attrs, "conversation.id")), user_id)] = (
+                state
+            )
         return True
 
     if event_kind == CODEX_API_REQUEST_EVENT or event_name == CODEX_API_REQUEST_EVENT:
@@ -589,6 +582,9 @@ def _handle_codex_state_event(attrs: list, user_id: str) -> bool:
         state = _codex_state_for(attrs, user_id)
         if state is not None and duration is not None:
             state["duration_ms"] = int(duration)
+            codex_state[_scoped_id(str(_attr(attrs, "conversation.id")), user_id)] = (
+                state
+            )
         return True
 
     if event_kind == "response.created":
@@ -596,6 +592,9 @@ def _handle_codex_state_event(attrs: list, user_id: str) -> bool:
         state = _codex_state_for(attrs, user_id)
         if state is not None and duration is not None:
             state["ttft_ms"] = int(duration)
+            codex_state[_scoped_id(str(_attr(attrs, "conversation.id")), user_id)] = (
+                state
+            )
         return True
 
     return False
@@ -964,38 +963,9 @@ MAX_PENDING_BATCHES = 64
 _pending_batches = 0
 
 
-def _evict_stale_state() -> None:
-    # Evict stale codex_state entries (older than 10 minutes)
-    now = time.time_ns() // 1000
-    stale_keys = [
-        k for k, v in codex_state.items() if now - v.get("ts", 0) > secs_to_micros(600)
-    ]
-    for k in stale_keys:
-        del codex_state[k]
-
-    # Evict tool buffers whose last entry is older than 10 minutes (aborted
-    # turns/dropped connections that never get matched to a usage event).
-    now_ms = now // 1000
-    for buf in (_claude_tool_buffer, _codex_tool_buffer, _opencode_tool_buffer):
-        stale_buf_keys = [
-            k
-            for k, entries in buf.items()
-            if entries and now_ms - entries[-1]["ts"] > 600_000
-        ]
-        for k in stale_buf_keys:
-            del buf[k]
-
-    for k, (_, _, usage_ts_ms) in list(_claude_last_usage.items()):
-        if now_ms - usage_ts_ms > 600_000:
-            del _claude_last_usage[k]
-
-    PROMPT_LENGTH_TRACKER.evict_stale()
-
-
 def _ingest_records(
     records: list[tuple[dict, str, str]], *, user_id: str, device_id: str
 ) -> None:
-    _evict_stale_state()
     for record, service_name, session_id in records:
         _parse_log_record(
             record,

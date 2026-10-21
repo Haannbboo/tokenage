@@ -1018,20 +1018,20 @@ def test_tool_buffers_are_scoped_by_authenticated_user(otlp_module):
     assert "user-b:shared-prompt" in otlp_module._claude_tool_buffer
 
 
-def test_receive_logs_evicts_stale_tool_buffer_entries(otlp_module, fresh_db):
-    """Tool-call buffer entries older than 10 minutes must be swept so an
-    aborted turn doesn't leak the entry for the life of the process."""
+def test_tool_buffer_entries_expire_after_ten_minutes(
+    otlp_module, fresh_db, monkeypatch
+):
     client = _authed_client(otlp_module, fresh_db)
-    now_ms = int(time.time() * 1000)
+    now = time.time()
+    monkeypatch.setattr("src.shared_state.time.time", lambda: now)
     otlp_module._claude_tool_buffer["test-user:stale"] = [
-        {"tool_name": "bash", "tool_use_id": "toolu_1", "ts": now_ms - 700_000}
+        {"tool_name": "bash", "tool_use_id": "toolu_1", "ts": int(now * 1000)}
     ]
+    now += 601
     otlp_module._claude_tool_buffer["test-user:fresh"] = [
-        {"tool_name": "bash", "tool_use_id": "toolu_2", "ts": now_ms}
+        {"tool_name": "bash", "tool_use_id": "toolu_2", "ts": int(now * 1000)}
     ]
-
     response = client.post("/v1/logs", json={})
-
     assert response.status_code == 200
     assert "test-user:stale" not in otlp_module._claude_tool_buffer
     assert "test-user:fresh" in otlp_module._claude_tool_buffer

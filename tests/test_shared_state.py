@@ -82,7 +82,11 @@ def test_store_factory_precedence(config_module, monkeypatch, tmp_path):
 
     default = get_shared_state()
     assert default.path.endswith("/.tokenage/state.db")
-    config_module.CONFIG["queue"] = {"url": f"sqlite:///{tmp_path / 'configured.db'}"}
+    monkeypatch.setitem(
+        config_module.CONFIG,
+        "queue",
+        {"url": f"sqlite:///{tmp_path / 'configured.db'}"},
+    )
     assert get_shared_state().path == str(tmp_path / "configured.db")
     monkeypatch.setenv("TOKENAGE_QUEUE_URL", f"sqlite:///{tmp_path / 'env.db'}")
     assert get_shared_state().path == str(tmp_path / "env.db")

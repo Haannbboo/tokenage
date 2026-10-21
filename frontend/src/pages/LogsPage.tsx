@@ -46,7 +46,7 @@ export function LogsPage() {
   // Dashboard data for summary/sources/providerColors
   const {
     summary, sources, providerColors,
-  } = useDashboardData()
+  } = useDashboardData({ includeDaily: false, includeHeatmap: false, includeCount: false })
 
   // Session filter state (local to logs view)
   const [sessionFilter, setSessionFilter] = useState<string | null>(storedSessionFilter)

@@ -7,9 +7,7 @@ authlib code path with a mocked HTTP transport and a joserfc-signed ID token.
 """
 
 import asyncio
-import json
 import time
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -120,10 +118,9 @@ def test_state_store_roundtrip(api_module, isolated_home):
 def test_state_store_rejects_expired_and_missing(api_module, isolated_home):
     auth_google = _routes_module().auth_google
     auth_google.store_oauth_state("old", {"nonce": "n", "redirect_uri": "u"})
-    state_path = Path(isolated_home) / ".tokenage" / "oauth_state.json"
-    stored = json.loads(state_path.read_text())
-    stored["old"]["exp"] = time.time() - 1
-    state_path.write_text(json.dumps(stored))
+    from src.shared_state import get_shared_state
+
+    get_shared_state().set(auth_google.STATE_FILE_NAME, "old", {}, -1)
 
     assert auth_google.pop_oauth_state("old") is None
     assert auth_google.pop_oauth_state("never-seen") is None
@@ -132,15 +129,13 @@ def test_state_store_rejects_expired_and_missing(api_module, isolated_home):
 def test_state_store_prunes_expired_on_insert(api_module, isolated_home):
     auth_google = _routes_module().auth_google
     auth_google.store_oauth_state("a", {"nonce": "n", "redirect_uri": "u"})
-    state_path = Path(isolated_home) / ".tokenage" / "oauth_state.json"
-    stored = json.loads(state_path.read_text())
-    stored["a"]["exp"] = time.time() - 1
-    state_path.write_text(json.dumps(stored))
+    from src.shared_state import get_shared_state
 
+    store = get_shared_state()
+    store.set(auth_google.STATE_FILE_NAME, "a", {}, -1)
     auth_google.store_oauth_state("b", {"nonce": "n", "redirect_uri": "u"})
-    remaining = json.loads(state_path.read_text())
-    assert "a" not in remaining
-    assert "b" in remaining
+    assert store.get(auth_google.STATE_FILE_NAME, "a") is None
+    assert store.get(auth_google.STATE_FILE_NAME, "b") is not None
 
 
 def test_state_store_caps_pending_entries(api_module, isolated_home, monkeypatch):
@@ -149,11 +144,9 @@ def test_state_store_caps_pending_entries(api_module, isolated_home, monkeypatch
     for i in range(4):
         auth_google.store_oauth_state(f"s{i}", {"nonce": "n", "redirect_uri": "u"})
 
-    state_path = Path(isolated_home) / ".tokenage" / "oauth_state.json"
-    stored = json.loads(state_path.read_text())
-    assert len(stored) == 3
-    assert "s0" not in stored  # oldest evicted to make room
-    assert "s3" in stored  # newest kept
+    assert auth_google.pop_oauth_state("s0") is None
+    for i in range(1, 4):
+        assert auth_google.pop_oauth_state(f"s{i}") is not None
 
 
 # ------------------------------------------------------------- auth.google.*
@@ -255,17 +248,15 @@ def test_google_callback_state_replay(api_module, monkeypatch, fresh_db):
 
 
 def test_google_callback_expired_state(api_module, monkeypatch, fresh_db):
-    import src.config.app
 
     _enable_auth(monkeypatch)
     _mock_google_flow(api_module, monkeypatch)
     client = TestClient(api_module.app)
     state = _start_login(api_module, monkeypatch, client)
 
-    state_path = Path(src.config.app.get_config_path()).parent / "oauth_state.json"
-    stored = json.loads(state_path.read_text())
-    stored[state]["exp"] = time.time() - 1
-    state_path.write_text(json.dumps(stored))
+    from src.shared_state import get_shared_state
+
+    get_shared_state().set(_routes_module().auth_google.STATE_FILE_NAME, state, {}, -1)
 
     callback = client.get(
         f"/auth/google/callback?code=the-code&state={state}", follow_redirects=False

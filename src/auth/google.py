@@ -2,17 +2,14 @@
 
 authlib handles the OAuth2/OIDC handshake (authorization URL construction,
 code exchange, ID-token verification). OAuth ``state`` values are tracked
-server-side in a JSON file under the tracker home, guarded by ``flock`` —
+server-side in the shared-state store —
 there is no client-side signed session.
 """
 
 from __future__ import annotations
 
-import fcntl
-import json
 import logging
 import time
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -21,7 +18,7 @@ from authlib.integrations.starlette_client import OAuth
 from joserfc.errors import JoseError
 
 from src.config.app import CONFIG
-from src.config.models import get_tracker_home
+from src.shared_state import get_shared_state
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +26,7 @@ STATE_FILE_NAME = "oauth_state.json"
 STATE_TTL_SECONDS = 5 * 60
 MAX_PENDING_STATES = 512
 
-# One-time CLI login codes (PR 3): same flock-guarded JSON store shape as
-# the OAuth state store, longer TTL — the human paste-back path needs slack.
+# One-time CLI and browser login codes share the same store and TTL.
 CLI_CODE_FILE_NAME = "cli_codes.json"
 CLI_CODE_TTL_SECONDS = 300
 LOGIN_CODE_FILE_NAME = "login_codes.json"
@@ -112,127 +108,46 @@ async def verify_id_token(token: dict[str, Any], nonce: str) -> dict[str, Any]:
     return dict(claims)
 
 
-def _state_path(file_name: str = STATE_FILE_NAME) -> Path:
-    return Path(get_tracker_home()) / file_name
-
-
-def _load_states_unlocked(handle) -> dict[str, Any]:
-    handle.seek(0)
-    raw = handle.read()
-    if not raw.strip():
-        return {}
-    try:
-        loaded = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        return {}
-    if not isinstance(loaded, dict):
-        return {}
-    return loaded
-
-
-def _prune_expired(states: dict[str, Any], now: float) -> None:
-    for key in [
-        key
-        for key, entry in states.items()
-        if not isinstance(entry, dict)
-        or not isinstance(entry.get("exp"), (int, float))
-        or float(entry["exp"]) <= now
-    ]:
-        del states[key]
-
-
 def store_oauth_state(state: str, data: dict[str, Any]) -> None:
-    """Persist a state with a TTL, pruning expired entries first."""
-    _store_entry(_state_path(), state, data, STATE_TTL_SECONDS, MAX_PENDING_STATES)
+    """Persist a single-use OAuth state for five minutes."""
+    _store_entry(STATE_FILE_NAME, state, data, STATE_TTL_SECONDS, MAX_PENDING_STATES)
 
 
 def pop_oauth_state(state: str) -> dict[str, Any] | None:
-    """Consume a state single-use. Returns its data or None when missing/expired."""
-    return _pop_entry(_state_path(), state)
+    return _pop_entry(STATE_FILE_NAME, state)
 
 
 def store_cli_code(code: str, data: dict[str, Any]) -> None:
-    """Persist a one-time CLI login code with its TTL."""
     _store_entry(
-        _state_path(CLI_CODE_FILE_NAME),
-        code,
-        data,
-        CLI_CODE_TTL_SECONDS,
-        MAX_PENDING_STATES,
+        CLI_CODE_FILE_NAME, code, data, CLI_CODE_TTL_SECONDS, MAX_PENDING_STATES
     )
 
 
+def pop_cli_code(code: str) -> dict[str, Any] | None:
+    return _pop_entry(CLI_CODE_FILE_NAME, code)
+
+
 def store_login_code(code: str) -> None:
-    """Persist a one-time local-provider browser login code (login-link)."""
     _store_entry(
-        _state_path(LOGIN_CODE_FILE_NAME),
-        code,
-        {},
-        CLI_CODE_TTL_SECONDS,
-        MAX_PENDING_STATES,
+        LOGIN_CODE_FILE_NAME, code, {}, CLI_CODE_TTL_SECONDS, MAX_PENDING_STATES
     )
 
 
 def pop_login_code(code: str) -> dict[str, Any] | None:
-    """Consume a login-link code single-use."""
-    return _pop_entry(_state_path(LOGIN_CODE_FILE_NAME), code)
-
-
-def pop_cli_code(code: str) -> dict[str, Any] | None:
-    """Consume a CLI code single-use. Returns its data or None when missing/expired."""
-    return _pop_entry(_state_path(CLI_CODE_FILE_NAME), code)
+    return _pop_entry(LOGIN_CODE_FILE_NAME, code)
 
 
 def _store_entry(
-    path: Path,
-    key: str,
-    data: dict[str, Any],
-    ttl_seconds: float,
-    max_pending: int,
+    namespace: str, key: str, data: dict[str, Any], ttl_seconds: float, max_pending: int
 ) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a+", encoding="utf-8") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            states = _load_states_unlocked(handle)
-            _prune_expired(states, time.time())
-            if len(states) >= max_pending:
-                # A burst of public mint endpoints shouldn't grow the file
-                # without bound inside the TTL window; drop the oldest
-                # pending entries to make room.
-                oldest_first = sorted(states, key=lambda k: states[k]["exp"])
-                for k in oldest_first[: len(states) - max_pending + 1]:
-                    del states[k]
-            states[key] = {"exp": time.time() + ttl_seconds, **data}
-            handle.seek(0)
-            handle.truncate()
-            json.dump(states, handle)
-            handle.flush()
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+    get_shared_state().set(
+        namespace,
+        key,
+        {**data, "exp": time.time() + ttl_seconds},
+        ttl_seconds,
+        cap=max_pending,
+    )
 
 
-def _pop_entry(path: Path, key: str) -> dict[str, Any] | None:
-    if not key:
-        return None
-    if not path.exists():
-        return None
-    with open(path, "a+", encoding="utf-8") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            states = _load_states_unlocked(handle)
-            if not states:
-                return None
-            entry = states.pop(key, None)
-            _prune_expired(states, time.time())
-            handle.seek(0)
-            handle.truncate()
-            json.dump(states, handle)
-            handle.flush()
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
-    if not isinstance(entry, dict) or not isinstance(entry.get("exp"), (int, float)):
-        return None
-    if float(entry["exp"]) <= time.time():
-        return None
-    return entry
+def _pop_entry(namespace: str, key: str) -> dict[str, Any] | None:
+    return get_shared_state().pop(namespace, key) if key else None

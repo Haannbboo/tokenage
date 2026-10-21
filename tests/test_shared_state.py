@@ -149,3 +149,19 @@ def test_concurrent_claim_and_pop_have_one_winner(store):
     with ThreadPoolExecutor(2) as pool:
         values = list(pool.map(pop, [store, other]))
     assert sum(value is not None for value in values) == 1
+
+
+def test_signin_code_cross_instance_pop(api_module):
+    from src.auth import google
+    from src.shared_state import SQLiteSharedState, get_shared_state
+
+    google.store_oauth_state("oauth", {"nonce": "n"})
+    other = SQLiteSharedState(get_shared_state().path)
+    assert other.pop(google.STATE_FILE_NAME, "oauth")["nonce"] == "n"
+    assert google.pop_oauth_state("oauth") is None
+    google.store_cli_code("cli", {"user_id": "u"})
+    assert other.pop(google.CLI_CODE_FILE_NAME, "cli")["user_id"] == "u"
+    assert google.pop_cli_code("cli") is None
+    google.store_login_code("login")
+    assert other.pop(google.LOGIN_CODE_FILE_NAME, "login") is not None
+    assert google.pop_login_code("login") is None

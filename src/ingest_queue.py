@@ -24,7 +24,6 @@ from .shared_state import LEASE_SECONDS, Event, QueueFull, SharedState, get_shar
 log = logging.getLogger(__name__)
 POLL_SECONDS = 0.25
 RENEW_SECONDS = 2.0
-MAX_PROCESS_SECONDS = 30
 
 
 TRANSIENT_DB_ERRORS = (
@@ -61,8 +60,6 @@ class Consumer:
         self.renew_at: dict[int, float] = {}
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
-        self.abandoned = threading.Event()
-        self.processing_since: float | None = None
         self.active_partition: int | None = None
 
     def _claim_position(self, partition: int) -> str:
@@ -101,8 +98,6 @@ class Consumer:
     def commit_position(self, partition: int, expected: str, position: str) -> str:
         from .database import get_engine
 
-        if self.abandoned.is_set():
-            raise LeaseLost()
         self._renew_if_due(partition)
         value = f"{position}:{self.store.identity}:{self.owner}"
         with get_engine().begin() as conn:
@@ -128,12 +123,9 @@ class Consumer:
 
     def _progress(self) -> None:
         partition = self.active_partition
-        if self.abandoned.is_set() or partition is None:
+        if partition is None:
             raise LeaseLost()
         self._renew_if_due(partition)
-        # The watchdog measures stalled work, not the duration of a healthy
-        # multi-record OTLP export over a slow remote database.
-        self.processing_since = time.monotonic()
 
     def _process(self, event: Event) -> None:
         payload = event.payload
@@ -185,7 +177,7 @@ class Consumer:
         processed = 0
         pending = {status.partition for status in self.store.status() if status.depth}
         for partition in sorted(pending):
-            if self.stop_event.is_set() or self.abandoned.is_set():
+            if self.stop_event.is_set():
                 break
             if partition not in self.positions:
                 if not self.store.claim(partition, self.owner):
@@ -194,7 +186,6 @@ class Consumer:
                     self.positions[partition] = "0"
                     self.renew_at[partition] = time.monotonic() + LEASE_SECONDS / 2
                 try:
-                    self.processing_since = time.monotonic()
                     value = self._claim_position(partition)
                     self._renew_if_due(partition)
                     with self.lock:
@@ -213,17 +204,14 @@ class Consumer:
                 except Exception:
                     self._drop(partition)
                     raise
-                finally:
-                    self.processing_since = None
             position = self.positions[partition]
             # Trims redeliveries already committed before a crash during ack.
             if not self.store.ack(partition, _offset(position), self.owner):
                 self._drop(partition)
                 continue
             for event in self.store.read(partition, _offset(position), limit):
-                self.processing_since = time.monotonic()
                 try:
-                    if self.abandoned.is_set() or self.stop_event.is_set():
+                    if self.stop_event.is_set():
                         raise LeaseLost()
                     self._renew_if_due(partition)
                     try:
@@ -261,7 +249,6 @@ class Consumer:
                     break
                 finally:
                     self.active_partition = None
-                    self.processing_since = None
             # Once drained, let a newly started consumer claim future work.
             # A publish racing this check is harmless: either this owner keeps
             # the lease for its next poll or a successor claims it after release.
@@ -278,27 +265,18 @@ class Consumer:
         self.store.release(partition, self.owner)
 
     def _run(self) -> None:
+        # ponytail: a hung DB call blocks this process's consumer; bound it with
+        # a DB statement timeout if it bites. Lease expiry and position fencing
+        # protect takeover by another worker once this process stops renewing.
         while not self.stop_event.is_set():
             try:
                 self.drain()
             except Exception as exc:
                 log.warning("Ingest consumer unavailable error=%s", type(exc).__name__)
-            if self.abandoned.is_set():
-                for partition in list(self.positions):
-                    self._drop(partition)
-                self.owner = uuid.uuid4().hex
-                self.abandoned.clear()
             self.stop_event.wait(POLL_SECONDS)
 
     def _renew(self) -> None:
         while not self.stop_event.wait(RENEW_SECONDS):
-            # A hung DB must not keep leases forever. Abandon this consumer
-            # after the deadline; resume with fresh leases if the call returns.
-            since = self.processing_since
-            if since is not None and time.monotonic() - since > MAX_PROCESS_SECONDS:
-                self.abandoned.set()
-            if self.abandoned.is_set():
-                continue
             with self.lock:
                 partitions = list(self.positions)
             for partition in partitions:

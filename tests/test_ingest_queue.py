@@ -272,29 +272,6 @@ def test_transient_db_failure_keeps_event_pending(api_module, fresh_db, monkeypa
     assert consumer.drain() == 1
 
 
-def test_abandoned_consumer_does_no_further_writes(api_module, fresh_db, monkeypatch):
-    from src.ingest_queue import Consumer
-    from src.shared_state import get_shared_state, partition_for
-
-    store = get_shared_state()
-    other = next(
-        str(i) for i in range(100) if partition_for(str(i)) != partition_for("user")
-    )
-    for user in ("user", other):
-        store.publish(user, {"kind": "usage", "user_id": user})
-    consumer = Consumer(store)
-    processed = []
-
-    def process(event):
-        processed.append(event)
-        consumer.abandoned.set()
-
-    monkeypatch.setattr(consumer, "_process", process)
-    assert consumer.drain() == 0
-    assert len(processed) == 1
-    assert sum(p.depth for p in store.status()) == 2
-
-
 def test_close_commits_already_finished_event(api_module, fresh_db, monkeypatch):
     from src.ingest_queue import Consumer
     from src.shared_state import get_shared_state
@@ -451,74 +428,6 @@ def test_lease_is_renewed_while_processing_blocks(api_module, fresh_db, monkeypa
         consumer.close()
         release.set()
         assert finished.wait(5)
-
-
-def test_watchdog_stops_renewal_for_hung_work(api_module, fresh_db, monkeypatch):
-    import src.ingest_queue as queue
-    from src.shared_state import get_shared_state, partition_for
-
-    monkeypatch.setattr(queue, "RENEW_SECONDS", 0.01)
-    monkeypatch.setattr(queue, "MAX_PROCESS_SECONDS", 0)
-    now = 1000.0
-    monkeypatch.setattr("src.shared_state.time.time", lambda: now)
-    store = get_shared_state()
-    store.publish("user", {"kind": "usage", "user_id": "user"})
-    consumer = queue.Consumer(store)
-    started, release, abandoned, finished = (threading.Event() for _ in range(4))
-    mark_abandoned = consumer.abandoned.set
-
-    def abandon():
-        mark_abandoned()
-        abandoned.set()
-
-    def process(event):
-        started.set()
-        release.wait(5)
-        finished.set()
-
-    monkeypatch.setattr(consumer.abandoned, "set", abandon)
-    monkeypatch.setattr(consumer, "_process", process)
-    consumer.start()
-    try:
-        assert started.wait(5)
-        assert abandoned.wait(5)
-        now += 11
-        assert store.claim(partition_for("user"), "replacement")
-    finally:
-        consumer.close()
-        release.set()
-        assert finished.wait(5)
-
-
-def test_otlp_record_progress_refreshes_watchdog(api_module, fresh_db, monkeypatch):
-    import src.otlp as otlp
-    from src.ingest_queue import Consumer
-    from src.shared_state import get_shared_state
-
-    store = get_shared_state()
-    store.publish(
-        "user",
-        {
-            "kind": "otlp",
-            "user_id": "user",
-            "device_id": "device",
-            "records": [[{}, "claude-code", "s"] for _ in range(3)],
-        },
-    )
-    consumer = Consumer(store)
-    now = 1000.0
-    monkeypatch.setattr("src.ingest_queue.time.monotonic", lambda: now)
-    calls = []
-
-    def parse(*args, **kwargs):
-        nonlocal now
-        assert consumer.processing_since == now
-        calls.append(now)
-        now += 20
-
-    monkeypatch.setattr(otlp, "_parse_log_record", parse)
-    assert consumer.drain() == 1
-    assert len(calls) == 3
 
 
 def test_failed_partition_does_not_starve_later_partition(

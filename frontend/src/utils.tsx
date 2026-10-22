@@ -1,5 +1,6 @@
 import type { DateRangeOption, DailyUsage } from './types'
-import type { Lang } from './i18n/index.ts'
+import { zeroUsageRow } from './periodGaps'
+import { getLang, LANG_LOCALES, type Lang } from './i18n/index.ts'
 import { getTheme, type Theme } from './theme'
 
 const TIMEZONE_KEY = 'tokenage-timezone'
@@ -50,22 +51,51 @@ export function saveTimezone(tz: string): void {
   localStorage.setItem(TIMEZONE_KEY, tz)
 }
 
-export const numberFormatter = new Intl.NumberFormat()
-export const compactFormatter = new Intl.NumberFormat(undefined, {
-  maximumFractionDigits: 1,
-  notation: 'compact',
-})
-const costFormatters = new Map<number, Intl.NumberFormat>()
-function getCostFormatter(maxDigits: number) {
-  let fmt = costFormatters.get(maxDigits)
+// The formatters follow the language the UI is written in, not the browser
+// locale: a German browser would otherwise read 2,090 as 2.090.
+const numberFormatters = new Map<string, Intl.NumberFormat>()
+const compactFormatters = new Map<string, Intl.NumberFormat>()
+const costFormatters = new Map<string, Intl.NumberFormat>()
+
+function appLocale(): string {
+  return LANG_LOCALES[getLang()]
+}
+
+function numberFormatter(): Intl.NumberFormat {
+  const locale = appLocale()
+  let fmt = numberFormatters.get(locale)
   if (!fmt) {
-    fmt = new Intl.NumberFormat(undefined, {
+    fmt = new Intl.NumberFormat(locale)
+    numberFormatters.set(locale, fmt)
+  }
+  return fmt
+}
+
+function compactFormatter(): Intl.NumberFormat {
+  const locale = appLocale()
+  let fmt = compactFormatters.get(locale)
+  if (!fmt) {
+    fmt = new Intl.NumberFormat(locale, {
+      maximumFractionDigits: 1,
+      notation: 'compact',
+    })
+    compactFormatters.set(locale, fmt)
+  }
+  return fmt
+}
+
+function getCostFormatter(maxDigits: number) {
+  const locale = appLocale()
+  const key = `${locale}:${maxDigits}`
+  let fmt = costFormatters.get(key)
+  if (!fmt) {
+    fmt = new Intl.NumberFormat(locale, {
       style: 'currency',
       currency: 'USD',
       minimumFractionDigits: 2,
       maximumFractionDigits: maxDigits,
     })
-    costFormatters.set(maxDigits, fmt)
+    costFormatters.set(key, fmt)
   }
   return fmt
 }
@@ -87,11 +117,11 @@ export function timeAgo(input: string | number): string {
 }
 
 export function formatNumber(input: number | null | undefined) {
-  return numberFormatter.format(value(input))
+  return numberFormatter().format(value(input))
 }
 
 export function formatCompact(input: number | null | undefined) {
-  return compactFormatter.format(value(input))
+  return compactFormatter().format(value(input))
 }
 
 export function formatCost(input: number | null | undefined, maxDigits = 6) {
@@ -130,14 +160,14 @@ export function netThroughput(
 
 // cache_creation_tokens is a disjoint bucket on top of prompt_tokens (Anthropic
 // semantics), so it belongs in the denominator of a true cache hit rate.
-// Returns null when there is no input at all: there is no hit rate to report.
+// A bucket without any input reads as 0%.
 export function cacheHitRate(
   cached: number | null | undefined,
   prompt: number | null | undefined,
   cacheCreation: number | null | undefined,
-): number | null {
+): number {
   const totalInput = value(prompt) + value(cacheCreation)
-  return totalInput > 0 ? (value(cached) / totalInput) * 100 : null
+  return totalInput > 0 ? (value(cached) / totalInput) * 100 : 0
 }
 
 type DurationFormatOptions = {
@@ -204,17 +234,19 @@ function tzDateParts(date: Date, tz?: string): { year: number; month: number; da
   return { year: get('year'), month: get('month'), day: get('day'), hour }
 }
 
+/**
+ * The wall-clock time of `now` in the display timezone, in the same clock the
+ * period labels use. "3 hours ago" is only true against this, not against the
+ * browser's clock.
+ */
+export function wallClockMs(now: Date, tz?: string): number {
+  const p = tzDateParts(now, tz)
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour)
+}
+
 export function fillGaps(data: DailyUsage[], granularity: 'hour' | 'day', periodCount: number, tz?: string): DailyUsage[] {
   const effectiveTz = tz
-  const zeroRow = (period: string): DailyUsage => ({
-    period, requests: 0, prompt_tokens: 0, completion_tokens: 0,
-    cached_tokens: 0, cache_creation_tokens: 0, total_tokens: 0, input_cost_usd: 0,
-    output_cost_usd: 0, total_cost_usd: 0, avg_latency_ms: 0,
-    latency_sum_ms: 0,
-    avg_throughput: 0,
-    successful_requests: 0, failed_requests: 0,
-    status_429: 0, status_4xx: 0, status_5xx: 0, status_unknown: 0,
-  })
+  const zeroRow = zeroUsageRow
 
   const map = new Map(data.map(d => [d.period, d]))
   const result: DailyUsage[] = []

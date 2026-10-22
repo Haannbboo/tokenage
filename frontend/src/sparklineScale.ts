@@ -20,13 +20,11 @@ export type SparklineScale = {
   span: number
 }
 
-export function sparklineScale(values: (number | null)[], mode: ScaleMode = 'zero'): SparklineScale {
-  const nums = values.filter((v): v is number => v !== null)
-  if (nums.length === 0) return { lo: 0, hi: 1, span: 1 }
+export function sparklineScale(values: number[], mode: ScaleMode = 'zero'): SparklineScale {
+  if (values.length === 0) return { lo: 0, hi: 1, span: 1 }
 
-  const dataMin = Math.min(...nums)
-  const dataMax = Math.max(...nums)
-  const dataRange = dataMax - dataMin
+  const dataMin = Math.min(...values)
+  const dataMax = Math.max(...values)
 
   if (mode === 'zero') {
     const lo = Math.min(0, dataMin)
@@ -34,10 +32,16 @@ export function sparklineScale(values: (number | null)[], mode: ScaleMode = 'zer
     return { lo, hi, span: hi - lo || 1 }
   }
 
+  // A zero in a relative series is a bucket without activity, not a real zero,
+  // so it must not blow the window open (that would flatten the whole trend).
+  const active = values.filter(v => v !== 0)
+  const activeMin = active.length ? Math.min(...active) : dataMin
+  const activeMax = active.length ? Math.max(...active) : dataMax
+
   // Centred on the data, so the window grows smoothly with the spread: no
   // cliff where a series just past the floor suddenly draws flat.
-  const span = Math.max(dataRange, Math.abs(dataMax) * ZOOM_FLOOR)
-  const mid = (dataMax + dataMin) / 2
+  const span = Math.max(activeMax - activeMin, Math.abs(activeMax) * ZOOM_FLOOR)
+  const mid = (activeMax + activeMin) / 2
   const lo = mid - span / 2
   const hi = mid + span / 2
   return { lo, hi, span: hi - lo || 1 }

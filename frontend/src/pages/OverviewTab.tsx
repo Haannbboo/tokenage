@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useCountUp } from '../useCountUp'
 import { TrendChart } from '../charts/TrendChart'
 import { TopUsageChart } from '../charts/TopUsageChart'
@@ -6,11 +6,14 @@ import { ToolCallsChart } from '../charts/ToolCallsChart'
 import { DailyHeatmap } from '../charts/DailyHeatmap'
 import { CopyButton } from '../components/CopyButton'
 import { StatTile } from '../components/StatTile'
-import { t } from '../i18n/index.ts'
+import { getLang, LANG_LOCALES, t } from '../i18n/index.ts'
+import { useApp } from '../contexts/AppContext'
 import {
   formatCompact, formatCost, formatLatency, formatNumber, formatRate, formatThroughput,
-  value, getAgentDisplayName, cacheHitRate,
+  value, getAgentDisplayName, cacheHitRate, resolveTimezone, wallClockMs,
 } from '../utils'
+import { describePeriod } from '../periodLabels'
+import { fillPeriodGaps } from '../periodGaps'
 
 type OverviewTabProps = {
   theme: any
@@ -70,7 +73,7 @@ export function OverviewTab({
   const animatedCost = useCountUp(dashboardInitialLoading ? 0 : totals.totalCost)
   const animatedThroughput = useCountUp(dashboardInitialLoading ? 0 : totals.avgThroughput)
   const animatedHitRate = useCountUp(
-    dashboardInitialLoading ? 0 : cacheHitRate(totals.cachedTokens, totals.promptTokens, totals.cacheCreationTokens) ?? 0,
+    dashboardInitialLoading ? 0 : cacheHitRate(totals.cachedTokens, totals.promptTokens, totals.cacheCreationTokens),
   )
   const totalInputTokens = (totals.promptTokens || 0) + (totals.cacheCreationTokens || 0)
 
@@ -78,14 +81,33 @@ export function OverviewTab({
   // tile, so the metrics can be read side by side.
   const [cursorIdx, setCursorIdx] = useState<number | null>(null)
 
-  const costPoints = dailyUsage.map(d => ({ value: value(d.total_cost_usd), period: d.period }))
-  const tokenPoints = dailyUsage.map(d => ({ value: value(d.total_tokens), period: d.period }))
-  const requestPoints = dailyUsage.map(d => ({ value: d.requests, period: d.period }))
-  const hitRatePoints = dailyUsage.map(d => ({
+  // /usage/daily only returns periods that have usage; the missing buckets are
+  // filled in so the sparklines sit on a real time axis.
+  const granularity = dateRange === '24h' ? 'hour' : 'day'
+  const filledUsage = useMemo(() => fillPeriodGaps(dailyUsage, granularity), [dailyUsage, granularity])
+
+  // The hovered period is a wall-clock label in the display timezone, so "now"
+  // has to be read in that same clock.
+  const { timezone } = useApp()
+  const nowWallMs = wallClockMs(new Date(), resolveTimezone(timezone))
+  const hoveredPeriod = cursorIdx === null ? null : filledUsage[cursorIdx]?.period
+  const period = hoveredPeriod ? describePeriod(hoveredPeriod, granularity, nowWallMs, LANG_LOCALES[getLang()]) : null
+  const hoverLabel = period
+    ? period.relative === 'today'
+      ? `${t('Today')}${period.time ? ` ${period.time}` : ''}`
+      : period.relative === 'yesterday'
+        ? `${t('Yesterday')}${period.time ? ` ${period.time}` : ''}`
+        : `${period.day}${period.time ? `, ${period.time}` : ''}`
+    : null
+
+  const costPoints = filledUsage.map(d => ({ value: value(d.total_cost_usd), period: d.period }))
+  const tokenPoints = filledUsage.map(d => ({ value: value(d.total_tokens), period: d.period }))
+  const requestPoints = filledUsage.map(d => ({ value: d.requests, period: d.period }))
+  const hitRatePoints = filledUsage.map(d => ({
     value: cacheHitRate(d.cached_tokens, d.prompt_tokens, d.cache_creation_tokens),
     period: d.period,
   }))
-  const speedPoints = dailyUsage.map(d => ({ value: value(d.avg_throughput), period: d.period }))
+  const speedPoints = filledUsage.map(d => ({ value: value(d.avg_throughput), period: d.period }))
 
   return (
     <>
@@ -357,6 +379,7 @@ export function OverviewTab({
           format={(v) => formatCost(v, 2)}
           formatHover={(v) => formatCost(v, v < 0.1 ? 4 : 2)}
           cursorIdx={cursorIdx}
+          hoverLabel={hoverLabel}
           onHover={setCursorIdx}
         >
           {t('Avg $/M tokens:')} <span style={{ color: 'var(--color-green)', fontWeight: 600 }}>{formatRate(totals.avgEffectivePricePerMillion)}</span>
@@ -371,6 +394,7 @@ export function OverviewTab({
           animatedValue={animatedTotalTokens}
           format={(v) => formatCompact(v)}
           cursorIdx={cursorIdx}
+          hoverLabel={hoverLabel}
           onHover={setCursorIdx}
         >
           {/* cache_creation_tokens folds into "In" (fresh input, billed
@@ -388,6 +412,7 @@ export function OverviewTab({
           animatedValue={animatedRequests}
           format={(v) => formatNumber(v)}
           cursorIdx={cursorIdx}
+          hoverLabel={hoverLabel}
           onHover={setCursorIdx}
         >
           {t('Avg:')} <span style={{ color: 'var(--color-purple)', fontWeight: 600 }}>{formatCompact(totals.avgTokensPerRequest)} {t('tokens/req')}</span>
@@ -403,6 +428,7 @@ export function OverviewTab({
           format={(v) => `${v.toFixed(1)}%`}
           scale="relative"
           cursorIdx={cursorIdx}
+          hoverLabel={hoverLabel}
           onHover={setCursorIdx}
         >
           {t('Cached:')} {formatCompact(totals.cachedTokens)} {t('of')} {formatCompact(totalInputTokens)} {t('tokens')}
@@ -415,8 +441,9 @@ export function OverviewTab({
           color="var(--color-purple)"
           points={speedPoints}
           animatedValue={animatedThroughput}
-          format={(v) => formatThroughput(v)}
+          format={(v) => v > 0 ? formatThroughput(v) : '0.0 t/s'}
           cursorIdx={cursorIdx}
+          hoverLabel={hoverLabel}
           onHover={setCursorIdx}
         />
           </>

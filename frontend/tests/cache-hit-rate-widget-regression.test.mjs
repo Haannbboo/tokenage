@@ -14,6 +14,8 @@ const css = readFileSync(join(root, 'src/App.css'), 'utf8')
 // Type stripping is on by default from node 22.18; older runtimes skip the
 // runtime scale checks instead of failing the whole file.
 const scaleModule = await import('../src/sparklineScale.ts').catch(() => null)
+const gapsModule = await import('../src/periodGaps.ts').catch(() => null)
+const labelsModule = await import('../src/periodLabels.ts').catch(() => null)
 
 describe('Cache hit rate dashboard widget', () => {
   test('widget sits between Requests and Avg Speed', () => {
@@ -26,11 +28,12 @@ describe('Cache hit rate dashboard widget', () => {
     assert.ok(avgSpeed > cacheHit, 'Cache Hit Rate tile comes before Avg Speed')
   })
 
-  test('the cache hit rate series uses the shared helper and no data is a gap', () => {
+  test('the cache hit rate series uses the shared helper, and an idle bucket reads as 0', () => {
     assert.match(
       overview,
       /value: cacheHitRate\(d\.cached_tokens, d\.prompt_tokens, d\.cache_creation_tokens\)/,
     )
+    assert.match(overview, /v > 0 \? formatThroughput\(v\) : '0\.0 t\/s'/)
   })
 
   test('the hit rate trend line and cached total are not duplicated in the Token Usage tile', () => {
@@ -71,14 +74,9 @@ describe('Sparkline hover interaction', () => {
     )
   })
 
-  test('a period with no data leaves a gap instead of a zero', () => {
-    assert.match(sparkline, /v === null \? null : \{ x:/)
-    assert.match(sparkline, /if \(run\.length > 1\) segments\.push\(run\)/)
-  })
-
   test('the stat tile swaps the number for the hovered value and shows its period', () => {
-    assert.match(statTile, /point\.value === null\s*\? '—'/)
-    assert.match(statTile, /\{point \? point\.period : children\}/)
+    assert.match(statTile, /const shown = !point \? format\(animatedValue\) : \(formatHover \?\? format\)\(point\.value\)/)
+    assert.match(statTile, /const detail = point/)
   })
 
   test('every overview tile uses the hoverable stat tile', () => {
@@ -118,14 +116,86 @@ describe('Sparkline scale', { skip: !scaleModule }, () => {
     assert.ok(lo < 50 && hi > 50)
   })
 
-  test('periods with no data do not drag the window down', () => {
-    const withGap = scaleModule.sparklineScale([96.8, null, 97.1], 'relative')
+  test('an empty bucket reads as 0 without blowing up the zoomed window', () => {
+    const withZeros = scaleModule.sparklineScale([0, 96.8, 97.1, 0], 'relative')
     const without = scaleModule.sparklineScale([96.8, 97.1], 'relative')
-    assert.equal(withGap.span, without.span)
+
+    assert.equal(withZeros.span, without.span)
   })
 
   test('an all-zero series does not produce a broken scale', () => {
     const { span } = scaleModule.sparklineScale([0, 0])
     assert.ok(Number.isFinite(span) && span > 0)
+  })
+})
+
+describe('Sparkline gap filling', { skip: !gapsModule }, () => {
+  const row = (period, requests = 1) => ({ period, requests, total_tokens: 10, total_cost_usd: 0.5 })
+
+  test('a day without usage is inserted as a zero bucket', () => {
+    const filled = gapsModule.fillPeriodGaps([row('2026-10-20'), row('2026-10-22')], 'day')
+
+    assert.deepEqual(filled.map(r => r.period), ['2026-10-20', '2026-10-21', '2026-10-22'])
+    assert.equal(filled[1].requests, 0)
+    assert.equal(filled[1].total_tokens, 0)
+  })
+
+  test('the rows that had usage are kept as they are', () => {
+    const filled = gapsModule.fillPeriodGaps([row('2026-10-20'), row('2026-10-22')], 'day')
+
+    assert.equal(filled[0].requests, 1)
+    assert.equal(filled[2].requests, 1)
+    assert.equal(filled[2].total_cost_usd, 0.5)
+  })
+
+  test('an hour without usage is inserted as a zero bucket', () => {
+    const filled = gapsModule.fillPeriodGaps([row('2026-10-20 12:00'), row('2026-10-20 14:00')], 'hour')
+
+    assert.deepEqual(filled.map(r => r.period), ['2026-10-20 12:00', '2026-10-20 13:00', '2026-10-20 14:00'])
+    assert.equal(filled[1].requests, 0)
+  })
+
+  test('the series stays inside the range the data covers', () => {
+    const filled = gapsModule.fillPeriodGaps([row('2026-10-20'), row('2026-10-22')], 'day')
+
+    assert.equal(filled[0].period, '2026-10-20')
+    assert.equal(filled[filled.length - 1].period, '2026-10-22')
+  })
+
+  test('a single row is left alone', () => {
+    const data = [row('2026-10-20')]
+    assert.equal(gapsModule.fillPeriodGaps(data, 'day').length, 1)
+  })
+
+  test('the overview uses the gap filled series for the tiles', () => {
+    assert.match(overview, /fillPeriodGaps\(dailyUsage, granularity\)/)
+    assert.match(overview, /const costPoints = filledUsage\.map/)
+  })
+})
+
+describe('Period labels', { skip: !labelsModule }, () => {
+  const now = Date.UTC(2026, 9, 22, 15, 0) // 2026-10-22 15:00
+
+  test('a bucket of today or yesterday is marked relative', () => {
+    assert.equal(labelsModule.describePeriod('2026-10-22', 'day', now, 'en-US').relative, 'today')
+    assert.equal(labelsModule.describePeriod('2026-10-21', 'day', now, 'en-US').relative, 'yesterday')
+  })
+
+  test('an older day is named, with no relative word', () => {
+    const label = labelsModule.describePeriod('2026-10-20', 'day', now, 'en-US')
+    assert.equal(label.relative, undefined)
+    assert.ok(/Oct 20/.test(label.day), label.day)
+  })
+
+  test('an hour bucket carries the clock, a day bucket does not', () => {
+    const hour = labelsModule.describePeriod('2026-10-22 13:00', 'hour', now, 'en-US')
+    assert.ok(hour.time && /1:00|13:00/.test(hour.time), hour.time)
+
+    const day = labelsModule.describePeriod('2026-10-20', 'day', now, 'en-US')
+    assert.equal(day.time, undefined)
+  })
+
+  test('an unknown period has no label', () => {
+    assert.equal(labelsModule.describePeriod('not-a-period', 'day', now, 'en-US'), null)
   })
 })

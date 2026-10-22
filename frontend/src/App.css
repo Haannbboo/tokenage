@@ -179,6 +179,8 @@
   color: var(--text-muted);
   margin-bottom: 3px;
   font-weight: 600;
+  /* Equal-width digits, so numbers in the detail line line up. */
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-value {
@@ -186,6 +188,8 @@
   font-weight: 700;
   color: var(--text-primary);
   margin-bottom: 2px;
+  /* Equal-width digits: the value stops jittering while it counts up. */
+  font-variant-numeric: tabular-nums;
 }
 
 /* Lower Section */

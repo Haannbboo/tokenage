@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react'
 import { Sparkline } from '../Sparkline'
 import type { ScaleMode } from '../sparklineScale'
+import { t } from '../i18n/index.ts'
 
 export type StatPoint = {
-  /** null marks a period with no data. */
-  value: number | null
+  value: number
   period: string
 }
 
@@ -21,20 +21,30 @@ type StatTileProps = {
   formatHover?: (value: number) => ReactNode
   scale?: ScaleMode
   cursorIdx: number | null
+  /** Readable label for the hovered period, shared by the whole row. */
+  hoverLabel?: string | null
   onHover: (index: number | null) => void
   children?: ReactNode
 }
 
 export function StatTile({
   label, icon, iconClass, color, points, animatedValue, format, formatHover,
-  scale = 'zero', cursorIdx, onHover, children,
+  scale = 'zero', cursorIdx, hoverLabel, onHover, children,
 }: StatTileProps) {
   const point = cursorIdx === null ? undefined : points[cursorIdx]
-  const shown = !point
-    ? format(animatedValue)
-    : point.value === null
-      ? '—'
-      : (formatHover ?? format)(point.value)
+  const shown = !point ? format(animatedValue) : (formatHover ?? format)(point.value)
+
+  // Idle buckets read as 0, so they are left out of the extremes.
+  const active = points.map(p => p.value).filter(v => v !== 0)
+  const highest = active.length ? Math.max(...active) : null
+  const lowest = active.length ? Math.min(...active) : null
+  const marker = point && point.value !== 0 && highest !== null && lowest !== null
+    ? (point.value === highest ? t('peak') : point.value === lowest ? t('lowest') : null)
+    : null
+
+  const detail = point
+    ? [hoverLabel ?? point.period, marker].filter(Boolean).join(' · ')
+    : children
 
   return (
     <div className="widget">
@@ -59,7 +69,7 @@ export function StatTile({
         </div>
         {/* Hovering swaps the detail line for the period of the hovered point. */}
         <div className="stat-label" style={{ marginBottom: 0 }}>
-          {point ? point.period : children}
+          {detail}
         </div>
       </div>
     </div>

@@ -32,6 +32,10 @@ export const zh: Record<string, string> = {
 
   // Dashboard widget details
   'In:': '输入：',
+  'Today': '今天',
+  'Yesterday': '昨天',
+  'peak': '峰值',
+  'lowest': '最低',
   'Out:': '输出：',
   'Cached:': '缓存：',
   'Avg:': '平均：',

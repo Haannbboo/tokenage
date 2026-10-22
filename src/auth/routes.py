@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import html
@@ -135,7 +136,7 @@ def get_current_user(request: Request) -> User:
     """Resolve the request to a user; never None.
 
     Raises 401 for anything unresolved (one message for all cases — callers
-    must not learn which). DB errors propagate as 500: fail closed.
+    must not learn which). DB outages return a retryable 503: fail closed.
     """
     user = getattr(request.state, "user", None)
     if user is not None:
@@ -268,8 +269,10 @@ async def auth_google_login(request: Request):
     except auth_google.OAuthFlowError:
         logger.exception("Failed to build Google authorize URL")
         raise HTTPException(status_code=503, detail="google oauth not configured")
-    auth_google.store_oauth_state(
-        state, {"nonce": nonce, "redirect_uri": redirect_uri, "origin": origin}
+    await asyncio.to_thread(
+        auth_google.store_oauth_state,
+        state,
+        {"nonce": nonce, "redirect_uri": redirect_uri, "origin": origin},
     )
     response = RedirectResponse(url, status_code=302)
     # Ties the callback to this browser (see auth_google_callback) so a
@@ -291,7 +294,7 @@ async def auth_google_callback(request: Request):
     _require_google()
     state = request.query_params.get("state", "")
     cookie_state = request.cookies.get(OAUTH_STATE_COOKIE_NAME)
-    data = auth_google.pop_oauth_state(state)
+    data = await asyncio.to_thread(auth_google.pop_oauth_state, state)
     # The state cookie ties this callback to the browser that started the
     # login. Without it, an attacker who completes their own Google login and
     # forwards the resulting callback URL to a victim could log the victim's
@@ -333,7 +336,9 @@ async def auth_google_callback(request: Request):
         user = get_or_create_user(email)
         update_user_name(user.id, str(claims.get("name") or "").strip() or None)
         device = _sanitize_device_name(str(cli_flow.get("device_name") or ""))
-        code = _mint_cli_code(user, device, str(cli_flow.get("code_challenge") or ""))
+        code = await asyncio.to_thread(
+            _mint_cli_code, user, device, str(cli_flow.get("code_challenge") or "")
+        )
         code_response = HTMLResponse(_code_page(code, device), headers=_NO_STORE)
         # Single-use: the state was popped above; clear the login-CSRF cookie
         # like the web path does.
@@ -573,7 +578,8 @@ async def auth_cli_start(
     except auth_google.OAuthFlowError:
         logger.exception("Failed to build Google authorize URL")
         raise HTTPException(status_code=503, detail="google oauth not configured")
-    auth_google.store_oauth_state(
+    await asyncio.to_thread(
+        auth_google.store_oauth_state,
         state,
         {
             "nonce": nonce,

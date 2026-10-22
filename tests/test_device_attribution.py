@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from tests.conftest import drain
+
 TS = 1776384000000000  # 2026-04-17T00:00:00+00:00
 
 
@@ -70,6 +72,7 @@ def test_ingest_report_attaches_token_device(api_module, fresh_db):
         },
         headers={"x-tokenage-token": token},
     )
+    drain()
     assert r.status_code == 204
     from src.database import get_engine
     from src.database.models import Usage
@@ -127,6 +130,7 @@ def test_otlp_record_attaches_token_device(otlp_module, fresh_db):
     r = TestClient(otlp_module.app).post(
         "/v1/logs", json=body, headers={"x-tokenage-token": token}
     )
+    drain()
     assert r.status_code == 200
     assert [d.device_id for d in _hourly(fresh_db)] == [device_id]
 

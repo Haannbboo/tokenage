@@ -95,7 +95,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --- Start API server ---
-TOKENAGE_DB_URL="${DB_URL}" "${PYTHON}" -m uvicorn src.api:app \
+TOKENAGE_QUEUE_URL="sqlite:///${WORK_DIR}/state.db" TOKENAGE_DB_URL="${DB_URL}" "${PYTHON}" -m uvicorn src.api:app \
   --host 127.0.0.1 --port "${API_PORT}" --log-level warning --reload &
 API_PID=$!
 

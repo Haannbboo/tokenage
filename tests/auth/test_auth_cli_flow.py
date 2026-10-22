@@ -6,15 +6,14 @@ test_auth_web.py; the one-time code + PKCE exchange run for real.
 
 import base64
 import hashlib
-import json
 import re
 import secrets
-import time
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+
+from tests.conftest import drain
 
 SESSION_COOKIE = "tokenage_session"
 
@@ -293,7 +292,6 @@ def test_exchange_wrong_verifier_fails_and_mints_nothing(
 
 
 def test_exchange_expired_code_fails(api_module, monkeypatch, fresh_db, isolated_home):
-    import src.config.app
 
     _enable_auth(monkeypatch)
     client = TestClient(api_module.app)
@@ -303,10 +301,11 @@ def test_exchange_expired_code_fails(api_module, monkeypatch, fresh_db, isolated
     approved = client.post("/auth/cli/start", data=params)
     code = _code_from_page(approved.text)
 
-    codes_path = Path(src.config.app.get_config_path()).parent / "cli_codes.json"
-    stored = json.loads(codes_path.read_text())
-    stored[code.replace("-", "")]["exp"] = time.time() - 1
-    codes_path.write_text(json.dumps(stored))
+    from src.shared_state import get_shared_state
+
+    get_shared_state().set(
+        _routes_module().auth_google.CLI_CODE_NAMESPACE, code.replace("-", ""), {}, -1
+    )
 
     assert _exchange(client, code, "anything").status_code == 400
 
@@ -433,6 +432,7 @@ def test_installed_machine_relogin_rotates_both_tokens_and_revoke_stops_ingest(
         json={},
         headers={"x-tokenage-token": second_tokens["ingest_token"]},
     )
+    drain()
     assert rejected.status_code == 401
 
 
@@ -578,14 +578,12 @@ def test_cli_code_store_roundtrip_and_single_use(api_module, isolated_home):
 
 
 def test_cli_code_store_rejects_expired(api_module, isolated_home):
-    import src.config.app
 
     auth_google = _routes_module().auth_google
     auth_google.store_cli_code("old", {"user_id": "u"})
-    path = Path(src.config.app.get_config_path()).parent / "cli_codes.json"
-    stored = json.loads(path.read_text())
-    stored["old"]["exp"] = time.time() - 1
-    path.write_text(json.dumps(stored))
+    from src.shared_state import get_shared_state
+
+    get_shared_state().set(auth_google.CLI_CODE_NAMESPACE, "old", {}, -1)
     assert auth_google.pop_cli_code("old") is None
 
 
@@ -595,10 +593,6 @@ def test_cli_code_store_caps_pending_entries(api_module, isolated_home, monkeypa
     for i in range(4):
         auth_google.store_cli_code(f"c{i}", {"user_id": "u"})
 
-    import src.config.app
-
-    path = Path(src.config.app.get_config_path()).parent / "cli_codes.json"
-    stored = json.loads(path.read_text())
-    assert len(stored) == 3
-    assert "c0" not in stored  # oldest evicted
-    assert "c3" in stored
+    assert auth_google.pop_cli_code("c0") is None
+    for i in range(1, 4):
+        assert auth_google.pop_cli_code(f"c{i}") is not None

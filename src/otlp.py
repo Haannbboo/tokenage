@@ -2,27 +2,28 @@ import asyncio
 import json
 import logging
 import os
-import time
 import uuid
-from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Iterator, MutableMapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from datetime import datetime
-from functools import partial
 
 from fastapi import FastAPI, HTTPException, Request
 
 from src.config.app import CONFIG
 
 from .database import init_db
+from .ingest_queue import (
+    TRANSIENT_DB_ERRORS,
+    consumer_lifespan,
+    publish,
+    store_unavailable_response,
+)
 from .provider_parser import parse_provider_metadata
 from .ratelimit import resolve_ingest_request_async
 from .recorder import record_tool_call, record_usage, update_tool_call_duration
-from .utils import secs_to_micros
+from .shared_state import SharedMapping, defer_updates
 
 log = logging.getLogger(__name__)
-
 CLAUDE_EVENT = "claude_code.api_request"
 CODEX_EVENT = "codex.sse_event"
 CODEX_API_REQUEST_EVENT = "codex.api_request"
@@ -41,17 +42,17 @@ KNOWN_SERVICE_NAMES = (
 # request); `duration_ms` from codex.api_request in HTTP mode, where it is the
 # request's own duration. response.completed turns whichever is present into a
 # per-request latency.
-codex_state: dict = {}
+codex_state = SharedMapping("otlp:codex")
 
 # Tool-name buffers: keyed by correlation ID, values are lists of {tool_name, tool_use_id, ts}
-_claude_tool_buffer: dict[str, list[dict]] = {}
-_codex_tool_buffer: dict[str, list[dict]] = {}
-_opencode_tool_buffer: dict[str, list[dict]] = {}  # keyed by message.id
+_claude_tool_buffer = SharedMapping("otlp:claude-tools")
+_codex_tool_buffer = SharedMapping("otlp:codex-tools")
+_opencode_tool_buffer = SharedMapping("otlp:opencode-tools")  # keyed by message.id
 
 # Most recent Claude usage row per prompt.id: prompt_key -> (usage_id, session_id, ts_ms).
 # Claude's prompt.id spans a whole user turn, so this lets a trailing tool_result
 # attach to the request that produced it instead of the next one.
-_claude_last_usage: dict[str, tuple[str, str | None, int]] = {}
+_claude_last_usage = SharedMapping("otlp:claude-last-usage")
 # Fallback window when a usage row has no known latency, used to tell a
 # just-decided tool (still awaiting its result) from a result-less stale one.
 CLAUDE_TOOL_FLUSH_GRACE_MS = 2000
@@ -130,7 +131,7 @@ def _record_ts_ms(record: dict) -> int:
 
 
 def _buffer_tool_call(
-    buffer: dict[str, list[dict]],
+    buffer: MutableMapping[str, list[dict]],
     key: str | None,
     *,
     tool_name: str,
@@ -148,6 +149,7 @@ def _buffer_tool_call(
                 entry["tool_name"] = tool_name
             if duration_ms is not None:
                 entry["duration_ms"] = duration_ms
+            buffer[key] = entries
             return
     entries.append(
         {
@@ -158,9 +160,11 @@ def _buffer_tool_call(
         }
     )
 
+    buffer[key] = entries
+
 
 def _buffer_tool_duration(
-    buffer: dict[str, list[dict]],
+    buffer: MutableMapping[str, list[dict]],
     key: str | None,
     tool_use_id: str,
     duration_ms: int | None,
@@ -172,15 +176,17 @@ def _buffer_tool_duration(
     """
     if not key or duration_ms is None:
         return False
-    for entry in buffer.get(key, []):
+    entries = buffer.get(key, [])
+    for entry in entries:
         if entry["tool_use_id"] == tool_use_id:
             entry["duration_ms"] = duration_ms
+            buffer[key] = entries
             return True
     return False
 
 
 def _pop_buffered_tool(
-    buffer: dict[str, list[dict]], key: str | None, tool_use_id: str
+    buffer: MutableMapping[str, list[dict]], key: str | None, tool_use_id: str
 ) -> dict | None:
     """Remove and return a buffered tool call by id, or None when unmatched."""
     if not key or not tool_use_id:
@@ -193,6 +199,8 @@ def _pop_buffered_tool(
             entries.pop(index)
             if not entries:
                 del buffer[key]
+            else:
+                buffer[key] = entries
             return entry
     return None
 
@@ -265,20 +273,12 @@ def _state_key(identifier) -> str | None:
     return str(identifier)
 
 
-@dataclass
-class _PromptLengthState:
-    """Queued prompt-length values waiting for the matching usage event."""
-
-    values: list[int] = field(default_factory=list)
-    ts: int = 0
-
-
 class PromptLengthTracker:
     """Tracks prompt-event lengths until the later OTLP usage event is written."""
 
     def __init__(self, prompt_events: set[str]):
         self._prompt_events = prompt_events
-        self._state: dict[str, _PromptLengthState] = {}
+        self._state = SharedMapping("otlp:prompt-length")
 
     def record_prompt_event(
         self,
@@ -300,9 +300,9 @@ class PromptLengthTracker:
         if key is None:
             return
 
-        state = self._state.setdefault(key, _PromptLengthState())
-        state.ts = time.time_ns() // 1000
-        state.values.append(int(prompt_length))
+        state = self._state.get(key, {"values": []})
+        state["values"].append(int(prompt_length))
+        self._state[key] = state
 
     def consume_for_usage_event(
         self,
@@ -324,25 +324,16 @@ class PromptLengthTracker:
         if not state:
             return 0
 
-        if not state.values:
+        if not state["values"]:
             del self._state[key]
             return 0
 
-        value = state.values.pop(0)
-        if not state.values:
+        value = state["values"].pop(0)
+        if not state["values"]:
             del self._state[key]
+        else:
+            self._state[key] = state
         return value
-
-    def evict_stale(self, ttl_seconds: int = 600) -> None:
-        """Drop old correlation entries so prompt-only events cannot accumulate forever."""
-        now = time.time_ns() // 1000
-        stale_keys = [
-            key
-            for key, state in self._state.items()
-            if now - state.ts > secs_to_micros(ttl_seconds)
-        ]
-        for key in stale_keys:
-            del self._state[key]
 
     def _key_for(
         self,
@@ -546,8 +537,8 @@ def _parse_opencode_record(
             )
 
 
-def _codex_state_for(attrs: list, user_id: str) -> dict | None:
-    """Return the mutable per-conversation Codex state, creating it if needed.
+def _codex_state_for(attrs: list, user_id: str) -> tuple[str, dict] | None:
+    """Return the key and mutable per-conversation Codex state.
 
     Returns None for events without a conversation id (for example the
     `/models` api_request that Codex emits alongside a websocket session).
@@ -557,11 +548,7 @@ def _codex_state_for(attrs: list, user_id: str) -> dict | None:
     if not state_key:
         return None
     state_key = _scoped_id(state_key, user_id)
-    state = codex_state.get(state_key)
-    if state is None:
-        state = {"ts": time.time_ns() // 1000}
-        codex_state[state_key] = state
-    return state
+    return state_key, codex_state.get(state_key, {})
 
 
 def _handle_codex_state_event(attrs: list, user_id: str) -> bool:
@@ -579,23 +566,29 @@ def _handle_codex_state_event(attrs: list, user_id: str) -> bool:
 
     if event_name == "codex.websocket_request":
         start_ms = _codex_event_ts_ms(attrs)
-        state = _codex_state_for(attrs, user_id)
-        if state is not None and start_ms is not None:
+        entry = _codex_state_for(attrs, user_id)
+        if entry is not None and start_ms is not None:
+            key, state = entry
             state["start_ms"] = start_ms
+            codex_state[key] = state
         return True
 
     if event_kind == CODEX_API_REQUEST_EVENT or event_name == CODEX_API_REQUEST_EVENT:
         duration = _attr(attrs, "duration_ms")
-        state = _codex_state_for(attrs, user_id)
-        if state is not None and duration is not None:
+        entry = _codex_state_for(attrs, user_id)
+        if entry is not None and duration is not None:
+            key, state = entry
             state["duration_ms"] = int(duration)
+            codex_state[key] = state
         return True
 
     if event_kind == "response.created":
         duration = _attr(attrs, "duration_ms")
-        state = _codex_state_for(attrs, user_id)
-        if state is not None and duration is not None:
+        entry = _codex_state_for(attrs, user_id)
+        if entry is not None and duration is not None:
+            key, state = entry
             state["ttft_ms"] = int(duration)
+            codex_state[key] = state
         return True
 
     return False
@@ -701,6 +694,24 @@ def _extract_codex_fields(
 
 
 def _parse_log_record(
+    record: dict,
+    service_name: str,
+    resource_session_id: str,
+    *,
+    user_id: str,
+    device_id: str,
+) -> None:
+    with defer_updates():
+        _parse_log_record_with_state(
+            record,
+            service_name,
+            resource_session_id,
+            user_id=user_id,
+            device_id=device_id,
+        )
+
+
+def _parse_log_record_with_state(
     record: dict,
     service_name: str,
     resource_session_id: str,
@@ -898,10 +909,13 @@ def _parse_log_record(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    yield
+    async with consumer_lifespan():
+        yield
 
 
 app = FastAPI(title="tokenage-otlp", lifespan=lifespan)
+for error in TRANSIENT_DB_ERRORS:
+    app.exception_handler(error)(store_unavailable_response)
 
 
 @app.get("/")
@@ -929,6 +943,63 @@ async def _read_capped_json(request: Request) -> dict:
     return json.loads(body_bytes)
 
 
+# Only metadata used by the parser crosses the durable queue boundary. OTLP
+# may also carry prompt/response text, tool arguments or a log body.
+_QUEUE_ATTRIBUTES = frozenset(
+    [
+        "cache_creation_token_count",
+        "cache_creation_tokens",
+        "cache_read_tokens",
+        "cached_token_count",
+        "call_id",
+        "conversation.id",
+        "duration_ms",
+        "event.kind",
+        "event.name",
+        "event.timestamp",
+        "http.response.status_code",
+        "http.status_code",
+        "input_token_count",
+        "input_tokens",
+        "message.id",
+        "model",
+        "output_token_count",
+        "output_tokens",
+        "prompt.id",
+        "prompt_id",
+        "prompt_length",
+        "provider",
+        "reasoning_token_count",
+        "session.id",
+        "status_code",
+        "tool_name",
+        "tool_token_count",
+        "tool_use_id",
+        "ttft_ms",
+    ]
+)
+
+
+def _queue_record(record: dict) -> dict:
+    attributes = []
+    for attr in record.get("attributes", []):
+        if attr.get("key") not in _QUEUE_ATTRIBUTES:
+            continue
+        raw_value = attr.get("value", {})
+        value = {
+            kind: raw_value[kind]
+            for kind in ("stringValue", "intValue", "doubleValue", "boolValue")
+            if kind in raw_value
+            and isinstance(raw_value[kind], (str, int, float, bool))
+        }
+        attributes.append({"key": attr["key"], "value": value})
+    return {
+        "timeUnixNano": record.get("timeUnixNano", "0"),
+        "observedTimeUnixNano": record.get("observedTimeUnixNano", "0"),
+        "attributes": attributes,
+    }
+
+
 def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
     """Yield (record, service_name, session_id) for each ingestable record."""
     for resource_log in body.get("resourceLogs", []):
@@ -950,62 +1021,6 @@ def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
                 yield record, service_name, session_id
 
 
-# Every request's records are processed on this one thread, in arrival order.
-# The buffers above correlate events that arrive in separate requests and are
-# plain dicts mutated with check-then-act sequences, so they rely on a single
-# thread touching them: keep max_workers=1. Running the blocking DB writes here
-# instead of on the event loop keeps /health, auth and body reads responsive
-# while a record waits on the database.
-_record_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tokenage-otlp")
-# Batches accepted but not finished (running + queued). If the database stalls
-# the worker stops draining, so bound the queue and shed with a retryable 503
-# instead of holding every request body in memory.
-MAX_PENDING_BATCHES = 64
-_pending_batches = 0
-
-
-def _evict_stale_state() -> None:
-    # Evict stale codex_state entries (older than 10 minutes)
-    now = time.time_ns() // 1000
-    stale_keys = [
-        k for k, v in codex_state.items() if now - v.get("ts", 0) > secs_to_micros(600)
-    ]
-    for k in stale_keys:
-        del codex_state[k]
-
-    # Evict tool buffers whose last entry is older than 10 minutes (aborted
-    # turns/dropped connections that never get matched to a usage event).
-    now_ms = now // 1000
-    for buf in (_claude_tool_buffer, _codex_tool_buffer, _opencode_tool_buffer):
-        stale_buf_keys = [
-            k
-            for k, entries in buf.items()
-            if entries and now_ms - entries[-1]["ts"] > 600_000
-        ]
-        for k in stale_buf_keys:
-            del buf[k]
-
-    for k, (_, _, usage_ts_ms) in list(_claude_last_usage.items()):
-        if now_ms - usage_ts_ms > 600_000:
-            del _claude_last_usage[k]
-
-    PROMPT_LENGTH_TRACKER.evict_stale()
-
-
-def _ingest_records(
-    records: list[tuple[dict, str, str]], *, user_id: str, device_id: str
-) -> None:
-    _evict_stale_state()
-    for record, service_name, session_id in records:
-        _parse_log_record(
-            record,
-            service_name,
-            session_id,
-            user_id=user_id,
-            device_id=device_id,
-        )
-
-
 @app.post("/v1/logs")
 async def receive_logs(request: Request):
     # Auth + rate limit + body cap — all before any record is parsed.
@@ -1025,27 +1040,19 @@ async def receive_logs(request: Request):
         )
         records = records[:max_records]
 
-    global _pending_batches
-    if _pending_batches >= MAX_PENDING_BATCHES:
-        raise HTTPException(
-            status_code=503,
-            detail="collector is busy, retry later",
-            headers={"Retry-After": "5"},
+    if records:
+        await asyncio.to_thread(
+            publish,
+            user_id,
+            [
+                {
+                    "kind": "otlp",
+                    "device_id": device_id,
+                    "record": (_queue_record(record), service, session),
+                }
+                for record, service, session in records
+            ],
         )
-    _pending_batches += 1
-    future = asyncio.get_running_loop().run_in_executor(
-        _record_executor,
-        partial(_ingest_records, records, user_id=user_id, device_id=device_id),
-    )
-
-    def _release_slot(_future: object) -> None:
-        global _pending_batches
-        _pending_batches -= 1
-
-    # On completion, not when this handler returns: a cancelled request leaves
-    # its batch queued, and it still occupies a slot until it has run.
-    future.add_done_callback(_release_slot)
-    await future
     if rejected:
         # OTLP partial success: still 200 so the exporter does not retry the same
         # oversized batch forever, but the dropped count is reported, not hidden.

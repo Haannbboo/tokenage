@@ -72,3 +72,8 @@ db:
 #                     # this machine need no token, others use a token or
 #                     # `tokenage server login-link`. google: hosted Google sign-in.
 #   # google_client_id / google_client_secret / allowlist apply to `google` only.
+
+# Event queue + shared state (leases, rate limits, sign-in codes).
+# Unset → SQLite file on this machine ($TOKENAGE_HOME/state.db). Multi-machine needs Redis.
+# queue:
+#   url: sqlite:////path/to/state.db

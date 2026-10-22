@@ -11,6 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from tests.conftest import drain
+
 OWNER = "owner@localhost"
 SESSION_COOKIE = "tokenage_session"
 
@@ -256,6 +258,7 @@ def _capture_usage(otlp_module, monkeypatch):
 def test_otlp_tokenless_loopback_is_rejected(otlp_module, fresh_db, monkeypatch):
     captured = _capture_usage(otlp_module, monkeypatch)
     response = TestClient(otlp_module.app).post("/v1/logs", json=_otlp_body())
+    drain()
     assert response.status_code == 401
     assert captured == []
 
@@ -275,6 +278,7 @@ def test_otlp_tokenless_non_loopback_or_bad_token_is_401(
     captured = _capture_usage(otlp_module, monkeypatch)
     client = TestClient(otlp_module.app, **client_kwargs)
     response = client.post("/v1/logs", json=_otlp_body(), headers=headers)
+    drain()
     assert response.status_code == 401
     assert captured == []
 
@@ -285,6 +289,7 @@ def test_otlp_tokenless_loopback_is_401_under_google(
     _set_provider(monkeypatch, "google")
     captured = _capture_usage(otlp_module, monkeypatch)
     response = TestClient(otlp_module.app).post("/v1/logs", json=_otlp_body())
+    drain()
     assert response.status_code == 401
     assert captured == []
 

@@ -6,20 +6,10 @@ import yaml
 
 from ..utils import replace_contents as _replace_contents
 from . import merge as merge_helpers
-from .models import expand_path, get_tracker_home
-
-CONFIG_ENV_VAR = "TOKENAGE_CONFIG"
+from .models import expand_path, get_config_path, get_tracker_home
 
 merge_missing_config_defaults = merge_helpers.merge_missing_config_defaults
 sync_config_file_with_defaults = merge_helpers.sync_config_file_with_defaults
-
-
-def get_config_path(path: str | None = None) -> str:
-    if path:
-        return expand_path(path)
-    return expand_path(
-        os.environ.get(CONFIG_ENV_VAR, os.path.join(get_tracker_home(), "config.yaml"))
-    )
 
 
 CONFIG_PATH = get_config_path()
@@ -33,6 +23,7 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     server = config.setdefault("server", {})
     db = config.setdefault("db", {})
     config.setdefault("models", {})
+    config.setdefault("queue", {})
 
     server.setdefault("host", "127.0.0.1")
     server.setdefault("api_port", 4001)

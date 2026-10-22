@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from tests.conftest import drain
+
 
 def _report(**overrides) -> dict:
     report = {
@@ -61,6 +63,7 @@ def test_valid_report_is_recorded_priced_and_attributed(
     r = TestClient(api_module.app).post(
         "/ingest/v1/usage", json=_report(), headers={"x-tokenage-token": token}
     )
+    drain()
     assert r.status_code == 204
     usage, tools = _rows(fresh_db, None)
     assert len(usage) == 1
@@ -123,6 +126,7 @@ def test_ingest_works_under_every_auth_provider(
     client = TestClient(api_module.app)
     h = {"x-tokenage-token": token}
     assert client.post("/ingest/v1/usage", json=_report(), headers=h).status_code == 204
+    drain()
     assert client.post("/ingest/v1/usage", json=_report()).status_code == 401
 
 
@@ -152,6 +156,7 @@ def test_redelivered_report_does_not_double_count_tool_calls(api_module, fresh_d
         r = client.post(
             "/ingest/v1/usage", json=report, headers={"x-tokenage-token": token}
         )
+        drain()
         assert r.status_code == 204
     usage, tools = _rows(fresh_db, None)
     assert len(usage) == 2  # the report itself is not deduplicated

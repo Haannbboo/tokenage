@@ -726,7 +726,11 @@ def test_postgres_connect_args_bound_database_waits(database_module):
 
     assert _connect_args("postgresql+psycopg://db.example/usage") == {
         "connect_timeout": 5,
+        "tcp_user_timeout": 30_000,
     }
+    assert _connect_args("postgresql://db.example/usage")["tcp_user_timeout"] == 30_000
+    assert _connect_args("sqlite:///usage.db") == {"check_same_thread": False}
+    assert _connect_args("mysql://db.example/usage") == {}
 
 
 def test_reprice_estimated_rows_rebinds_and_updates_costs(

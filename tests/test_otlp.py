@@ -6,7 +6,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
+
+from tests.conftest import drain
 
 
 def _ratelimit():
@@ -90,6 +93,7 @@ def test_retired_gemini_logs_are_ignored_without_debug_dumps(
             ]
         },
     )
+    drain()
 
     assert response.status_code == 200
     assert captured == []
@@ -697,7 +701,6 @@ def test_codex_websocket_request_sets_request_latency(otlp_module, monkeypatch):
     """response.completed has no duration; subtract the send timestamp instead."""
     captured = {}
     monkeypatch.setattr(otlp_module, "record_usage", _capture_usage(captured))
-    otlp_module.codex_state.clear()
 
     otlp_module._parse_log_record(
         {
@@ -747,7 +750,6 @@ def test_codex_api_request_duration_sets_request_latency(otlp_module, monkeypatc
     """HTTP mode: api_request carries the request's own duration."""
     captured = {}
     monkeypatch.setattr(otlp_module, "record_usage", _capture_usage(captured))
-    otlp_module.codex_state.clear()
 
     otlp_module._parse_log_record(
         {
@@ -792,7 +794,6 @@ def test_codex_api_request_duration_sets_request_latency(otlp_module, monkeypatc
 def test_codex_latency_stays_empty_without_request_start(otlp_module, monkeypatch):
     captured = {}
     monkeypatch.setattr(otlp_module, "record_usage", _capture_usage(captured))
-    otlp_module.codex_state.clear()
 
     otlp_module._parse_log_record(
         {
@@ -1018,21 +1019,18 @@ def test_tool_buffers_are_scoped_by_authenticated_user(otlp_module):
     assert "user-b:shared-prompt" in otlp_module._claude_tool_buffer
 
 
-def test_receive_logs_evicts_stale_tool_buffer_entries(otlp_module, fresh_db):
-    """Tool-call buffer entries older than 10 minutes must be swept so an
-    aborted turn doesn't leak the entry for the life of the process."""
-    client = _authed_client(otlp_module, fresh_db)
-    now_ms = int(time.time() * 1000)
+def test_tool_buffer_entries_expire_after_ten_minutes(
+    otlp_module, fresh_db, monkeypatch
+):
+    now = time.time()
+    monkeypatch.setattr("src.shared_state.time.time", lambda: now)
     otlp_module._claude_tool_buffer["test-user:stale"] = [
-        {"tool_name": "bash", "tool_use_id": "toolu_1", "ts": now_ms - 700_000}
+        {"tool_name": "bash", "tool_use_id": "toolu_1", "ts": int(now * 1000)}
     ]
+    now += 601
     otlp_module._claude_tool_buffer["test-user:fresh"] = [
-        {"tool_name": "bash", "tool_use_id": "toolu_2", "ts": now_ms}
+        {"tool_name": "bash", "tool_use_id": "toolu_2", "ts": int(now * 1000)}
     ]
-
-    response = client.post("/v1/logs", json={})
-
-    assert response.status_code == 200
     assert "test-user:stale" not in otlp_module._claude_tool_buffer
     assert "test-user:fresh" in otlp_module._claude_tool_buffer
 
@@ -1513,6 +1511,7 @@ def test_auth_disabled_no_token_records_usage(otlp_module, monkeypatch, fresh_db
 
     client = _authed_client(otlp_module, fresh_db)
     response = client.post("/v1/logs", json=_minimal_otlp_body())
+    drain()
 
     assert response.status_code == 200
     assert len(captured) == 1
@@ -1545,6 +1544,7 @@ def test_auth_enabled_valid_ingest_token_records_user_id(
         json=_minimal_otlp_body(),
         headers={"x-tokenage-token": token},
     )
+    drain()
 
     assert response.status_code == 200
     assert len(captured) == 1
@@ -1614,6 +1614,7 @@ def test_authenticated_otlp_tool_calls_keep_user_id(otlp_module, monkeypatch, fr
     response = TestClient(otlp_module.app).post(
         "/v1/logs", json=body, headers={"x-tokenage-token": token}
     )
+    drain()
 
     assert response.status_code == 200
     assert captured_tools[0]["user_id"] == user.id
@@ -1635,6 +1636,7 @@ def test_auth_lookup_timeout_returns_503(otlp_module, monkeypatch):
 
     assert response.status_code == 503
     assert response.json() == {"detail": "authentication unavailable"}
+    assert response.headers["retry-after"] == "5"
 
 
 def test_auth_enabled_missing_header_returns_401(otlp_module, monkeypatch):
@@ -1744,6 +1746,7 @@ def test_body_too_large_returns_413(otlp_module, monkeypatch, fresh_db):
     )
 
     response = client.post("/v1/logs", json=large_body)
+    drain()
 
     assert response.status_code == 413
     assert len(captured) == 0
@@ -1786,6 +1789,7 @@ def test_record_count_cap_limits_db_work_per_request(
 
     client = _authed_client(otlp_module, fresh_db)
     response = client.post("/v1/logs", json=body)
+    drain()
 
     assert response.status_code == 200
     # 1 minimal claude record + 1 codex record processed, not all 21.
@@ -1808,6 +1812,7 @@ def test_batch_within_cap_returns_no_partial_success(
 
     client = _authed_client(otlp_module, fresh_db)
     response = client.post("/v1/logs", json=_minimal_otlp_body())
+    drain()
 
     assert response.status_code == 200
     assert response.json() == {}
@@ -1836,6 +1841,7 @@ def test_body_too_large_streaming_cap_returns_413(otlp_module, monkeypatch, fres
         content=body_bytes,
         headers={"Content-Type": "application/json"},
     )
+    drain()
 
     assert response.status_code == 413
     assert len(captured) == 0
@@ -1872,6 +1878,7 @@ def test_rate_limit_exceeded_returns_429(otlp_module, monkeypatch, fresh_db):
             json=_minimal_otlp_body(),
             headers={"x-tokenage-token": token1},
         )
+        drain()
         assert response.status_code == 200
 
     # Third request from token1 should be rate limited
@@ -1880,6 +1887,7 @@ def test_rate_limit_exceeded_returns_429(otlp_module, monkeypatch, fresh_db):
         json=_minimal_otlp_body(),
         headers={"x-tokenage-token": token1},
     )
+    drain()
     assert response.status_code == 429
 
     # token2 should still work
@@ -1888,6 +1896,7 @@ def test_rate_limit_exceeded_returns_429(otlp_module, monkeypatch, fresh_db):
         json=_minimal_otlp_body(),
         headers={"x-tokenage-token": token2},
     )
+    drain()
     assert response.status_code == 200
 
 
@@ -1903,13 +1912,22 @@ def test_health_routes_stay_unauthenticated(otlp_module, monkeypatch):
     assert client.post("/v1/traces", json={}).status_code == 200
 
 
-def test_logs_are_shed_when_too_many_batches_are_pending(
+def test_logs_are_shed_when_too_many_records_are_pending(
     otlp_module, fresh_db, monkeypatch
 ):
     from src.auth.tokens import mint_token
 
-    token, _ = mint_token("busy@example.com", kind="ingest", db_path=fresh_db.db_path)
-    monkeypatch.setattr(otlp_module, "MAX_PENDING_BATCHES", 0)
+    token, user = mint_token(
+        "busy@example.com", kind="ingest", db_path=fresh_db.db_path
+    )
+    from src.shared_state import MAX_PENDING_EVENTS, get_shared_state, partition_for
+
+    store = get_shared_state()
+    with store._connection(True) as conn:
+        conn.executemany(
+            "INSERT INTO events(partition,payload,created) VALUES (?, '{}', 1)",
+            [(partition_for(user.id),)] * MAX_PENDING_EVENTS,
+        )
 
     response = TestClient(otlp_module.app).post(
         "/v1/logs", json=_minimal_otlp_body(), headers={"x-tokenage-token": token}
@@ -1917,7 +1935,7 @@ def test_logs_are_shed_when_too_many_batches_are_pending(
 
     assert response.status_code == 503
     assert response.headers["retry-after"] == "5"
-    assert otlp_module._pending_batches == 0
+    assert store.status()[partition_for(user.id)].depth == MAX_PENDING_EVENTS
 
 
 def test_logs_are_processed_off_the_event_loop(otlp_module, fresh_db, monkeypatch):
@@ -1948,7 +1966,7 @@ def test_logs_are_processed_off_the_event_loop(otlp_module, fresh_db, monkeypatc
         ]
     }
 
-    async def run():
+    async def run_inner():
         transport = httpx.ASGITransport(app=otlp_module.app)
         async with httpx.AsyncClient(
             transport=transport,
@@ -1958,11 +1976,50 @@ def test_logs_are_processed_off_the_event_loop(otlp_module, fresh_db, monkeypatc
             post = asyncio.create_task(client.post("/v1/logs", json=body))
             try:
                 await asyncio.get_running_loop().run_in_executor(None, started.wait, 5)
+                assert (await asyncio.wait_for(post, timeout=2)).status_code == 200
                 health = await asyncio.wait_for(client.get("/health"), timeout=2)
                 assert health.status_code == 200
             finally:
                 release.set()
             assert (await post).status_code == 200
 
+    async def run():
+        async with otlp_module.lifespan(otlp_module.app):
+            await run_inner()
+
     asyncio.run(run())
     assert threads and threads[0] is not threading.main_thread()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {
+            "resourceLogs": [
+                {
+                    "resource": {
+                        "attributes": [
+                            {
+                                "key": "service.name",
+                                "value": {"stringValue": "gemini-cli"},
+                            }
+                        ]
+                    },
+                    "scopeLogs": [{"logRecords": [{}]}],
+                }
+            ]
+        },
+    ],
+)
+def test_logs_without_ingestable_records_skip_publish(
+    otlp_module, fresh_db, monkeypatch, body
+):
+    from src.shared_state import StoreUnavailable
+
+    def unavailable(*args):
+        raise StoreUnavailable()
+
+    monkeypatch.setattr(otlp_module, "publish", unavailable)
+    response = _authed_client(otlp_module, fresh_db).post("/v1/logs", json=body)
+    assert response.status_code == 200

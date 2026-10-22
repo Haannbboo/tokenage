@@ -128,6 +128,18 @@ export function netThroughput(
   return ms > 0 ? (value(completionTokens) * 1000) / ms : 0
 }
 
+// cache_creation_tokens is a disjoint bucket on top of prompt_tokens (Anthropic
+// semantics), so it belongs in the denominator of a true cache hit rate.
+// Returns null when there is no input at all: there is no hit rate to report.
+export function cacheHitRate(
+  cached: number | null | undefined,
+  prompt: number | null | undefined,
+  cacheCreation: number | null | undefined,
+): number | null {
+  const totalInput = value(prompt) + value(cacheCreation)
+  return totalInput > 0 ? (value(cached) / totalInput) * 100 : null
+}
+
 type DurationFormatOptions = {
   secondsFractionDigits?: number
 }

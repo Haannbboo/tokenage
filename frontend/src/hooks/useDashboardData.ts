@@ -168,7 +168,6 @@ export function useDashboardData({ includeDaily = true, includeHeatmap = true, i
       cacheCreationTokens,
       totalTokens,
       totalCost,
-      avgEffectivePrice: requests === 0 ? 0 : totalCost / requests,
       avgEffectivePricePerMillion: totalTokens === 0 ? 0 : (totalCost / totalTokens) * 1_000_000,
       avgThroughput: netThroughput(completionTokens, latencySum),
       avgTokensPerRequest: requests === 0 ? 0 : totalTokens / requests

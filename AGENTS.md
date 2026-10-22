@@ -36,6 +36,7 @@ Verification workflow: `.agents/commands/verify.md`.
 Independent review: `.agents/commands/review/SKILL.md`.
 Open PR workflow: `.agents/commands/open-pr.md`.
 Pre-PR checklist: `.agents/commands/pre-pr.md`.
+Ingest benchmark (before PR, only with approval): `.agents/commands/benchmark.md`.
 Project rules: `.agents/commands/tokenage.md`.
 
 When handling PR comments, CI failures, or CodeRabbit feedback, read `.agents/commands/pr-follow-up.md` before acting. For review comments only, read `.agents/commands/respond-to-pr-comments.md`. These are not optional — they cover reply style, fix scoping, verification, and resolving GitHub conversations.

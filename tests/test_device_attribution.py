@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tests.conftest import drain
+from tests.conftest import drain, ingest_write
 
 TS = 1776384000000000  # 2026-04-17T00:00:00+00:00
 
@@ -141,7 +141,7 @@ def test_upsert_requires_device_id(fresh_db):
     with pytest.raises(ValueError, match="device_id"):
         _upsert_hourly(usage, db_path=fresh_db.db_path)
     with pytest.raises(ValueError, match="device_id"):
-        db.log_usage(usage, db_path=fresh_db.db_path)
+        ingest_write(db.log_usage, usage, db_path=fresh_db.db_path)
     assert _hourly(fresh_db) == []
 
 
@@ -149,15 +149,20 @@ def test_record_usage_requires_device_id(fresh_db):
     from src.recorder import record_usage
 
     with pytest.raises(TypeError):
-        record_usage(  # type: ignore[call-arg]
-            provider="p", model="m", user_id="u1", endpoint="/x", prompt_tokens=1
+        ingest_write(
+            record_usage,  # type: ignore[call-arg]
+            provider="p",
+            model="m",
+            user_id="u1",
+            endpoint="/x",
+            prompt_tokens=1,
         )
 
 
 def test_hourly_rows_split_per_device_and_increment(fresh_db):
     db = fresh_db.database_module
     for device in ("d1", "d2", "d1"):
-        db.log_usage(_usage(db, "u1", device), db_path=fresh_db.db_path)
+        ingest_write(db.log_usage, _usage(db, "u1", device), db_path=fresh_db.db_path)
     rows = {d.device_id: d.request_count for d in _hourly(fresh_db)}
     assert rows == {"d1": 2, "d2": 1}
 
@@ -165,8 +170,8 @@ def test_hourly_rows_split_per_device_and_increment(fresh_db):
 def test_device_filter_and_unknown_bucket(fresh_db):
     db = fresh_db.database_module
     path = fresh_db.db_path
-    db.log_usage(_usage(db, "u1", "d1"), db_path=path)
-    db.log_usage(_usage(db, "u1", "d2"), db_path=path)
+    ingest_write(db.log_usage, _usage(db, "u1", "d1"), db_path=path)
+    ingest_write(db.log_usage, _usage(db, "u1", "d2"), db_path=path)
     # Historical row: no device (written below the live path's guard).
     from src.database import get_engine
 
@@ -210,7 +215,7 @@ def test_request_log_rows_return_device_name(fresh_db):
     db = fresh_db.database_module
     path = fresh_db.db_path
     _token, user, device_id = _device_token(fresh_db, name="unraid-vm")
-    db.log_usage(_usage(db, user.id, device_id, ts=TS), db_path=path)
+    ingest_write(db.log_usage, _usage(db, user.id, device_id, ts=TS), db_path=path)
     from src.database import get_engine
 
     with Session(get_engine(path)) as s:
@@ -263,7 +268,7 @@ def test_dimension_device_returns_names(fresh_db):
     db = fresh_db.database_module
     path = fresh_db.db_path
     _token, user, device_id = _device_token(fresh_db, name="unraid-vm")
-    db.log_usage(_usage(db, user.id, device_id), db_path=path)
+    ingest_write(db.log_usage, _usage(db, user.id, device_id), db_path=path)
     rows = db.aggregate_daily_by_dimension(
         user_id=user.id, dimension="device", db_path=path
     )
@@ -275,7 +280,8 @@ def test_dimension_device_returns_names(fresh_db):
 def _record(fresh_db, device_id, endpoint, user_id="u1"):
     from src.recorder import record_usage
 
-    return record_usage(
+    return ingest_write(
+        record_usage,
         ts=TS,
         provider="anthropic",
         model="dedup-model",

@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tests.conftest import ingest_write
+
 # Epoch constants for test timestamps
 TS_2026_04_17_00 = 1776384000000000  # 2026-04-17T00:00:00+00:00
 TS_2026_04_17_00_01 = 1776384060000000  # 2026-04-17T00:01:00+00:00
@@ -39,14 +41,16 @@ def test_init_db_log_usage_and_fetch_rows(database_module, isolated_home):
     db_path = str(isolated_home / "usage.db")
     database_module.init_db(db_path)
 
-    base_url_id = database_module.get_or_create_base_url(
+    base_url_id = ingest_write(
+        database_module.get_or_create_base_url,
         "https://api.example.com/v1",
         db_path=db_path,
         provider_name="test-provider",
         source="proxy_config",
     )
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00,
@@ -131,7 +135,7 @@ def test_log_usage_normalizes_model_before_rollups(fresh_db):
         endpoint="otlp",
         user_id="test-user",
     )
-    log_usage(usage, db_path=fresh_db.db_path)
+    ingest_write(log_usage, usage, db_path=fresh_db.db_path)
 
     with Session(get_engine(fresh_db.db_path)) as session:
         assert session.get(Usage, usage.id).provider == "custom"
@@ -153,7 +157,8 @@ def test_fetch_recent_usage_returns_expected_row_shape(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00,
@@ -248,11 +253,12 @@ def test_fetch_recent_usage_aggregates_tool_names(fresh_db):
         base_url_id=None,
         user_id="test-user",
     )
-    database_module.log_usage(usage_obj, db_path=db_path)
+    ingest_write(database_module.log_usage, usage_obj, db_path=db_path)
 
     # Insert multiple tool calls for this usage
     for i, tool_name in enumerate(["read_file", "edit_file", "bash"]):
-        record_tool_call(
+        ingest_write(
+            record_tool_call,
             tool_use_id=f"tool_{i}",
             usage_id=usage_obj.id,
             session_id=usage_obj.session_id,
@@ -280,7 +286,8 @@ def test_fetch_recent_usage_no_tool_calls(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00,
@@ -321,7 +328,8 @@ def test_usage_filters_includes_client_source(fresh_db):
     database_module.init_db(db_path)
 
     for source in ["claude-code", "codex"]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_04_17_00,
@@ -373,7 +381,8 @@ def test_count_usage_filters_by_client_source(fresh_db):
     database_module.init_db(db_path)
 
     for source in ["claude-code", "claude-code", "codex"]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_04_17_00,
@@ -418,7 +427,8 @@ def test_aggregate_usage_by_period_filters_by_client_source(fresh_db):
         (TS_2026_04_17_00, "claude-code", 150),
         (TS_2026_04_18_00, "codex", 300),
     ]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=ts,
@@ -461,7 +471,8 @@ def test_summarize_usage_by_model_includes_avg_effective_price(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00,
@@ -488,7 +499,8 @@ def test_summarize_usage_by_model_includes_avg_effective_price(fresh_db):
         ),
         db_path=db_path,
     )
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_01,
@@ -529,7 +541,8 @@ def test_summarize_usage_by_provider_includes_avg_effective_price(fresh_db):
         ("test-model", 150, 0.0005),
         ("gpt-4.1", 300, 0.0010),
     ]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_04_17_00,
@@ -655,7 +668,8 @@ def test_get_usage_high_watermark_ts_returns_latest_ts(fresh_db):
         == 0
     )
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00,
@@ -740,7 +754,8 @@ def test_reprice_estimated_rows_rebinds_and_updates_costs(
 
     db_path = str(isolated_home / "reprice.db")
     database_module.init_db(db_path)
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_03_18,
@@ -795,7 +810,8 @@ def test_reprice_estimated_rows_respects_filters_and_skips_unresolvable(
     db_path = str(isolated_home / "reprice-filter.db")
     database_module.init_db(db_path)
     for provider, model in (("p1", "m1"), ("p2", "m2")):
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_03_18,
@@ -853,7 +869,8 @@ def test_reprice_counts_snapshot_failure_as_skipped(
 
     db_path = str(isolated_home / "reprice-snapshot-fail.db")
     database_module.init_db(db_path)
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_03_18,
@@ -974,7 +991,8 @@ def _batch_user(database_module, db_path, user_id):
 def _log_batch_rows(database_module, db_path, user_id):
     _batch_user(database_module, db_path, user_id)
     for i, (ts, model, session, prompt) in enumerate(_BATCH_ROWS):
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 id=f"{user_id}-{i}",
                 device_id=f"{user_id}-device",
@@ -1241,7 +1259,7 @@ def test_summarize_usage_window_groups_by_session_source_and_model(fresh_db):
     ]
 
     for row in rows:
-        database_module.log_usage(row, db_path=db_path)
+        ingest_write(database_module.log_usage, row, db_path=db_path)
 
     summary = database_module.summarize_usage_window(
         after_ts=0, db_path=db_path, user_id="test-user"
@@ -1294,7 +1312,8 @@ def test_summarize_usage_window_filters_after_and_until_ts(fresh_db):
     database_module.init_db(db_path)
 
     for index in range(3):
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_04_17_00 + index * 60_000_000,
@@ -1394,7 +1413,7 @@ def test_summarize_usage_window_filters_metadata_and_includes_rows(fresh_db):
     ]
 
     for row in rows:
-        database_module.log_usage(row, db_path=db_path)
+        ingest_write(database_module.log_usage, row, db_path=db_path)
 
     summary = database_module.summarize_usage_window(
         after_ts=0,
@@ -1441,7 +1460,8 @@ def test_aggregate_usage_by_period_includes_cost_totals(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00_10,
@@ -1466,7 +1486,8 @@ def test_aggregate_usage_by_period_includes_cost_totals(fresh_db):
         ),
         db_path=db_path,
     )
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00_20,
@@ -1543,8 +1564,9 @@ def test_throughput_ignores_tool_calls(fresh_db):
         total_cost_usd=0.0,
         user_id="test-user",
     )
-    database_module.log_usage(usage, db_path=db_path)
-    record_tool_call(
+    ingest_write(database_module.log_usage, usage, db_path=db_path)
+    ingest_write(
+        record_tool_call,
         tool_use_id="tool-throughput-1",
         usage_id=usage.id,
         tool_name="bash",
@@ -1592,8 +1614,9 @@ def test_fetch_tool_calls_has_no_row_relative_start(fresh_db):
         total_cost_usd=0.0,
         user_id="test-user",
     )
-    database_module.log_usage(usage, db_path=db_path)
-    record_tool_call(
+    ingest_write(database_module.log_usage, usage, db_path=db_path)
+    ingest_write(
+        record_tool_call,
         tool_use_id="tool-short",
         usage_id=usage.id,
         tool_name="read",
@@ -1614,11 +1637,13 @@ def test_get_or_create_base_url_reuses_exact_url_and_updates_metadata(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    base_url_id = database_module.get_or_create_base_url(
+    base_url_id = ingest_write(
+        database_module.get_or_create_base_url,
         "https://gateway.example/v1",
         db_path=db_path,
     )
-    same_id = database_module.get_or_create_base_url(
+    same_id = ingest_write(
+        database_module.get_or_create_base_url,
         "https://gateway.example/v1",
         db_path=db_path,
         provider_name="OpenAI",
@@ -1637,59 +1662,33 @@ def test_get_or_create_base_url_reuses_exact_url_and_updates_metadata(fresh_db):
     assert row.source == "codex_config"
 
 
-def test_get_or_create_base_url_retries_in_fresh_transaction_after_duplicate_insert(
-    database_module, monkeypatch
+def test_get_or_create_base_url_retries_savepoint_after_duplicate_insert(
+    fresh_db, monkeypatch
 ):
-    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import Session
 
-    import src.database.base_url as base_url_mod
+    db = fresh_db.database_module
+    url = "https://race.example/v1"
+    winner = ingest_write(db.get_or_create_base_url, url, db_path=fresh_db.db_path)
+    with Session(db.get_engine(fresh_db.db_path)) as session:
+        scalar = session.scalar
+        calls = []
 
-    class FakeRow:
-        id = 7
-        provider_name = None
-        source = None
+        def race(statement):
+            calls.append(1)
+            # Simulate a concurrent insertion after the first lookup.
+            return None if len(calls) == 1 else scalar(statement)
 
-    state = {"attempt": -1, "updated": False, "rolled_back": False}
-
-    class FakeSession:
-        def __init__(self, engine):
-            state["attempt"] += 1
-            self.attempt = state["attempt"]
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def scalar(self, statement):
-            if self.attempt == 0:
-                return None
-            return FakeRow()
-
-        def add(self, row):
-            self.row = row
-
-        def commit(self):
-            if self.attempt == 0:
-                raise IntegrityError("INSERT", None, Exception("dup"))
-            state["updated"] = True
-
-        def rollback(self):
-            state["rolled_back"] = True
-
-    monkeypatch.setattr(base_url_mod, "get_engine", lambda db_path=None: object())
-    monkeypatch.setattr(base_url_mod, "Session", FakeSession)
-
-    base_url_id = database_module.get_or_create_base_url(
-        "https://race.example/v1",
-        provider_name="OpenAI",
-        source="proxy_config",
-    )
-
-    assert base_url_id == 7
-    assert state["updated"] is True
-    assert state["rolled_back"] is True
+        monkeypatch.setattr(session, "scalar", race)
+        assert (
+            db.get_or_create_base_url(
+                url, provider_name="OpenAI", source="proxy_config", session=session
+            )
+            == winner
+        )
+        assert len(calls) == 2
+        assert session.get(db.BaseUrl, winner).provider_name == "openai"
+        session.commit()
 
 
 def test_upsert_hourly_aggregate_inserts_and_updates(fresh_db):
@@ -1722,7 +1721,7 @@ def test_upsert_hourly_aggregate_inserts_and_updates(fresh_db):
         base_url_id=None,
         user_id="test-user",
     )
-    database_module.log_usage(usage1, db_path=db_path)
+    ingest_write(database_module.log_usage, usage1, db_path=db_path)
 
     # Verify insert
     with database_module.get_engine(db_path).connect() as conn:
@@ -1760,7 +1759,7 @@ def test_upsert_hourly_aggregate_inserts_and_updates(fresh_db):
         base_url_id=None,
         user_id="test-user",
     )
-    database_module.log_usage(usage2, db_path=db_path)
+    ingest_write(database_module.log_usage, usage2, db_path=db_path)
 
     with database_module.get_engine(db_path).connect() as conn:
         rows = list(conn.execute(database_module.select(database_module.UsageHourly)))
@@ -1804,7 +1803,7 @@ def test_upsert_hourly_aggregate_handles_null_client_source(fresh_db):
         base_url_id=None,
         user_id="test-user",
     )
-    database_module.log_usage(usage, db_path=db_path)
+    ingest_write(database_module.log_usage, usage, db_path=db_path)
 
     with database_module.get_engine(db_path).connect() as conn:
         rows = list(conn.execute(database_module.select(database_module.UsageHourly)))
@@ -1844,7 +1843,7 @@ def test_upsert_hourly_aggregate_separates_by_hour(fresh_db):
             base_url_id=None,
             user_id="test-user",
         )
-        database_module.log_usage(usage, db_path=db_path)
+        ingest_write(database_module.log_usage, usage, db_path=db_path)
 
     with database_module.get_engine(db_path).connect() as conn:
         rows = list(conn.execute(database_module.select(database_module.UsageHourly)))
@@ -1860,7 +1859,8 @@ def test_log_usage_automaticaly_upserts_hourly_aggregate(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_10,
@@ -1931,7 +1931,7 @@ def test_summarize_usage_by_model_reads_from_aggregate_table(fresh_db):
             base_url_id=None,
             user_id="test-user",
         )
-        database_module.log_usage(usage, db_path=db_path)
+        ingest_write(database_module.log_usage, usage, db_path=db_path)
 
     summary = database_module.summarize_usage_by_model(user_id="test-user")
 
@@ -1981,7 +1981,7 @@ def test_summarize_usage_by_model_filters_by_provider(fresh_db):
             base_url_id=None,
             user_id="test-user",
         )
-        database_module.log_usage(usage, db_path=db_path)
+        ingest_write(database_module.log_usage, usage, db_path=db_path)
 
     summary = database_module.summarize_usage_by_model(
         provider="anthropic", user_id="test-user"
@@ -2021,7 +2021,7 @@ def test_summarize_usage_by_model_filters_by_since(fresh_db):
             base_url_id=None,
             user_id="test-user",
         )
-        database_module.log_usage(usage, db_path=db_path)
+        ingest_write(database_module.log_usage, usage, db_path=db_path)
 
     summary = database_module.summarize_usage_by_model(
         since="2026-04-20", user_id="test-user"
@@ -2047,7 +2047,8 @@ def _log_usage_row(
     total_cost=0.003,
 ):
     """Helper to insert a usage row for regression tests."""
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=ts,
@@ -2307,7 +2308,8 @@ def test_aggregate_usage_by_period_hourly_merges_same_hour(fresh_db):
         (TS_2026_05_05_10_15, 50, 50),
         (TS_2026_05_05_10_45, 30, 70),
     ]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=ts,
@@ -2357,7 +2359,8 @@ def test_aggregate_usage_by_period_hourly_counts_failures(fresh_db):
         (TS_2026_05_05_10_01, 500),
         (TS_2026_05_05_10_02, 200),
     ]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=ts,
@@ -2399,7 +2402,8 @@ def test_aggregate_usage_by_period_hourly_negative_tz_offset(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_05_03_30,
@@ -2442,7 +2446,8 @@ def test_aggregate_usage_by_period_with_epoch_ts(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=1776384000000000,  # 2026-04-17T00:00:00 UTC (micros)
@@ -2490,7 +2495,8 @@ def test_aggregate_daily_by_dimension_groups_by_model(fresh_db):
         (TS_2026_05_08_10, "anthropic", "claude-sonnet-4-6", 2000, 0.02),
         (TS_2026_05_07_10, "openai", "gpt-4o", 500, 0.005),
     ]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=ts,
@@ -2547,7 +2553,8 @@ def test_aggregate_daily_by_dimension_groups_by_provider(fresh_db):
         (TS_2026_05_07_10, "anthropic", "claude-sonnet-4-6", 1000, 0.01),
         (TS_2026_05_07_10, "openai", "gpt-4o", 500, 0.005),
     ]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=ts,
@@ -2594,7 +2601,8 @@ def test_fetch_sessions_groups_by_session_id(fresh_db):
     database_module.init_db(db_path)
 
     for i in range(3):
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 60,
@@ -2617,7 +2625,8 @@ def test_fetch_sessions_groups_by_session_id(fresh_db):
             db_path=db_path,
         )
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_11,
@@ -2655,7 +2664,8 @@ def test_fetch_sessions_excludes_null_session_id(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_10,
@@ -2685,7 +2695,8 @@ def test_fetch_sessions_filters_by_client_source(fresh_db):
     database_module.init_db(db_path)
 
     for source, sid in [("claude-code", "s1"), ("codex", "s2")]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10,
@@ -2718,7 +2729,8 @@ def test_fetch_sessions_hide_noop_keeps_single_request_opencode(fresh_db):
     database_module.init_db(db_path)
 
     for source, sid in [("opencode", "oc-1"), ("codex", "codex-1")]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10,
@@ -2762,7 +2774,8 @@ def test_fetch_sessions_hide_noop_keeps_single_request_kilo(fresh_db):
     database_module.init_db(db_path)
 
     for source, sid in [("kilo", "kilo-1"), ("codex", "codex-1")]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10,
@@ -2805,7 +2818,8 @@ def test_fetch_sessions_accepts_browser_iso_boundary_filters(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_10,
@@ -2841,7 +2855,8 @@ def test_fetch_sessions_sorting(fresh_db):
     database_module.init_db(db_path)
 
     for i, sid in enumerate(["s-low", "s-high"]):
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 3_600_000_000,
@@ -2874,7 +2889,8 @@ def test_fetch_sessions_sort_by_duration(fresh_db):
     database_module.init_db(db_path)
 
     # Short session: single request
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_10,
@@ -2896,7 +2912,8 @@ def test_fetch_sessions_sort_by_duration(fresh_db):
 
     # Long session: spans 10 minutes
     for i in range(2):
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 300_000_000,
@@ -2929,7 +2946,8 @@ def test_fetch_sessions_pagination(fresh_db):
     database_module.init_db(db_path)
 
     for i in range(5):
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 3600,
@@ -2960,7 +2978,8 @@ def test_fetch_session_selector_rows_returns_only_dropdown_fields(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_10,
@@ -3002,7 +3021,8 @@ def test_fetch_session_selector_rows_applies_filters_sort_and_pagination(fresh_d
     database_module.init_db(db_path)
 
     for index, source in enumerate(["claude-code", "codex", "codex"]):
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10 + index * 3_600_000_000,
@@ -3042,7 +3062,8 @@ def test_count_sessions(fresh_db):
     database_module.init_db(db_path)
 
     for sid in ["s1", "s2", "s1"]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10,
@@ -3071,7 +3092,8 @@ def test_count_usage_with_session_id(fresh_db):
     database_module.init_db(db_path)
 
     for sid in ["s1", "s1", "s2"]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10,
@@ -3118,7 +3140,8 @@ def test_count_usage_with_session_id_and_other_filters(fresh_db):
 
     # Same session, two different providers
     for provider in ["anthropic", "openai"]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10,
@@ -3170,7 +3193,8 @@ def test_summarize_sessions(fresh_db):
     database_module.init_db(db_path)
 
     for i in range(3):
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 60_000_000,
@@ -3191,7 +3215,8 @@ def test_summarize_sessions(fresh_db):
             db_path=db_path,
         )
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_11,
@@ -3269,7 +3294,8 @@ def test_session_record_created_from_usage_ingestion(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_10,
@@ -3292,7 +3318,8 @@ def test_session_record_created_from_usage_ingestion(fresh_db):
         db_path=db_path,
     )
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_10_05,
@@ -3346,7 +3373,8 @@ def test_session_record_primary_model_picks_higher_cost(fresh_db):
     database_module.init_db(db_path)
 
     # Model A: cost 0.003
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_10,
@@ -3370,7 +3398,8 @@ def test_session_record_primary_model_picks_higher_cost(fresh_db):
     )
 
     # Model B: cost 0.015 (higher)
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_10_01,
@@ -3473,7 +3502,8 @@ def test_rebuild_sessions_from_usage(fresh_db):
 
     # Seed usage rows for two sessions
     for i in range(3):
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=TS_2026_05_09_10 + i * 60_000_000,
@@ -3496,7 +3526,8 @@ def test_rebuild_sessions_from_usage(fresh_db):
             db_path=db_path,
         )
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_05_09_11,
@@ -3569,10 +3600,11 @@ def test_rebuild_sessions_from_usage_recomputes_tool_calls_json(fresh_db):
         status=200,
         user_id="test-user",
     )
-    database_module.log_usage(usage, db_path=db_path)
+    ingest_write(database_module.log_usage, usage, db_path=db_path)
 
     for tool_id, tool_name in [("t1", "bash"), ("t2", "bash"), ("t3", "read")]:
-        record_tool_call(
+        ingest_write(
+            record_tool_call,
             tool_use_id=tool_id,
             usage_id=usage.id,
             session_id="sess-tools",
@@ -4207,7 +4239,8 @@ def test_upsert_hourly_aggregate_with_epoch_ts(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=1776384000000000,  # 2026-04-17T00:00:00+00:00 (micros)
@@ -4254,7 +4287,8 @@ def test_fetch_recent_usage_filters_by_since_until_with_epoch_ts(fresh_db):
 
     # Insert two rows at different times
     for ts_val in [1776384000000000, 1776470400000000]:  # Apr 17, Apr 18 (micros)
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=ts_val,
@@ -4332,10 +4366,11 @@ def _insert_usage_with_tools(
         base_url_id=None,
         user_id="test-user",
     )
-    database_module.log_usage(usage_obj, db_path=db_path)
+    ingest_write(database_module.log_usage, usage_obj, db_path=db_path)
     ts_ms = ts // 1000
     for i, tool_name in enumerate(tools):
-        record_tool_call(
+        ingest_write(
+            record_tool_call,
             tool_use_id=f"tool_{usage_obj.id}_{i}",
             usage_id=usage_obj.id,
             session_id=session_id,
@@ -4581,7 +4616,8 @@ def test_recalculate_usage_cost_updates_row_and_hourly_rollup(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00,
@@ -4606,7 +4642,8 @@ def test_recalculate_usage_cost_updates_row_and_hourly_rollup(fresh_db):
     # A second row sharing the same usage_hourly bucket (same hour/provider/
     # model/client_source), to prove the rollup is delta-adjusted rather than
     # clobbered by the single recalculated row.
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_01,
@@ -4690,7 +4727,8 @@ def test_recalculate_usage_cost_adjusts_session_rollup(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00,
@@ -4714,7 +4752,8 @@ def test_recalculate_usage_cost_adjusts_session_rollup(fresh_db):
     # A second, differently-priced model in the same session, so the primary
     # model starts out as "recalc-model-b" (5.0 > 2.0) and should flip once
     # "recalc-model-a" is recalculated past it.
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_01,
@@ -4775,7 +4814,8 @@ def test_recalculate_usage_cost_skips_when_no_pricing_match(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00,
@@ -4998,7 +5038,8 @@ def test_log_usage_keeps_row_and_hourly_when_session_rollup_fails(
         raise RuntimeError("session rollup failed")
 
     monkeypatch.setattr(sessions_module, "_upsert_session_from_usage", boom)
-    log_usage(
+    ingest_write(
+        log_usage,
         Usage(
             device_id="test-device",
             ts=TS_2026_05_19_00,
@@ -5096,9 +5137,10 @@ def test_rebuild_sessions_from_usage_stamps_user_id(fresh_db):
         total_cost_usd=0.003,
         status=200,
     )
-    database_module.log_usage(usage, db_path=db_path)
+    ingest_write(database_module.log_usage, usage, db_path=db_path)
 
-    record_tool_call(
+    ingest_write(
+        record_tool_call,
         tool_use_id="t1",
         usage_id=usage.id,
         session_id="sess-tools",
@@ -5134,7 +5176,8 @@ def test_recalculate_usage_cost_targets_user_slice(fresh_db):
     db_path = fresh_db.db_path
     database_module.init_db(db_path)
 
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00,
@@ -5155,7 +5198,8 @@ def test_recalculate_usage_cost_targets_user_slice(fresh_db):
         ),
         db_path=db_path,
     )
-    database_module.log_usage(
+    ingest_write(
+        database_module.log_usage,
         database_module.Usage(
             device_id="test-device",
             ts=TS_2026_04_17_00,
@@ -5274,9 +5318,10 @@ def test_migrate_database_replaces_usage_daily_with_hourly_backfill(fresh_db):
             total_cost_usd=0.003,
             user_id=user_id,
         )
-        database_module.log_usage(usage, db_path=db_path)
+        ingest_write(database_module.log_usage, usage, db_path=db_path)
         for n, duration_ms in enumerate(tool_ms):
-            record_tool_call(
+            ingest_write(
+                record_tool_call,
                 tool_use_id=f"{usage.id}-{n}",
                 usage_id=usage.id,
                 tool_name="bash",
@@ -5405,7 +5450,8 @@ def test_log_usage_rolls_back_row_when_hourly_rollup_fails(fresh_db, monkeypatch
         user_id="test-user",
     )
     with pytest.raises(RuntimeError):
-        log_usage(
+        ingest_write(
+            log_usage,
             usage,
             db_path=fresh_db.db_path,
             tool_calls=[
@@ -5456,7 +5502,8 @@ def test_reprice_batch_rounds_like_per_row_updates(fresh_db, monkeypatch):
     for user_id, chunk in (("tiny-row", 1), ("tiny-chunk", 500)):
         _batch_user(database_module, db_path, user_id)
         for i in range(3):
-            database_module.log_usage(
+            ingest_write(
+                database_module.log_usage,
                 database_module.Usage(
                     id=f"{user_id}-{i}",
                     device_id=f"{user_id}-device",
@@ -5519,7 +5566,8 @@ def test_reprice_statement_count_does_not_grow_per_row(fresh_db, monkeypatch):
     for user_id, n in (("few", 5), ("many", 60)):
         _batch_user(database_module, db_path, user_id)
         for i in range(n):
-            database_module.log_usage(
+            ingest_write(
+                database_module.log_usage,
                 database_module.Usage(
                     id=f"{user_id}-{i}",
                     device_id=f"{user_id}-device",

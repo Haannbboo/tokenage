@@ -262,9 +262,9 @@ def get_shared_state() -> SharedState:
         return _store
 
 
-# One consumer thread processes a record at a time. Keep its state transitions
-# private until the record's database writes succeed. A partial state flush can
-# still leave a retry with changed correlation inputs and duplicate usage.
+# Keep a consumer pass's state transitions private until its database commit.
+# A partial state flush can still leave a retry with changed correlation inputs
+# and duplicate usage.
 _pending: ContextVar[dict | None] = ContextVar("correlation_updates", default=None)
 _DELETED = object()
 CORRELATION_TTL_SECONDS = 600
@@ -275,7 +275,7 @@ def defer_updates():
     updates = {}
     token = _pending.set(updates)
     try:
-        yield
+        yield updates
         store = get_shared_state()
         for (namespace, key), value in updates.items():
             if value is _DELETED:

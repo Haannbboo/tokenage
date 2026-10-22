@@ -5,6 +5,8 @@ from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from tests.conftest import ingest_write
+
 DAY = "2026-04-17"
 START_TS = 1776420000000000  # 2026-04-17 10:00 UTC, in microseconds.
 READ_PATHS = (
@@ -88,7 +90,7 @@ def tenant_reads(api_module, fresh_db):
                 session.commit()
                 session.refresh(tool)
                 session.expunge(tool)
-            upsert_session_from_tool_call(tool)
+            ingest_write(upsert_session_from_tool_call, tool)
             db.upsert_session_evaluation(
                 usage.session_id,
                 outcome,

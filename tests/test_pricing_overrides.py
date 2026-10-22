@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.pricing.models import ModelCost
+from tests.conftest import ingest_write
 
 TS = 1779148800000000  # 2026-05-19 00:00 UTC, microseconds
 SHARED = {"shared-model": ModelCost(input=1.0, output=2.0, cache_read=0.1)}
@@ -50,7 +51,8 @@ def shared_prices(monkeypatch):
 def _record(user_id, model, db_path, **extra):
     from src.recorder import record_usage
 
-    return record_usage(
+    return ingest_write(
+        record_usage,
         device_id="test-device",
         ts=TS,
         provider="p",
@@ -146,7 +148,8 @@ def test_model_price_helpers_upsert_and_delete(fresh_db, users):
 
 
 def _unpriced(db, user_id, row_id, model):
-    db.log_usage(
+    ingest_write(
+        db.log_usage,
         db.Usage(
             id=row_id,
             device_id="test-device",
@@ -162,7 +165,7 @@ def _unpriced(db, user_id, row_id, model):
             total_cost_usd=0.0,
             status=200,
             user_id=user_id,
-        )
+        ),
     )
 
 

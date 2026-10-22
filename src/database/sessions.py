@@ -166,10 +166,6 @@ def _upsert_session_from_usage(session: Session, usage: Usage) -> None:
     # other's increment. SQLite ignores FOR UPDATE; there log_usage's earlier
     # insert already holds the write lock. The standalone wrapper above does
     # not, so concurrent calls to it can still lose an increment on SQLite.
-    # Bound the wait: a long maintenance transaction on this row must make the
-    # best-effort rollup skip, not stall the ingest worker behind it.
-    if session.get_bind().dialect.name == "postgresql":
-        session.execute(text("SET LOCAL lock_timeout = '2s'"))
     existing = get_session_record(
         session, usage.session_id, user_id=usage.user_id, with_for_update=True
     )
@@ -261,26 +257,22 @@ def _load_tool_calls_json(raw: str | None) -> dict[str, int]:
     }
 
 
-def upsert_session_from_tool_call(
-    tool_call: ToolCall, db_path: str | None = None
-) -> None:
+def upsert_session_from_tool_call(tool_call: ToolCall, *, session: Session) -> None:
     """Incrementally update tool_calls_json on the session for a single tool call."""
     if not tool_call.session_id:
         return
 
-    engine = get_engine(db_path)
-    with Session(engine) as session:
-        existing = get_session_record(
-            session, tool_call.session_id, user_id=tool_call.user_id
-        )
-        if not existing:
-            return
+    existing = get_session_record(
+        session, tool_call.session_id, user_id=tool_call.user_id
+    )
+    if not existing:
+        return
 
-        tools = _load_tool_calls_json(existing.tool_calls_json)
-        tools[tool_call.tool_name] = tools.get(tool_call.tool_name, 0) + 1
-        existing.tool_calls_json = json.dumps(tools)
-        existing.updated_at = datetime.now(UTC).isoformat()
-        session.commit()
+    tools = _load_tool_calls_json(existing.tool_calls_json)
+    tools[tool_call.tool_name] = tools.get(tool_call.tool_name, 0) + 1
+    existing.tool_calls_json = json.dumps(tools)
+    existing.updated_at = datetime.now(UTC).isoformat()
+    session.flush()
 
 
 def summarize_session_tool_calls(

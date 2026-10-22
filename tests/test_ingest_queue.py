@@ -7,6 +7,13 @@ import pytest
 from sqlalchemy import text
 
 
+@pytest.fixture(autouse=True)
+def _no_pass_deadline(api_module, monkeypatch):
+    # Exact drain counts must not depend on runner speed.
+    monkeypatch.setattr("src.ingest_queue.PASS_SECONDS", 3600)
+    monkeypatch.setattr("src.ingest_queue.SQLITE_PASS_SECONDS", 3600)
+
+
 def test_poison_event_does_not_block_200_events(
     api_module, fresh_db, monkeypatch, caplog
 ):
@@ -41,17 +48,27 @@ def test_poison_event_does_not_block_200_events(
         )
     consumer = Consumer(store)
     process_usage = consumer._process
+    from src.shared_state import SharedMapping
 
-    def process(event):
-        if event.payload["fields"].pop("n") == 73:
+    correlation = SharedMapping("batch-test")
+
+    def process(event, session):
+        n = event.payload["fields"].pop("n")
+        process_usage(event, session)
+        correlation[str(n)] = n
+        if n == 73:
+            # Restore an earlier event's value as well as dropping new keys.
+            correlation.pop("72")
             raise ValueError("SECRET PROMPT")
-        process_usage(event)
 
     monkeypatch.setattr(consumer, "_process", process)
     with caplog.at_level(logging.WARNING):
         assert consumer.drain() == 200
     with fresh_db.database_module.get_engine().connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM usage")).scalar_one() == 199
+    assert correlation.get("73") is None
+    assert correlation["72"] == 72
+    assert correlation["199"] == 199
     assert "SECRET PROMPT" not in caplog.text
     assert "ValueError" in caplog.text
     assert store.status()[partition_for(user_id)].depth == 0
@@ -70,7 +87,7 @@ def test_graceful_close_finishes_and_acks_inflight_event(
     started, release = threading.Event(), threading.Event()
     threads = []
 
-    def process(event):
+    def process(event, session):
         threads.append(threading.current_thread())
         started.set()
         assert release.wait(5)
@@ -216,14 +233,14 @@ def test_transient_db_failure_keeps_event_pending(api_module, fresh_db, monkeypa
     store.publish("user", [{"kind": "usage", "user_id": "user"}])
     consumer = Consumer(store)
 
-    def fail(event):
+    def fail(event, session):
         raise OperationalError("", {}, Exception("connection interrupted"))
 
     monkeypatch.setattr(consumer, "_process", fail)
     assert consumer.drain() == 0
     assert store.status()[partition_for("user")].owner is None
     assert store.status()[partition_for("user")].depth == 1
-    monkeypatch.setattr(consumer, "_process", lambda event: None)
+    monkeypatch.setattr(consumer, "_process", lambda event, session: None)
     assert consumer.drain() == 1
 
 
@@ -412,7 +429,7 @@ def test_failed_partition_does_not_starve_later_partition(
     consumer = Consumer(store)
     processed = []
 
-    def process(event):
+    def process(event, session):
         if event.payload["user_id"] == first:
             raise StoreUnavailable()
         processed.append(event)
@@ -486,31 +503,43 @@ def test_otlp_transient_failure_keeps_failed_record(api_module, fresh_db, monkey
                 "input_token_count": 10,
                 "output_token_count": 5,
             }
-            for n in range(2)
+            for n in range(100)
         ],
     )
     original = otlp.record_usage
     attempts = []
 
+    from src.shared_state import SharedMapping
+
+    correlation = SharedMapping("transient-test")
+
     def flaky(**fields):
+        correlation[fields["model"]] = True
         attempts.append(fields["model"])
-        if attempts == ["retry-0", "retry-1"]:
+        if len(attempts) == 50:
             raise OperationalError("", {}, Exception("temporary failure"))
         return original(**fields)
 
     monkeypatch.setattr(otlp, "record_usage", flaky)
     consumer = Consumer(store)
-    assert consumer.drain() == 1
-    assert store.status()[partition_for(user.id)].depth == 1
-    assert consumer.drain() == 1
-    assert attempts == ["retry-0", "retry-1", "retry-1"]
+    assert consumer.drain() == 0
+    assert store.status()[partition_for(user.id)].depth == 100
+    assert correlation.get("retry-0") is None
+    assert correlation.get("retry-49") is None
     with fresh_db.database_module.get_engine().connect() as conn:
-        assert conn.execute(text("SELECT count(*) FROM usage")).scalar_one() == 2
+        assert conn.execute(text("SELECT count(*) FROM usage")).scalar_one() == 0
+    assert consumer.drain() == 100
+    assert attempts == [f"retry-{n}" for n in range(50)] + [
+        f"retry-{n}" for n in range(100)
+    ]
+    assert correlation["retry-99"] is True
+    with fresh_db.database_module.get_engine().connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM usage")).scalar_one() == 100
         assert (
             conn.execute(
                 text("SELECT sum(request_count) FROM usage_hourly")
             ).scalar_one()
-            == 2
+            == 100
         )
         for column in (
             "prompt_tokens",
@@ -526,8 +555,9 @@ def test_otlp_transient_failure_keeps_failed_record(api_module, fresh_db, monkey
 
 
 @pytest.mark.parametrize("service", ["opencode", "codex_cli_rs", "claude-code"])
+@pytest.mark.parametrize("same_pass", [False, True])
 def test_correlation_survives_transient_usage_failure(
-    api_module, fresh_db, monkeypatch, service
+    api_module, fresh_db, monkeypatch, service, same_pass
 ):
     from sqlalchemy.exc import OperationalError
 
@@ -577,7 +607,8 @@ def test_correlation_survives_transient_usage_failure(
         )
     _queue_otlp(store, user.id, auth.device_id, events, service)
     consumer = Consumer(store)
-    assert consumer.drain() == len(events)
+    if not same_pass:
+        assert consumer.drain() == len(events)
     usage_event = {
         "opencode": "opencode.message_completed",
         "codex_cli_rs": "codex.sse_event",
@@ -601,6 +632,21 @@ def test_correlation_survives_transient_usage_failure(
         ],
         service,
     )
+    if same_pass and service == "claude-code":
+        _queue_otlp(
+            store,
+            user.id,
+            auth.device_id,
+            [
+                {
+                    **correlation,
+                    "event.name": "tool_result",
+                    "tool_use_id": "tool",
+                    "duration_ms": 12,
+                }
+            ],
+            service,
+        )
     original = otlp.record_usage
     failed = False
 
@@ -613,11 +659,13 @@ def test_correlation_survives_transient_usage_failure(
 
     monkeypatch.setattr(otlp, "record_usage", flaky)
     assert consumer.drain() == 0
-    assert consumer.drain() == 1
+    assert consumer.drain() == (
+        len(events) + 1 + (service == "claude-code") if same_pass else 1
+    )
     with fresh_db.database_module.get_engine().connect() as conn:
         row = conn.execute(text("SELECT id,prompt_length,latency_ms FROM usage")).one()
         # Claude associates a tool result with the last successful usage.
-        if service != "claude-code":
+        if service != "claude-code" or same_pass:
             assert (
                 conn.execute(
                     text("SELECT count(*) FROM tool_calls WHERE usage_id=:u"),
@@ -665,13 +713,13 @@ def test_drained_partition_is_available_to_new_consumer(
     partition = partition_for("user")
     store.publish("user", [{"kind": "test"}])
     first = Consumer(store)
-    monkeypatch.setattr(first, "_process", lambda event: None)
+    monkeypatch.setattr(first, "_process", lambda event, session: None)
     assert first.drain() == 1
     assert store.status()[partition].owner is None
     store.publish("user", [{"kind": "test"}])
     second = Consumer(store)
     seen = []
-    monkeypatch.setattr(second, "_process", seen.append)
+    monkeypatch.setattr(second, "_process", lambda event, session: seen.append(event))
     assert second.drain() == 1
     assert len(seen) == 1
     assert store.status()[partition].depth == 0
@@ -688,7 +736,7 @@ def test_close_timeout_leaves_unfinished_event_pending(
     consumer = Consumer(store)
     started, release = threading.Event(), threading.Event()
 
-    def process(event):
+    def process(event, session):
         started.set()
         release.wait(5)
 
@@ -744,7 +792,11 @@ def test_pass_stops_at_deadline_and_next_pass_reclaims(
     from unittest.mock import Mock
 
     from src.ingest_queue import Consumer
-    from src.shared_state import LEASE_SECONDS, get_shared_state, partition_for
+
+    monkeypatch.setattr("src.ingest_queue.PASS_SECONDS", 0.05)
+    monkeypatch.setattr("src.ingest_queue.SQLITE_PASS_SECONDS", 0.05)
+    from src.ingest_queue import PASS_SECONDS
+    from src.shared_state import get_shared_state, partition_for
 
     store = get_shared_state()
     store.publish("user", [{"kind": "usage", "user_id": "user"}] * 4)
@@ -753,10 +805,10 @@ def test_pass_stops_at_deadline_and_next_pass_reclaims(
     consumer = Consumer(store)
     seen = []
 
-    def process(event):
+    def process(event, session):
         nonlocal now
         seen.append(event.position)
-        now += LEASE_SECONDS / 4
+        now += PASS_SECONDS / 2
 
     ack = Mock(wraps=store.ack)
     monkeypatch.setattr(store, "ack", ack)
@@ -772,6 +824,8 @@ def test_pass_stops_at_deadline_and_next_pass_reclaims(
 
 
 def test_worker_stops_pass_after_lease_takeover(api_module, fresh_db, monkeypatch):
+    monkeypatch.setattr("src.ingest_queue.PASS_SECONDS", 1)
+    monkeypatch.setattr("src.ingest_queue.SQLITE_PASS_SECONDS", 0.05)
     import src.otlp as otlp
     from src.ingest_queue import Consumer
     from src.shared_state import LEASE_SECONDS, get_shared_state, partition_for
@@ -822,7 +876,7 @@ def test_ack_failure_keeps_events_pending_and_releases(api_module, monkeypatch):
     store = get_shared_state()
     store.publish("user", [{"kind": "usage", "user_id": "user"}])
     consumer = Consumer(store)
-    monkeypatch.setattr(consumer, "_process", lambda event: None)
+    monkeypatch.setattr(consumer, "_process", lambda event, session: None)
 
     def unavailable(*args):
         raise StoreUnavailable()
@@ -838,7 +892,7 @@ def test_ack_failure_keeps_events_pending_and_releases(api_module, monkeypatch):
 def test_consumer_waits_after_transient_failure_then_resumes_polling(
     api_module, monkeypatch
 ):
-    from src.ingest_queue import POLL_SECONDS, Consumer
+    from src.ingest_queue import POLL_SECONDS, SQLITE_PAUSE_SECONDS, Consumer
     from src.shared_state import StoreUnavailable, get_shared_state
 
     store = get_shared_state()
@@ -846,19 +900,19 @@ def test_consumer_waits_after_transient_failure_then_resumes_polling(
     consumer = Consumer(store)
     waits = []
 
-    def process(event):
+    def process(event, session):
         if not waits:
             raise StoreUnavailable()
 
     def wait(delay):
         waits.append(delay)
-        if len(waits) == 2:
+        if len(waits) == 5:
             consumer.stop_event.set()
 
     monkeypatch.setattr(consumer, "_process", process)
     monkeypatch.setattr(consumer.stop_event, "wait", wait)
     consumer._run()
-    assert waits == [5, POLL_SECONDS]
+    assert waits == [SQLITE_PAUSE_SECONDS, 5, SQLITE_PAUSE_SECONDS, 0, POLL_SECONDS]
 
 
 @pytest.mark.parametrize(
@@ -890,3 +944,232 @@ def test_signin_store_unavailable_returns_503(api_module, monkeypatch, path, pro
     )
     assert response.status_code == 503
     assert response.headers["retry-after"] == "5"
+
+
+@pytest.mark.parametrize("fail_commit", [False, True])
+def test_pass_commits_once_before_correlation_and_ack(
+    api_module, fresh_db, monkeypatch, fail_commit
+):
+    from sqlalchemy import event
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import Session
+
+    from src.ingest_queue import Consumer
+    from src.shared_state import SharedMapping, get_shared_state, partition_for
+
+    store = get_shared_state()
+    _queue_otlp(
+        store,
+        "user",
+        "device",
+        [
+            {
+                "event.name": "opencode.message_completed",
+                "message.id": str(n),
+                "model": "test-model",
+                "input_token_count": n + 1,
+                "output_token_count": 5,
+            }
+            for n in range(5)
+        ],
+    )
+    engine = fresh_db.database_module.get_engine()
+    commits = []
+
+    def committed(connection):
+        commits.append(1)
+
+    event.listen(engine, "commit", committed)
+    correlation = SharedMapping("commit-test")
+    consumer = Consumer(store)
+    process = consumer._process
+
+    def write(event, session):
+        process(event, session)
+        correlation["written"] = True
+
+    monkeypatch.setattr(consumer, "_process", write)
+    ack = store.ack
+
+    def acknowledge(partition, position):
+        assert commits == [1]
+        assert correlation["written"] is True
+        ack(partition, position)
+
+    monkeypatch.setattr(store, "ack", acknowledge)
+    if fail_commit:
+
+        def fail(session):
+            raise OperationalError("SECRET SQL", {}, Exception("SECRET VALUE"))
+
+        monkeypatch.setattr(Session, "commit", fail)
+    try:
+        assert consumer.drain() == (0 if fail_commit else 5)
+    finally:
+        event.remove(engine, "commit", committed)
+    assert commits == ([] if fail_commit else [1])
+    assert correlation.get("written") == (None if fail_commit else True)
+    assert store.status()[partition_for("user")].depth == (5 if fail_commit else 0)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM usage")).scalar_one() == (
+            0 if fail_commit else 5
+        )
+
+
+def test_batched_fractional_cost_rollups_equal_stored_rows(
+    api_module, fresh_db, monkeypatch
+):
+    from decimal import Decimal
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from src.database.models import SessionRecord, Usage, UsageHourly
+    from src.ingest_queue import Consumer
+    from src.pricing import costs
+    from src.pricing.models import ModelCost
+    from src.shared_state import get_shared_state
+
+    monkeypatch.setitem(
+        costs.MODEL_COSTS,
+        "batch-tiny",
+        ModelCost(input=0.06, output=0.14, cache_read=0.02),
+    )
+    store = get_shared_state()
+    store.publish(
+        "user",
+        [
+            {
+                "kind": "usage",
+                "user_id": "user",
+                "device_id": "device",
+                "fields": {
+                    "provider": "test",
+                    "model": "batch-tiny",
+                    "endpoint": "test",
+                    "client_source": "test",
+                    "session_id": f"batch-{n % 2}",
+                    "prompt_tokens": n + 1,
+                    "completion_tokens": n % 3,
+                    "total_tokens": n + 1 + n % 3,
+                    "cached_tokens": n % 2,
+                    "status": 200 if n % 4 else 500,
+                },
+            }
+            for n in range(50)
+        ],
+    )
+    assert Consumer(store).drain() == 50
+    with Session(fresh_db.database_module.get_engine()) as session:
+        rows = session.scalars(select(Usage)).all()
+        hourly = session.scalars(select(UsageHourly)).all()
+        sessions = session.scalars(select(SessionRecord)).all()
+        for column in (
+            "prompt_tokens",
+            "completion_tokens",
+            "cached_tokens",
+            "total_tokens",
+            "total_cost_usd",
+        ):
+            total = sum(getattr(row, column) or 0 for row in rows)
+            assert sum(getattr(row, column) for row in hourly) == total
+            assert sum(getattr(row, column) for row in sessions) == total
+        for column in ("input_cost_usd", "output_cost_usd"):
+            assert sum(getattr(row, column) for row in hourly) == sum(
+                getattr(row, column) for row in rows
+            )
+        assert sum(row.request_count for row in hourly) == len(rows)
+        assert sum(row.request_count for row in sessions) == len(rows)
+        assert sum(row.total_cost_usd for row in rows) > Decimal(0)
+
+
+def test_sqlite_yields_to_api_writer_between_partitions(
+    api_module, fresh_db, monkeypatch
+):
+    from src.ingest_queue import SQLITE_PAUSE_SECONDS, Consumer
+    from src.shared_state import get_shared_state, partition_for
+
+    store = get_shared_state()
+    users = ["user"]
+    users.append(
+        next(
+            str(n) for n in range(100) if partition_for(str(n)) != partition_for("user")
+        )
+    )
+    for user in users:
+        store.publish(user, [{"kind": "usage", "user_id": user}])
+    engine = fresh_db.database_module.get_engine()
+    if engine.dialect.name != "sqlite":
+        pytest.skip("SQLite writer scheduling")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE api_writes (value INTEGER)"))
+    consumer = Consumer(store)
+    writing = threading.Event()
+    written = threading.Event()
+    writer = None
+    pauses = []
+
+    def api_write():
+        writing.set()
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO api_writes VALUES (1)"))
+        written.set()
+
+    def process(event, session):
+        nonlocal writer
+        if writer is None:
+            writer = threading.Thread(target=api_write, daemon=True)
+            writer.start()
+            assert writing.wait(1)
+        else:
+            assert written.is_set()
+
+    def pause(seconds):
+        pauses.append(seconds)
+        assert written.wait(2)
+
+    monkeypatch.setattr(consumer, "_process", process)
+    monkeypatch.setattr(consumer.stop_event, "wait", pause)
+    try:
+        assert consumer.drain() == 2
+        assert pauses == [SQLITE_PAUSE_SECONDS] * 2
+    finally:
+        if writer is not None:
+            writer.join(2)
+    assert written.is_set()
+
+
+def test_sqlite_worker_continues_backlog_before_idle_poll(api_module, monkeypatch):
+    from types import SimpleNamespace
+
+    from src.ingest_queue import POLL_SECONDS, SQLITE_PAUSE_SECONDS, Consumer
+    from src.shared_state import get_shared_state, partition_for
+
+    monkeypatch.setattr("src.ingest_queue.SQLITE_PASS_SECONDS", 0.05)
+    store = get_shared_state()
+    store.publish("user", [{"kind": "usage", "user_id": "user"}] * 4)
+    consumer = Consumer(store)
+    now = 1000.0
+    monkeypatch.setattr("src.ingest_queue.time", SimpleNamespace(monotonic=lambda: now))
+    waits = []
+
+    def process(event, session):
+        nonlocal now
+        now += 0.03
+
+    def wait(delay):
+        depth = store.status()[partition_for("user")].depth
+        waits.append((delay, depth))
+        if delay == POLL_SECONDS:
+            consumer.stop_event.set()
+
+    monkeypatch.setattr(consumer, "_process", process)
+    monkeypatch.setattr(consumer.stop_event, "wait", wait)
+    consumer._run()
+    assert waits == [
+        (SQLITE_PAUSE_SECONDS, 2),
+        (0, 2),
+        (SQLITE_PAUSE_SECONDS, 0),
+        (0, 0),
+        (POLL_SECONDS, 0),
+    ]

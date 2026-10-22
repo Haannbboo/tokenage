@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.orm import Session
 
 from ..pricing.models import ModelCost
 from ..utils import normalize_model_name
@@ -16,18 +17,22 @@ from .models import UserModelPrice
 _FIELDS = ("model", "input", "output", "cache_read", "cache_write", "updated_at")
 
 
-def list_model_prices(*, user_id: str, db_path: str | None = None) -> list[dict]:
+def list_model_prices(
+    *, user_id: str, db_path: str | None = None, session: Session | None = None
+) -> list[dict]:
     query = (
         select(*(getattr(UserModelPrice, f) for f in _FIELDS))
         .where(UserModelPrice.user_id == user_id)
         .order_by(UserModelPrice.model)
     )
+    if session is not None:
+        return [dict(row._mapping) for row in session.execute(query)]
     with get_engine(db_path).connect() as connection:
         return [dict(row._mapping) for row in connection.execute(query)]
 
 
 def load_model_price_overrides(
-    *, user_id: str, db_path: str | None = None
+    *, user_id: str, db_path: str | None = None, session: Session | None = None
 ) -> dict[str, ModelCost]:
     """The user's overrides keyed by normalized model, ready for resolution."""
     return {
@@ -37,7 +42,7 @@ def load_model_price_overrides(
             cache_read=row["cache_read"] or 0.0,
             cache_write=row["cache_write"],
         )
-        for row in list_model_prices(user_id=user_id, db_path=db_path)
+        for row in list_model_prices(user_id=user_id, db_path=db_path, session=session)
     }
 
 

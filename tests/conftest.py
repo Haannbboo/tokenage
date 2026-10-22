@@ -381,3 +381,19 @@ def drain() -> int:
     while count := consumer.drain():
         total += count
     return total
+
+
+def ingest_write(function, *args, db_path=None, **kwargs):
+    """Run a consumer write helper in a caller-owned transaction in unit tests."""
+    from sqlalchemy.orm import Session
+
+    from src.database import get_engine
+    from src.shared_state import defer_updates
+
+    with defer_updates():
+        with Session(get_engine(db_path), expire_on_commit=False) as session:
+            if session.get_bind().dialect.name == "sqlite":
+                session.connection().exec_driver_sql("BEGIN")
+            result = function(*args, session=session, **kwargs)
+            session.commit()
+            return result

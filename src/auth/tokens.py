@@ -144,32 +144,35 @@ def resolve_token(
 ) -> tuple[User, AuthToken] | None:
     """Return the token's user and the token row, or None for unknown/revoked.
 
-    Validation DB errors propagate (fail closed). Activity refreshes may lag
-    30 seconds and failures are best effort for every caller, including CLI/web.
+    Validation DB errors propagate (fail closed). Activity timestamps are written
+    at most once per 30 seconds, so they can read up to ~60 seconds stale; write
+    failures are best effort for every caller, including CLI/web.
     """
     engine = get_engine(db_path)
     activity_started = False
     try:
         with Session(engine, expire_on_commit=False) as session:
             _set_auth_statement_timeout(session)
+            # Only the device columns the checks need: the row also carries the
+            # client status report, which this hot path must not fetch.
             row = session.execute(
-                select(AuthToken, User, Device)
+                select(AuthToken, User, Device.id, Device.revoked_at, Device.user_id)
                 .join(User, AuthToken.user_id == User.id)
                 .outerjoin(Device, AuthToken.device_id == Device.id)
                 .where(AuthToken.token_hash == hash_token(token))
             ).first()
             if row is None:
                 return None
-            auth_token, user, device = row
+            auth_token, user, device_id, device_revoked_at, device_user_id = row
             if auth_token.revoked_at is not None:
                 return None
             # An ingest token not bound to a device is a pre-device-binding leftover.
             if auth_token.kind == "ingest" and auth_token.device_id is None:
                 return None
             if auth_token.device_id is not None and (
-                device is None
-                or device.revoked_at is not None
-                or device.user_id != user.id
+                device_id is None
+                or device_revoked_at is not None
+                or device_user_id != user.id
             ):
                 return None
             # Detach before bookkeeping: rollback after a failed refresh must not
@@ -179,18 +182,7 @@ def resolve_token(
             cutoff = now - ACTIVITY_UPDATE_INTERVAL_MICROS
             if auth_token.last_used_at is None or auth_token.last_used_at < cutoff:
                 activity_started = True
-                session.execute(
-                    sa_update(AuthToken)
-                    .where(
-                        AuthToken.id == auth_token.id,
-                        AuthToken.revoked_at.is_(None),
-                        or_(
-                            AuthToken.last_used_at.is_(None),
-                            AuthToken.last_used_at < cutoff,
-                        ),
-                    )
-                    .values(last_used_at=now)
-                )
+                # Device before token: mint_device_tokens locks in that order.
                 if auth_token.device_id is not None:
                     session.execute(
                         sa_update(Device)
@@ -204,6 +196,18 @@ def resolve_token(
                         )
                         .values(last_seen_at=now)
                     )
+                session.execute(
+                    sa_update(AuthToken)
+                    .where(
+                        AuthToken.id == auth_token.id,
+                        AuthToken.revoked_at.is_(None),
+                        or_(
+                            AuthToken.last_used_at.is_(None),
+                            AuthToken.last_used_at < cutoff,
+                        ),
+                    )
+                    .values(last_used_at=now)
+                )
                 session.commit()
     except SQLAlchemyError:
         if not activity_started:

@@ -91,6 +91,22 @@ def test_device_activity_has_independent_guard(fresh_db, monkeypatch, device_age
         )
 
 
+def test_validation_failure_propagates(fresh_db, monkeypatch):
+    tokens, token, _, engine, _ = _setup(fresh_db, monkeypatch)
+
+    def fail(conn, cursor, sql, params, context, many):
+        if sql.startswith("SELECT"):
+            raise OperationalError("lookup failed", {}, None)
+
+    event.listen(engine, "before_cursor_execute", fail)
+    try:
+        # A DB outage during validation must never become an auth success.
+        with pytest.raises(OperationalError):
+            tokens.resolve_token(token, fresh_db.db_path)
+    finally:
+        event.remove(engine, "before_cursor_execute", fail)
+
+
 @pytest.mark.parametrize("failure", ["token", "device", "commit"])
 def test_activity_failure_keeps_identity_and_retries(fresh_db, monkeypatch, failure):
     tokens, token, user, engine, now = _setup(fresh_db, monkeypatch)
@@ -294,12 +310,15 @@ def test_due_update_rechecks_concurrent_changes(fresh_db, monkeypatch, race):
     monkeypatch.setattr(tokens.Session, "execute", execute)
     # Existing in-flight requests keep their already validated identity.
     assert tokens.resolve_token(token, fresh_db.db_path) is not None
+    # Device first: the same lock order as mint_device_tokens.
+    assert [table for table, _ in changed_rows] == ["devices", "auth_tokens"]
+    changed = dict(changed_rows)
     if race == "refresh":
-        assert changed_rows == [("auth_tokens", 0), ("devices", 0)]
+        assert changed == {"devices": 0, "auth_tokens": 0}
     elif race == "token_revoke":
-        assert changed_rows[0] == ("auth_tokens", 0)
+        assert changed["auth_tokens"] == 0
     else:
-        assert changed_rows[1] == ("devices", 0)
+        assert changed["devices"] == 0
     result = tokens.resolve_token(token, fresh_db.db_path)
     assert (result is None) == (race != "refresh")
 
@@ -345,7 +364,7 @@ def test_session_cleanup_failure_only_swallowed_after_activity(
 @pytest.mark.parametrize("kind", ["cli", "ingest", "web"])
 @pytest.mark.parametrize("state", ["missing", "revoked", "other_user"])
 def test_invalid_device_rejected_for_shared_callers(fresh_db, monkeypatch, kind, state):
-    tokens, token, _, engine, _ = _setup(fresh_db, monkeypatch)
+    tokens, token, _, engine, _ = _setup(fresh_db, monkeypatch, kind)
     if kind != "ingest":
         tokens.mint_token(
             "activity@example.com", kind="ingest", db_path=fresh_db.db_path

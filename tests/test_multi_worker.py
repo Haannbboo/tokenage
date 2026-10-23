@@ -122,7 +122,9 @@ class Worker:
     def receive(self):
         with selectors.DefaultSelector() as selector:
             selector.register(self.process.stdout, selectors.EVENT_READ)
-            assert selector.select(30), "worker response timed out"
+            # Above SQLite's 30 s busy_timeout, so a slow, loaded host still
+            # reports the real failure rather than a timeout.
+            assert selector.select(90), "worker response timed out"
         line = self.process.stdout.readline()
         assert line, "worker exited without responding"
         return json.loads(line)
@@ -143,9 +145,8 @@ class Worker:
             self.process.kill()
             self.process.wait(5)
         self.stderr.seek(0)
-        diagnostics = self.stderr.read()
+        self.diagnostics = self.stderr.read()
         self.stderr.close()
-        assert self.process.returncode == 0, diagnostics
 
 
 @contextmanager
@@ -170,6 +171,10 @@ def workers(tmp_path, count):
             children.append(child)
         assert all(child.receive() == "ready" for child in children)
         yield children
+    # Checked only after a passing body, so a killed child cannot mask the
+    # test's own failure.
+    for child in children:
+        assert child.process.returncode == 0, child.diagnostics
 
 
 @pytest.mark.parametrize("count", [2, 3, 5])

@@ -406,7 +406,9 @@ def test_worker_count_shared_by_runtime_and_gunicorn(
     monkeypatch.setenv("TOKENAGE_SERVER__WORKERS", "99")
     assert config_module.load_config()["server"]["workers"] == workers
     assert load_server_config().workers == workers
-    assert runpy.run_path("src/config/api.conf.py")["workers"] == workers
+    repo_root = Path(__file__).resolve().parents[1]
+    api_conf = runpy.run_path(str(repo_root / "src" / "config" / "api.conf.py"))
+    assert api_conf["workers"] == workers
 
 
 @pytest.mark.parametrize("value", [0, -1, True, False, 1.5, "2", None, [], {}])
@@ -431,14 +433,13 @@ def test_worker_default_and_config_sync(config_module, tmp_path, monkeypatch):
     monkeypatch.setenv("TOKENAGE_CONFIG", str(config_path))
     assert config_module.load_config()["server"]["workers"] == 2
     assert load_server_config().workers == 2
-    assert config_module.sync_config_file_with_defaults(
-        str(config_path), "config.example.yaml"
-    )
+    example = str(Path(__file__).resolve().parents[1] / "config.example.yaml")
     import yaml
 
-    assert yaml.safe_load(config_path.read_text())["server"]["workers"] == 2
+    # The example leaves the key commented: syncing must not add it, since a
+    # sync rewrite drops the user's comments on every existing install.
+    config_module.sync_config_file_with_defaults(str(config_path), example)
+    assert "workers" not in yaml.safe_load(config_path.read_text())["server"]
     config_path.write_text("server:\n  workers: 3\n", encoding="utf-8")
-    config_module.sync_config_file_with_defaults(
-        str(config_path), "config.example.yaml"
-    )
+    config_module.sync_config_file_with_defaults(str(config_path), example)
     assert yaml.safe_load(config_path.read_text())["server"]["workers"] == 3

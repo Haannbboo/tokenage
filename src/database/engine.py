@@ -104,5 +104,8 @@ def init_db(db_path: str | None = None) -> None:
         if engine.dialect.name == "sqlite":
             connection.exec_driver_sql("BEGIN IMMEDIATE")
         elif engine.dialect.name == "postgresql":
+            # Bound the wait like SQLite's busy_timeout: a stalled holder fails
+            # this worker's startup (gunicorn respawns it) instead of hanging it.
+            connection.exec_driver_sql("SET LOCAL lock_timeout = '30s'")
             connection.exec_driver_sql("SELECT pg_advisory_xact_lock(1953459813)")
         Base.metadata.create_all(connection)

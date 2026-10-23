@@ -60,10 +60,10 @@ server:
   # base_url: http://my-nas
   host: 127.0.0.1       # bind address: 127.0.0.1 = local only, 0.0.0.0 = all interfaces
   api_port: 4001
-  # API processes, each with an ingest consumer. Must be an integer >= 1.
+  # API processes (default 2), each with an ingest consumer. Integer >= 1.
   # Each adds up to 4 auth threads and 15 DB connections (5 + 10 overflow).
   # Budget workers * 15 connections per node within the PostgreSQL limit.
-  workers: 2
+  # workers: 2
 
 db:
   path: ~/.tokenage/usage.db

@@ -21,6 +21,8 @@ def main():
         p.error(
             "provide --db-url or TOKENAGE_DB_URL (SQLite: sqlite:////absolute/path)"
         )
+    if not os.environ.get("TOKENAGE_HOME"):
+        p.error("set TOKENAGE_HOME to the server's home; its state.db holds the queue")
     url = args.db_url.replace("postgresql://", "postgresql+psycopg://", 1)
     engine = create_engine(url)
     state = Path(os.environ["TOKENAGE_HOME"]) / "state.db"

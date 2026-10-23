@@ -1,7 +1,7 @@
 """Open-loop ingest load: OTLP Claude turns + proxy usage reports at fixed request rates.
 
 uv run --no-project --with httpx python loadgen.py --url http://SERVER:PORT --tokens tokens.txt --rates 20 --step 60
-tokens.txt: one ingest token per line (one per simulated user). Prints one JSON line per step.
+tokens.txt: one ingest token per line (one per simulated user). Prints one JSON line per step; exits 1 after a failed step.
 """
 
 import argparse
@@ -158,8 +158,9 @@ async def main():
     async with httpx.AsyncClient(timeout=args.timeout, limits=limits) as client:
         for rate in rates:
             if not await step(client, args, tokens, rate):
-                break
+                return 1
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

@@ -71,22 +71,23 @@ Report both passes and their range; do not infer an improvement within the obser
 
 ## Baseline
 
-Current e2-standard-2 results (two fresh passes per commit and DB; processing is the drain after the highest attempted step, with the sustained-rate lower bound also shown):
+Current e2-standard-2 results (two fresh passes per commit and DB; processing is the drain after the highest passing step). `main` was not run on SQLite at this size; #118 is its closest SQLite baseline.
 
 | Date | Commit | DB | Sustained QPS | Processing rows/s | Limit |
 |---|---|---|---|---|---|
-| 2026-10-22 | eebf2fc (main) | Postgres | 20 / 20 | 27.9 / 27.4 draining; >=20 sustained | Consumer backlog at R=40; e2-standard-2 server CPU, all 2xx; PG mostly idle |
-| 2026-10-22 | 9f036fc (#118) | Postgres | 20 / 20 | 27.5 / 29.6 draining; >=20 sustained | Consumer backlog at R=40; e2-standard-2 server CPU, all 2xx; PG mostly idle |
-| 2026-10-22 | 5ed82bd (PR 1c) | Postgres | 20 / 20 | 33.1 / 33.7 draining; >=20 sustained | Consumer backlog at R=40; e2-standard-2 server CPU, all 2xx; PG mostly idle |
-| 2026-10-22 | 9f036fc (#118) | SQLite | 40 / 40 | 75.4 / 79.2 draining; >=40 sustained | Consumer backlog at R=60; e2-standard-2 server CPU, all 2xx; under concurrent ingest |
-| 2026-10-22 | 5ed82bd (PR 1c) | SQLite | 20 / 20 | unresolved short drain / 25.1 draining; >=20 sustained | Consumer backlog at R=40; e2-standard-2 server CPU, all 2xx; under concurrent ingest |
-
-e2-standard-2 server (2026-10-22, two passes each; all failures were queue growth, not HTTP errors):
-
-| Date | Commit | DB | Sustained QPS | Processing rows/s | Limit |
-|---|---|---|---|---|---|
-| 2026-10-22 | eebf2fc (main) | Postgres | 20 / 20 | 27.4–27.9 | consumer; worker process ~1 core (93%), PG idle |
-| 2026-10-22 | 9f036fc (#118 WAL anchor) | SQLite | 40 / 40 | 75.4–79.2 | consumer under concurrent ingest; worker ~1 core |
+| 2026-10-23 | f60fe3a (main) | Postgres | 20 / 20 | ≥20 (no measurable drain) / ≥20 (no measurable drain) | R=40: consumer backlog / R=40: consumer backlog |
+| 2026-10-23 | 31589d7 (#121) | Postgres | 20 / 20 | ≥20 (no measurable drain) / ≥20 (no measurable drain) | R=40: consumer backlog / R=40: consumer backlog |
+| 2026-10-23 | 38e8d72 (#122) | Postgres | 40 / 40 | ≥40 / ≥40 (no measurable drain) | R=60 consumer backlog; one ReadError in pass 2; PG CPU idle |
+| 2026-10-23 | 104f827 (#121+#122) | Postgres | 40 / 40 | ≥40 (no measurable drain) / ≥40 (no measurable drain) | R=60: consumer backlog / R=60: consumer backlog |
+| 2026-10-23 | f60fe3a (main) | SQLite | 40 / 40 | ≥40 (no measurable drain) / ≥40 (no measurable drain) | R=60: consumer backlog / R=60: consumer backlog |
+| 2026-10-23 | 31589d7 (#121) | SQLite | 40 / 40 | ≥40 (no measurable drain) / ≥40 (no measurable drain) | R=60: consumer backlog / R=60: consumer backlog |
+| 2026-10-23 | 38e8d72 (#122) | SQLite | 40 / 40 | ≥40 / ≥40 (no measurable drain) | R=60 consumer backlog; one protocol error in pass 1; backlog write p95 130 / 458 ms |
+| 2026-10-23 | 104f827 (#121+#122) | SQLite | 40 / 40 | ≥40 / ≥40 (no measurable drain) | R=60 consumer backlog, concurrent processing 57.10 / 57.35 rows/s; backlog write p95 841 / 445 ms |
+| 2026-10-22 | eebf2fc (main) | Postgres | 20 / 20 | 27.9 / 27.4 | consumer backlog at R=40; worker process ~1 core (93%), PG idle, all 2xx |
+| 2026-10-22 | 9f036fc (#118) | Postgres | 20 / 20 | 27.5 / 29.6 | consumer backlog at R=40; worker ~1 core, PG idle, all 2xx |
+| 2026-10-22 | 5ed82bd (PR 1c) | Postgres | 20 / 20 | 33.1 / 33.7 | consumer backlog at R=40; worker ~1 core, PG idle, all 2xx |
+| 2026-10-22 | 9f036fc (#118) | SQLite | 40 / 40 | 74.9 / 77.0 | consumer backlog at R=60 under concurrent ingest, all 2xx |
+| 2026-10-22 | 5b5d3d9 (PR 1c) | SQLite | 40 / 40 | 51.5 / 61.3 | consumer backlog at R=60 under concurrent ingest, all 2xx; dashboard write p95 0.11 s |
 
 Older rows below used e2-micro and are **superseded** by the e2-standard-2 procedure; retain them as historical results only.
 

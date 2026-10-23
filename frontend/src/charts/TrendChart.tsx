@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import type { DailyUsage } from '../types'
-import { fillGaps, formatCost, formatModelName, formatNumber, value, resolveTimezone, wallClockMs, getTimezoneOffset } from '../utils'
-import { getModelColor } from '../model-badge'
+import { fillGaps, formatCostFixed, formatModelName, formatNumber, value, resolveTimezone, wallClockMs, getTimezoneOffset } from '../utils'
 import { fillPeriodGaps } from '../periodGaps'
 import { describePeriod, periodLabelText } from '../periodLabels'
 import { useApp } from '../contexts/AppContext'
+import { getModelColor, getModelTextColor } from '../model-badge'
 import { ChartTooltip, TooltipRow, TooltipDivider } from './ChartTooltip'
+import { trendBrandColor, vibrantColor } from './trendColors'
+import { sortTrendRows, trendTooltipX } from './trendTooltip'
 import { getLang, LANG_LOCALES, t } from '../i18n/index.ts'
 
 type ModelBucketRow = {
@@ -22,7 +24,6 @@ const MODEL_LEGEND_MAX = 5
 export function TrendChart({
   data,
   title,
-  theme = 'light',
   granularity = 'day',
   periodCount,
   showDots = true,
@@ -30,7 +31,6 @@ export function TrendChart({
 }: {
   data: DailyUsage[],
   title: string,
-  theme?: 'light' | 'dark',
   granularity?: 'hour' | 'day',
   /** Buckets to show, anchored to now. Without it the plot spans the data. */
   periodCount?: number,
@@ -44,11 +44,17 @@ export function TrendChart({
     until?: string | null
   }
 }) {
-  const { timezone } = useApp()
+  const { timezone, theme } = useApp()
   const tz = resolveTimezone(timezone)
-  const [metric, setMetric] = useState<'tokens' | 'cost' | 'models'>('tokens');
+  const [metric, setMetric] = useState<'tokens' | 'cost'>('tokens');
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
-  const [showCacheHit, setShowCacheHit] = useState(false);
+  const chartAreaRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const tooltipXRef = useRef(268);
+  const tooltipWidthRef = useRef(520);
+  const chartId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
+  const hoverBandId = `trend-hover-band-${chartId}`;
+  const crosshairId = `trend-crosshair-${chartId}`;
   const filled = useMemo(
     () => (periodCount === undefined
       ? fillPeriodGaps(data, granularity)
@@ -58,26 +64,48 @@ export function TrendChart({
   const maxTokens = Math.max(...filled.map(x => value(x.total_tokens)), 1);
   const maxCost = Math.max(...filled.map(x => value(x.total_cost_usd)), 0.001);
   const maxRequests = Math.max(...filled.map(x => value(x.requests)), 1);
-  // cache_creation_tokens is a disjoint bucket on top of prompt_tokens (Anthropic
-  // semantics), so it must be added to the denominator for a true hit rate.
-  const hitRates = filled.map(d => {
-    const totalInput = value(d.prompt_tokens) + value(d.cache_creation_tokens);
-    return totalInput > 0 ? (value(d.cached_tokens) / totalInput) * 100 : 0;
-  });
-  const maxHitRate = Math.max(...hitRates, 100);
   const paddingX = 60;
   const chartWidth = 1000 - (paddingX * 2);
 
   const hoveredData = hoveredIdx !== null ? filled[hoveredIdx] : null;
-  // The tooltip follows the hovered bucket, but never leaves the panel.
-  const tooltipLeft = hoveredIdx === null
-    ? 50
-    : (paddingX + ((hoveredIdx + 0.5) / filled.length) * chartWidth) / 10;
+  const hoverColor = metric === 'cost' ? 'var(--color-blue)' : 'var(--color-yellow)';
+  // Follow the cursor without re-rendering the chart: only a bucket change
+  // updates React state, while the tooltip moves on its own transform.
+  // Near the edges the tooltip slows down and drifts past the plot instead of
+  // pinning itself a full tooltip-width away from the pointer.
+  const placeTooltip = (rect: DOMRect, measure = false) => {
+    const tooltip = tooltipRef.current;
+    if (!tooltip || rect.width === 0) return;
+    if (measure) tooltipWidthRef.current = tooltip.offsetWidth || tooltipWidthRef.current;
+    const overflow = Math.min(
+      Math.max(0, rect.left - 8),
+      Math.max(0, window.innerWidth - rect.right - 8),
+    );
+    const x = trendTooltipX(tooltipXRef.current, rect.width, tooltipWidthRef.current, overflow);
+    tooltip.style.transform = `translate3d(${x}px, 0, 0) translateX(-50%)`;
+  };
+  const handlePointer = (e: PointerEvent<SVGRectElement>) => {
+    const rect = chartAreaRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return;
+    const ratio = (((e.clientX - rect.left) / rect.width) * 1000 - paddingX) / chartWidth;
+    const idx = Math.min(filled.length - 1, Math.max(0, Math.floor(ratio * filled.length)));
+    tooltipXRef.current = e.clientX - rect.left;
+    setHoveredIdx(prev => (prev === idx ? prev : idx));
+    placeTooltip(rect);
+  };
+  const clearHover = () => setHoveredIdx(null);
+  // The tooltip mounts after the first pointer event; measure it and place it
+  // before paint. Re-measuring on render keeps the clamp honest when the
+  // bucket content changes width.
+  useLayoutEffect(() => {
+    if (hoveredIdx === null) return;
+    const rect = chartAreaRef.current?.getBoundingClientRect();
+    if (rect) placeTooltip(rect, true);
+  });
   // Model split: one row per (model, bucket) from /usage/daily-by-dimension.
   const tzOffset = getTimezoneOffset(tz);
   const [modelRows, setModelRows] = useState<ModelBucketRow[]>([]);
   useEffect(() => {
-    if (metric !== 'models') return;
     const controller = new AbortController();
     async function fetchModelRows() {
       try {
@@ -107,131 +135,93 @@ export function TrendChart({
       // The rows belong to the old filters until the new ones land.
       setModelRows([]);
     };
-  }, [metric, filterParams, granularity, tzOffset]);
+  }, [filterParams, granularity, tzOffset]);
 
   const modelBuckets = useMemo(() => {
-    const map = new Map<string, { model: string; tokens: number; cost: number; requests: number }[]>();
+    const map = new Map<string, Map<string, { tokens: number; cost: number; requests: number }>>();
     for (const row of modelRows) {
-      const list = map.get(row.period) ?? [];
-      list.push({
-        model: row.dimension,
-        tokens: value(row.total_tokens),
-        cost: value(row.total_cost_usd),
-        requests: value(row.requests),
-      });
-      map.set(row.period, list);
+      const bucket = map.get(row.period) ?? new Map();
+      const stat = bucket.get(row.dimension) ?? { tokens: 0, cost: 0, requests: 0 };
+      stat.tokens += value(row.total_tokens);
+      stat.cost += value(row.total_cost_usd);
+      stat.requests += value(row.requests);
+      bucket.set(row.dimension, stat);
+      map.set(row.period, bucket);
     }
-    for (const list of map.values()) list.sort((a, b) => b.tokens - a.tokens);
     return map;
   }, [modelRows]);
 
-  // The models that get their own colour, biggest first.
+  // Biggest first by tokens, so the legend order and colours stay put when
+  // switching between the token and cost views.
   const modelTotals = useMemo(() => {
-    const totals = new Map<string, number>();
+    const totals = new Map<string, { tokens: number; cost: number }>();
     for (const row of modelRows) {
-      totals.set(row.dimension, (totals.get(row.dimension) ?? 0) + value(row.total_tokens));
+      const stat = totals.get(row.dimension) ?? { tokens: 0, cost: 0 };
+      stat.tokens += value(row.total_tokens);
+      stat.cost += value(row.total_cost_usd);
+      totals.set(row.dimension, stat);
     }
     return [...totals.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([model, tokens]) => ({ model, tokens }));
+      .sort((a, b) => b[1].tokens - a[1].tokens)
+      .map(([model, stat]) => ({ model, ...stat }));
   }, [modelRows]);
   const legendModels = modelTotals.slice(0, MODEL_LEGEND_MAX);
-  const otherModelTokens = modelTotals.slice(MODEL_LEGEND_MAX).reduce((sum, m) => sum + m.tokens, 0);
-  const modelColor = (model: string) => getModelColor(model, theme);
+  const hasOtherModels = modelTotals.length > MODEL_LEGEND_MAX;
+  const legendModelNames = new Set(legendModels.map(m => m.model));
+  const modelColors = useMemo(() => {
+    const map = new Map<string, string>();
+    const seen = new Map<string, number>();
+    for (const { model } of modelTotals.slice(0, MODEL_LEGEND_MAX)) {
+      const base = vibrantColor(trendBrandColor(model, getModelColor(model, theme)));
+      const n = seen.get(base) ?? 0;
+      seen.set(base, n + 1);
+      map.set(model, n === 0 ? base : vibrantColor(getModelTextColor(model, theme)));
+    }
+    return map;
+  }, [modelTotals, theme]);
+  // Segments in legend order so a colour keeps its place from bar to bar;
+  // everything past the legend is pooled into "Other" on top.
+  const bucketSegments = (period: string) => {
+    const bucket = modelBuckets.get(period);
+    if (!bucket) return [];
+    const segments = legendModels.flatMap(m => {
+      const stat = bucket.get(m.model);
+      return stat && (stat.tokens > 0 || stat.cost > 0) ? [{ model: m.model, ...stat }] : [];
+    });
+    const other = { model: '', tokens: 0, cost: 0, requests: 0 };
+    for (const [model, stat] of bucket) {
+      if (legendModelNames.has(model)) continue;
+      other.tokens += stat.tokens;
+      other.cost += stat.cost;
+      other.requests += stat.requests;
+    }
+    if (other.tokens > 0 || other.cost > 0) segments.push(other);
+    return segments;
+  };
+  const modelColor = (model: string) => modelColors.get(model) ?? 'var(--text-muted)';
   const nowWallMs = wallClockMs(new Date(), tz);
   const hoveredPeriod = hoveredData ? describePeriod(hoveredData.period, granularity, nowWallMs, LANG_LOCALES[getLang()]) : null;
   const hoveredPeriodLabel = periodLabelText(hoveredPeriod);
-  const hCached = hoveredData ? value(hoveredData.cached_tokens) : 0;
-  // Cache-write tokens are fresh input (billed differently from cache-read),
-  // so they're folded into the Input bucket rather than the Cached bucket --
-  // otherwise Input+Cached+Output would undercount total_tokens.
-  const hInput = hoveredData ? Math.max(0, value(hoveredData.prompt_tokens) - hCached) + value(hoveredData.cache_creation_tokens) : 0;
-  const hOutput = hoveredData ? value(hoveredData.completion_tokens) : 0;
-  const hTotalInput = hoveredData ? value(hoveredData.prompt_tokens) + value(hoveredData.cache_creation_tokens) : 0;
-  const hHitRate = hTotalInput > 0 ? (hCached / hTotalInput) * 100 : 0;
 
   return (
     <div className="widget" style={{ minHeight: '400px', width: '100%', position: 'relative' }}>
       <div className="widget-header" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
         <span>📈 {title}</span>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '16px' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
-            {metric === 'models' ? (
-              <>
-                {legendModels.map(m => (
-                  <div key={m.model} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <div style={{ width: '12px', height: '12px', background: modelColor(m.model), borderRadius: '2px' }} />
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{formatModelName(m.model)}</span>
-                  </div>
-                ))}
-                {otherModelTokens > 0 && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <div style={{ width: '12px', height: '12px', background: 'var(--text-muted)', borderRadius: '2px' }} />
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Other')}</span>
-                  </div>
-                )}
-              </>
-            ) : metric === 'tokens' ? (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <div style={{ width: '12px', height: '12px', background: '#94a3b8', borderRadius: '2px' }} />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Input')}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <div style={{ width: '12px', height: '12px', background: 'var(--color-green)', borderRadius: '2px' }} />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Cached')}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <div style={{ width: '12px', height: '12px', background: 'var(--color-blue)', borderRadius: '2px' }} />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Output')}</span>
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <div style={{ width: '12px', height: '12px', background: '#d97706', borderRadius: '2px' }} />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Input Cost')}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <div style={{ width: '12px', height: '12px', background: '#a855f7', borderRadius: '2px' }} />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Output Cost')}</span>
-                </div>
-              </>
-            )}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <div style={{ width: '12px', height: '3px', background: 'var(--color-pink)', borderRadius: '2px' }} />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Requests')}</span>
-                </div>
-                <button
-                  type="button"
-                  aria-pressed={showCacheHit}
-                  onClick={() => setShowCacheHit(!showCacheHit)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', opacity: showCacheHit ? 1 : 0.4, background: 'none', border: 'none', padding: 0, font: 'inherit' }}
-                >
-                   <div style={{ width: '12px', height: '3px', background: 'var(--color-green)', borderRadius: '2px' }} />
-                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Cache Hit Rate')}</span>
-                 </button>
-          </div>
-          <div className="tab-toggle">
-            <button
-              className={`tab-toggle-btn ${metric === 'tokens' ? 'active' : ''}`}
-              onClick={() => setMetric('tokens')}
-            >{t('Tokens')}</button>
-            <button
-              className={`tab-toggle-btn ${metric === 'cost' ? 'active' : ''}`}
-              onClick={() => setMetric('cost')}
-            >{t('Cost')}</button>
-            <button
-              className={`tab-toggle-btn ${metric === 'models' ? 'active' : ''}`}
-              onClick={() => { setModelRows([]); setMetric('models'); }}
-            >{t('Models')}</button>
-          </div>
+        <div className="tab-toggle">
+          <button
+            className={`tab-toggle-btn ${metric === 'tokens' ? 'active' : ''}`}
+            onClick={() => setMetric('tokens')}
+          >{t('Tokens')}</button>
+          <button
+            className={`tab-toggle-btn ${metric === 'cost' ? 'active' : ''}`}
+            onClick={() => setMetric('cost')}
+          >{t('Cost')}</button>
         </div>
       </div>
-      <div style={{
+      <div ref={chartAreaRef} style={{
         flex: 1,
         padding: '20px 0',
-        height: '280px',
+        minHeight: '280px',
         position: 'relative',
         display: 'flex',
         flexDirection: 'column'
@@ -241,83 +231,62 @@ export function TrendChart({
         ) : (
           <>
             {hoveredIdx !== null && hoveredData && (
-              <ChartTooltip left={`${Math.min(Math.max(tooltipLeft, 12), 88)}%`}>
+              <ChartTooltip
+                ref={tooltipRef}
+                left="0"
+                style={{
+                  width: 'max-content',
+                  maxWidth: 'min(520px, calc(100% - 16px))',
+                  fontVariantNumeric: 'tabular-nums',
+                  transform: 'translate3d(268px, 0, 0) translateX(-50%)',
+                  willChange: 'transform',
+                  animation: 'trend-tooltip-in 120ms ease-out',
+                }}
+              >
                 <div style={{ fontWeight: 600, marginBottom: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', fontSize: '13px' }}>
                   {hoveredPeriodLabel ?? hoveredData.period}
                 </div>
-                {metric === 'models' ? (
-                  <>
-                    {(modelBuckets.get(hoveredData.period) ?? []).slice(0, MODEL_LEGEND_MAX).map(m => (
-                      <TooltipRow key={m.model} label={formatModelName(m.model)} labelColor={modelColor(m.model)}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontWeight: 600 }}>{formatNumber(m.tokens)}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>{formatCost(m.cost, 4)}</span>
-                        </div>
-                      </TooltipRow>
-                    ))}
-                    <TooltipDivider />
-                    <TooltipRow label={t('Total Tokens:')}>
-                      <span style={{ fontWeight: 800 }}>{formatNumber(value(hoveredData.total_tokens))}</span>
-                    </TooltipRow>
-                    {hoveredData.total_cost_usd !== null && value(hoveredData.total_cost_usd) > 0 && (
-                      <TooltipRow label={t('Est. Cost:')} labelColor="#f472b6">
-                        <span style={{ fontWeight: 800, color: '#f472b6' }}>{formatCost(hoveredData.total_cost_usd, 4)}</span>
-                      </TooltipRow>
-                    )}
-                  </>
-                ) : metric === 'tokens' ? (
-                  <>
-                    <TooltipRow label={t('Input:')} labelColor="#94a3b8">
-                      <span style={{ fontWeight: 600 }}>{formatNumber(hInput)}</span>
-                    </TooltipRow>
-                    <TooltipRow label={t('Cached:')} labelColor="var(--color-green)">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        {hTotalInput > 0 && (
-                          <span style={{ fontSize: '10px', color: 'var(--color-green)', opacity: 0.8 }}>
-                            ({hHitRate.toFixed(1)}%)
-                          </span>
-                        )}
-                        <span style={{ fontWeight: 600 }}>{formatNumber(hCached)}</span>
-                      </div>
-                    </TooltipRow>
-                    <TooltipRow label={t('Output:')} labelColor="var(--color-blue)">
-                      <span style={{ fontWeight: 600 }}>{formatNumber(hOutput)}</span>
-                    </TooltipRow>
-                    <TooltipDivider />
-                    <TooltipRow label={t('Total Tokens:')}>
-                      <span style={{ fontWeight: 800 }}>{formatNumber(value(hoveredData.total_tokens))}</span>
-                    </TooltipRow>
-                    {hoveredData.total_cost_usd !== null && value(hoveredData.total_cost_usd) > 0 && (
-                      <TooltipRow label={t('Est. Cost:')} labelColor="#f472b6">
-                        <span style={{ fontWeight: 800, color: '#f472b6' }}>{formatCost(hoveredData.total_cost_usd, 4)}</span>
-                      </TooltipRow>
-                    )}
-                  </>
-                ) : metric === 'cost' ? (
-                  <>
-                    <TooltipRow label={t('Input Cost:')} labelColor="#d97706">
-                      <span style={{ fontWeight: 600 }}>{formatCost(hoveredData.input_cost_usd, 4)}</span>
-                    </TooltipRow>
-                    <TooltipRow label={t('Output Cost:')} labelColor="#a855f7">
-                      <span style={{ fontWeight: 600 }}>{formatCost(hoveredData.output_cost_usd, 4)}</span>
-                    </TooltipRow>
-                    <TooltipDivider />
-                    <TooltipRow label={t('Total Cost:')}>
-                      <span style={{ fontWeight: 800 }}>{formatCost(hoveredData.total_cost_usd, 4)}</span>
-                    </TooltipRow>
-                    <TooltipRow label={t('Tokens:')}>
-                      <span style={{ fontWeight: 600 }}>{formatNumber(value(hoveredData.total_tokens))}</span>
-                    </TooltipRow>
-                  </>
-                ) : null}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) auto auto',
+                  columnGap: '12px',
+                  rowGap: '4px',
+                  alignItems: 'baseline',
+                  marginBottom: '4px',
+                }}>
+                  {sortTrendRows(bucketSegments(hoveredData.period), metric).map(m => {
+                    const primary = metric === 'cost' ? formatCostFixed(m.cost, 3) : formatNumber(m.tokens);
+                    const secondary = metric === 'cost' ? formatNumber(m.tokens) : formatCostFixed(m.cost, 3);
+                    return (
+                      <Fragment key={m.model || 'other'}>
+                        <span style={{
+                          color: m.model ? modelColor(m.model) : 'var(--text-muted)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {m.model ? formatModelName(m.model) : t('Other')}
+                        </span>
+                        <span style={{ fontWeight: 600, textAlign: 'right' }}>{primary}</span>
+                        <span style={{ color: 'var(--text-muted)', textAlign: 'right' }}>{secondary}</span>
+                      </Fragment>
+                    );
+                  })}
+                </div>
+                <TooltipDivider />
+                <TooltipRow label={metric === 'cost' ? t('Total Cost:') : t('Total Tokens:')}>
+                  <span style={{ fontWeight: 800 }}>
+                    {metric === 'cost' ? formatCostFixed(hoveredData.total_cost_usd, 3) : formatNumber(value(hoveredData.total_tokens))}
+                  </span>
+                </TooltipRow>
+                <TooltipRow label={metric === 'cost' ? t('Tokens:') : t('Est. Cost:')} labelColor="#f472b6">
+                  <span style={{ fontWeight: 800, color: '#f472b6' }}>
+                    {metric === 'cost' ? formatNumber(value(hoveredData.total_tokens)) : formatCostFixed(hoveredData.total_cost_usd, 3)}
+                  </span>
+                </TooltipRow>
                 <TooltipRow label={t('Requests:')} labelColor="var(--color-pink)">
                   <span style={{ fontWeight: 600, color: 'var(--color-pink)' }}>{formatNumber(hoveredData.requests)}</span>
                 </TooltipRow>
-                {hTotalInput > 0 && (
-                  <TooltipRow label={t('Cache Hit Rate:')} labelColor="var(--color-green)">
-                    <span style={{ fontWeight: 600, color: 'var(--color-green)' }}>{hHitRate.toFixed(1)}%</span>
-                  </TooltipRow>
-                )}
               </ChartTooltip>
             )}
 
@@ -327,25 +296,15 @@ export function TrendChart({
               style={{ width: '100%', height: '220px', overflow: 'visible' }}
             >
               <defs>
-                <linearGradient id="grad-tokens-input" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#94a3b8" stopOpacity="0.85" />
-                  <stop offset="100%" stopColor="#94a3b8" stopOpacity="0.3" />
+                <linearGradient id={hoverBandId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={hoverColor} stopOpacity="0.02" />
+                  <stop offset="50%" stopColor={hoverColor} stopOpacity="0.14" />
+                  <stop offset="100%" stopColor={hoverColor} stopOpacity="0.02" />
                 </linearGradient>
-                <linearGradient id="grad-tokens-cached" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--color-green)" stopOpacity="0.85" />
-                  <stop offset="100%" stopColor="var(--color-green)" stopOpacity="0.3" />
-                </linearGradient>
-                <linearGradient id="grad-tokens-output" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--color-blue)" stopOpacity="0.85" />
-                  <stop offset="100%" stopColor="var(--color-blue)" stopOpacity="0.3" />
-                </linearGradient>
-                <linearGradient id="grad-cost-input" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#d97706" stopOpacity="0.85" />
-                  <stop offset="100%" stopColor="#d97706" stopOpacity="0.3" />
-                </linearGradient>
-                <linearGradient id="grad-cost-output" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#a855f7" stopOpacity="0.85" />
-                  <stop offset="100%" stopColor="#a855f7" stopOpacity="0.3" />
+                <linearGradient id={crosshairId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={hoverColor} stopOpacity="0.05" />
+                  <stop offset="45%" stopColor={hoverColor} stopOpacity="0.75" />
+                  <stop offset="100%" stopColor={hoverColor} stopOpacity="0.2" />
                 </linearGradient>
               </defs>
               {[0, 0.25, 0.5, 0.75, 1].map(tick => (
@@ -363,15 +322,20 @@ export function TrendChart({
                 const barSlot = chartWidth / filled.length;
                 const cx = paddingX + (hoveredIdx + 0.5) / filled.length * chartWidth;
                 return (
-                  <rect
-                    x={cx - barSlot / 2}
-                    y={0}
-                    width={Math.max(barSlot, 3)}
-                    height={200}
-                    fill="var(--text-muted)"
-                    opacity={0.12}
-                    style={{ pointerEvents: 'none' }}
-                  />
+                  <g style={{
+                    transform: `translateX(${cx}px)`,
+                    transition: 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1)',
+                    pointerEvents: 'none',
+                  }}>
+                    <rect
+                      x={-Math.max(barSlot, 3) / 2}
+                      y={0}
+                      width={Math.max(barSlot, 3)}
+                      height={200}
+                      rx={4}
+                      fill={`url(#${hoverBandId})`}
+                    />
+                  </g>
                 );
               })()}
 
@@ -393,115 +357,46 @@ export function TrendChart({
                   const x = cx - barW / 2;
                   const dimmed = hoveredIdx !== null && hoveredIdx !== i;
 
-                  if (metric === 'models') {
-                    const models = modelBuckets.get(d.period) ?? [];
-                    if (models.length === 0) return null;
+                  const maxValue = metric === 'cost' ? maxCost : maxTokens;
+                  const stack = bucketSegments(d.period)
+                    .filter(m => (metric === 'cost' ? m.cost : m.tokens) > 0);
+                  if (stack.length === 0) return null;
 
-                    const segments = models.slice(0, MODEL_LEGEND_MAX);
-                    const otherTokens = models.slice(MODEL_LEGEND_MAX).reduce((sum, m) => sum + m.tokens, 0);
-                    const stack = otherTokens > 0
-                      ? [...segments, { model: '', tokens: otherTokens, cost: 0, requests: 0 }]
-                      : segments;
-
-                    let yCursor = 200;
-                    return (
-                      <g key={i} style={{ opacity: dimmed ? 0.3 : 1, transition: 'opacity 0.2s' }}>
-                        {stack.map((m, mi) => {
-                          if (m.tokens <= 0) return null;
-                          const h = (m.tokens / maxTokens) * 200;
-                          const y = yCursor - h;
-                          yCursor = y;
-                          const isTop = mi === 0;
-                          const isBottom = mi === stack.length - 1;
-                          return (
-                            <path
-                              key={m.model || `other-${mi}`}
-                              d={roundedRect(x, y, barW, h, isTop ? radius : 0, isBottom ? radius : 0)}
-                              fill={m.model ? modelColor(m.model) : 'var(--text-muted)'}
-                              opacity={0.85}
-                            />
-                          );
-                        })}
-                      </g>
-                    );
-                  } else if (metric === 'tokens') {
-                    const cached = value(d.cached_tokens);
-                    // Cache-write tokens fold into Input; see hInput above.
-                    const input = Math.max(0, value(d.prompt_tokens) - cached) + value(d.cache_creation_tokens);
-                    const output = value(d.completion_tokens);
-                    const total = input + cached + output;
-                    if (total === 0) return null;
-
-                    const hOutput = (output / maxTokens) * 200;
-                    const hCached = (cached / maxTokens) * 200;
-                    const hInput = (input / maxTokens) * 200;
-
-                    const yOutput = 200 - hOutput;
-                    const yCached = yOutput - hCached;
-                    const yInput = yCached - hInput;
-
-                    const isTop = hInput > 0;
-                    const hasMiddle = hCached > 0;
-                    const hasBottom = hOutput > 0;
-
-                    return (
-                      <g key={i} style={{ opacity: dimmed ? 0.3 : 1, transition: 'opacity 0.2s' }}>
-                        {hasBottom && (
-                          <path d={roundedRect(x, yOutput, barW, hOutput, hasMiddle ? 0 : isTop ? 0 : radius, radius)} fill="url(#grad-tokens-output)" />
-                        )}
-                        {hasMiddle && (
-                          <path d={roundedRect(x, yCached, barW, hCached, isTop ? 0 : radius, 0)} fill="url(#grad-tokens-cached)" />
-                        )}
-                        {isTop && (
-                          <path d={roundedRect(x, yInput, barW, hInput, radius, 0)} fill="url(#grad-tokens-input)" />
-                        )}
-                      </g>
-                    );
-                  } else if (metric === 'cost') {
-                    const inputCost = value(d.input_cost_usd);
-                    const outputCost = value(d.output_cost_usd);
-                    const total = inputCost + outputCost;
-                    if (total === 0) return null;
-
-                    const hOutput = (outputCost / maxCost) * 200;
-                    const hInput = (inputCost / maxCost) * 200;
-
-                    const yOutput = 200 - hOutput;
-                    const yInput = yOutput - hInput;
-
-                    const isTop = hInput > 0;
-                    const hasBottom = hOutput > 0;
-
-                    return (
-                      <g key={i} style={{ opacity: dimmed ? 0.3 : 1, transition: 'opacity 0.2s' }}>
-                        {hasBottom && (
-                          <path d={roundedRect(x, yOutput, barW, hOutput, isTop ? 0 : radius, radius)} fill="url(#grad-cost-output)" />
-                        )}
-                        {isTop && (
-                          <path d={roundedRect(x, yInput, barW, hInput, radius, 0)} fill="url(#grad-cost-input)" />
-                        )}
-                      </g>
-                    );
-                  }
+                  let yCursor = 200;
+                  return (
+                    <g
+                      key={i}
+                      style={{
+                        opacity: dimmed ? 0.32 : 1,
+                        transform: hoveredIdx === i ? 'scaleX(1.06)' : 'scaleX(1)',
+                        transformBox: 'fill-box',
+                        transformOrigin: 'center bottom',
+                        transition: 'opacity 160ms ease, transform 160ms ease',
+                        filter: hoveredIdx === i ? 'brightness(1.12)' : 'none',
+                      }}
+                    >
+                      {stack.map((m, mi) => {
+                        const segment = metric === 'cost' ? m.cost : m.tokens;
+                        const h = (segment / maxValue) * 200;
+                        const y = yCursor - h;
+                        yCursor = y;
+                        const isTop = mi === stack.length - 1;
+                        const isBottom = mi === 0;
+                        return (
+                          <path
+                            key={m.model || 'other'}
+                            d={roundedRect(x, y, barW, h, isTop ? radius : 0, isBottom ? radius : 0)}
+                            fill={m.model ? modelColor(m.model) : 'var(--text-muted)'}
+                            opacity={0.9}
+                            stroke="var(--chart-dot-fill)"
+                            strokeWidth={1}
+                          />
+                        );
+                      })}
+                    </g>
+                  );
                 });
               })()}
-
-              {/* Hover hitboxes */}
-              {filled.map((_, i) => {
-                const barSlot = chartWidth / filled.length;
-                const cx = paddingX + (i + 0.5) / filled.length * chartWidth;
-                return (
-                  <rect
-                    key={i}
-                    x={cx - barSlot / 2} y={0}
-                    width={barSlot} height={200}
-                    fill="transparent"
-                    style={{ cursor: 'pointer' }}
-                    onMouseEnter={() => setHoveredIdx(i)}
-                    onMouseLeave={() => setHoveredIdx(null)}
-                  />
-                );
-              })}
 
               {/* Requests line */}
               {(() => {
@@ -520,7 +415,7 @@ export function TrendChart({
                       strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.6 : 0.3 }}
+                      style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.6 : 0.3, transition: 'opacity 160ms ease' }}
                     />
                     {showDots && filled.map((d, i) => {
                       const x = paddingX + (i + 0.5) / filled.length * chartWidth;
@@ -532,97 +427,57 @@ export function TrendChart({
                           fill="var(--chart-dot-fill)"
                           stroke="var(--color-pink)"
                           strokeWidth={hoveredIdx === i ? "3" : "2"}
-                          style={{ pointerEvents: 'none', transition: 'all 0.2s', opacity: hoveredIdx === null || hoveredIdx === i ? 0.6 : 0.3 }}
+                          style={{ pointerEvents: 'none', transition: 'all 160ms ease', opacity: hoveredIdx === null || hoveredIdx === i ? 0.6 : 0.3 }}
                         />
                       );
                     })}
                     {/* The hovered point stays marked even when the dots are off. */}
-                    {hoveredIdx !== null && (() => {
+                    {hoveredIdx !== null && hoveredData && (() => {
                       const x = paddingX + (hoveredIdx + 0.5) / filled.length * chartWidth;
                       const y = 200 - (value(filled[hoveredIdx].requests) / maxRequests) * 200;
                       return (
-                        <circle
-                          cx={x} cy={y} r="5"
-                          fill="var(--chart-dot-fill)"
-                          stroke="var(--color-pink)"
-                          strokeWidth="3"
-                          style={{ pointerEvents: 'none' }}
-                        />
+                        <g style={{
+                          transform: `translate(${x}px, ${y}px)`,
+                          transition: 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1)',
+                          pointerEvents: 'none',
+                        }}>
+                          <circle cx={0} cy={0} r="5" fill="var(--chart-dot-fill)" stroke="var(--color-pink)" strokeWidth="3" />
+                          <circle cx={0} cy={0} r="9" fill="none" stroke="var(--color-pink)" strokeWidth="1.5" opacity="0.35" className="trend-hover-pulse" />
+                        </g>
                       );
                     })()}
                   </>
                 );
               })()}
-{showCacheHit && (
-                <>
-                  {(() => {
-                    const points = filled.map((_, i) => {
-                      const x = paddingX + (i + 0.5) / filled.length * chartWidth;
-                      const rate = hitRates[i] || 0;
-                      const y = 200 - (rate / maxHitRate) * 200;
-                      return `${x},${y}`;
-                    }).join(' ');
-
-                    return (
-                      <>
-                        <polyline
-                          points={points}
-                          fill="none"
-                          stroke="var(--color-green)"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.7 : 0.3 }}
-                        />
-                        {showDots && filled.map((_, i) => {
-                          const x = paddingX + (i + 0.5) / filled.length * chartWidth;
-                          const rate = hitRates[i] || 0;
-                          const y = 200 - (rate / maxHitRate) * 200;
-                          return (
-                            <circle
-                              key={i}
-                              cx={x} cy={y} r={hoveredIdx === i ? "4.5" : "2.5"}
-                              fill="var(--chart-dot-fill)"
-                              stroke="var(--color-green)"
-                              strokeWidth={hoveredIdx === i ? "3" : "1.5"}
-                              style={{ pointerEvents: 'none', transition: 'all 0.2s', opacity: hoveredIdx === null || hoveredIdx === i ? 0.7 : 0.2 }}
-                            />
-                          );
-                        })}
-                      </>
-                    );
-                  })()}
-                </>
-              )}
-
               {/* A crosshair keeps the hovered bucket findable when the bars
                   are only a couple of pixels wide. */}
               {hoveredIdx !== null && (() => {
                 const cx = paddingX + (hoveredIdx + 0.5) / filled.length * chartWidth;
                 return (
-                  <line
-                    x1={cx} y1={0} x2={cx} y2={200}
-                    stroke="var(--text-secondary)"
-                    strokeWidth={1}
-                    opacity={0.5}
-                    style={{ pointerEvents: 'none' }}
-                  />
+                  <g style={{
+                    transform: `translateX(${cx}px)`,
+                    transition: 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1)',
+                    pointerEvents: 'none',
+                  }}>
+                    <line x1={0} y1={0} x2={0} y2={200} stroke={hoverColor} strokeWidth={6} opacity={0.08} />
+                    <line x1={0} y1={0} x2={0} y2={200} stroke={`url(#${crosshairId})`} strokeWidth={1} />
+                  </g>
                 );
               })()}
 
-                {/* Right Y-axis labels */}
-                {showCacheHit && [0, 25, 50, 75, 100].map(tick => (
-                  <text
-                    key={tick}
-                    x={1000 - paddingX + 5}
-                    y={200 - (tick / maxHitRate) * 200 + 3}
-                    fill="var(--text-muted)"
-                    fontSize="9"
-                    textAnchor="start"
-                  >
-                    {tick}%
-                  </text>
-                ))}
+              {/* One hit surface for the whole plot: bucket changes re-render,
+                  pointer movement only moves the tooltip. */}
+              <rect
+                x={paddingX} y={0}
+                width={chartWidth} height={200}
+                fill="transparent"
+                style={{ cursor: 'crosshair' }}
+                onPointerEnter={handlePointer}
+                onPointerMove={handlePointer}
+                onPointerLeave={clearHover}
+                onPointerCancel={clearHover}
+                onPointerUp={e => { if (e.pointerType !== 'mouse') clearHover(); }}
+              />
              </svg>
 
             <div style={{
@@ -647,6 +502,32 @@ export function TrendChart({
                   </div>
                 );
               })}
+            </div>
+
+            <div style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '16px',
+              marginTop: '10px',
+            }}>
+              {legendModels.map(m => (
+                <div key={m.model} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ width: '12px', height: '12px', background: modelColor(m.model), borderRadius: '2px' }} />
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{formatModelName(m.model)}</span>
+                </div>
+              ))}
+              {hasOtherModels && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ width: '12px', height: '12px', background: 'var(--text-muted)', borderRadius: '2px' }} />
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Other')}</span>
+                </div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ width: '12px', height: '3px', background: 'var(--color-pink)', borderRadius: '2px' }} />
+                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Requests')}</span>
+              </div>
             </div>
           </>
         )}

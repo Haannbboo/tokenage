@@ -132,6 +132,23 @@ export function formatCost(input: number | null | undefined, maxDigits = 6) {
   return getCostFormatter(maxDigits).format(v)
 }
 
+/** Currency with a fixed number of decimals, including trailing zeros. */
+export function formatCostFixed(input: number | null | undefined, digits = 3) {
+  const locale = appLocale()
+  const key = `${locale}:fixed:${digits}`
+  let fmt = costFormatters.get(key)
+  if (!fmt) {
+    fmt = new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })
+    costFormatters.set(key, fmt)
+  }
+  return fmt.format(value(input))
+}
+
 export function formatRate(input: number | null | undefined) {
   if (input === null || input === undefined) return ''
   return `$${input.toFixed(3)}/1M`

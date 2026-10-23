@@ -10,12 +10,15 @@ const statTile = readFileSync(join(root, 'src/components/StatTile.tsx'), 'utf8')
 const sparkline = readFileSync(join(root, 'src/Sparkline.tsx'), 'utf8')
 const zh = readFileSync(join(root, 'src/i18n/zh.ts'), 'utf8')
 const trendChart = readFileSync(join(root, 'src/charts/TrendChart.tsx'), 'utf8')
+const modelBadge = readFileSync(join(root, 'src/model-badge.ts'), 'utf8')
 const css = readFileSync(join(root, 'src/App.css'), 'utf8')
 
 // Type stripping is on by default from node 22.18; older runtimes skip the
 // runtime scale checks instead of failing the whole file.
 const scaleModule = await import('../src/sparklineScale.ts').catch(() => null)
 const gapsModule = await import('../src/periodGaps.ts').catch(() => null)
+const trendTooltipModule = await import('../src/charts/trendTooltip.ts').catch(() => null)
+const trendColorsModule = await import('../src/charts/trendColors.ts').catch(() => null)
 // The i18n module reads the saved language on import.
 globalThis.localStorage = globalThis.localStorage ?? { getItem: () => null, setItem: () => {} }
 const labelsModule = await import('../src/periodLabels.ts').catch(() => null)
@@ -219,10 +222,19 @@ describe('Usage trend chart', () => {
     assert.doesNotMatch(zh, /'Throughput':/)
   })
 
-  test('the hovered bucket gets a band and a crosshair', () => {
-    assert.match(trendChart, /\{hoveredIdx !== null && \(\(\) => \{/)
-    assert.match(trendChart, /fill="var\(--text-muted\)"\s*opacity=\{0\.12\}/)
-    assert.match(trendChart, /stroke="var\(--text-secondary\)"\s*strokeWidth=\{1\}\s*opacity=\{0\.5\}/)
+  test('the hovered bucket gets an animated band and a crosshair', () => {
+    assert.match(trendChart, /fill=\{`url\(#\$\{hoverBandId\}\)`\}/)
+    assert.match(trendChart, /stroke=\{`url\(#\$\{crosshairId\}\)`\}/)
+    assert.match(trendChart, /transition: 'transform 160ms cubic-bezier\(0\.22, 1, 0\.36, 1\)'/)
+  })
+
+  test('hovering moves the tooltip without re-rendering the chart', () => {
+    assert.match(trendChart, /tooltip\.style\.transform/)
+    assert.match(trendChart, /onPointerMove=\{handlePointer\}/)
+    assert.doesNotMatch(trendChart, /onMouseMove/)
+    assert.match(trendChart, /animation: 'trend-tooltip-in/)
+    assert.match(trendChart, /className="trend-hover-pulse"/)
+    assert.match(css, /@keyframes trend-hover-pulse/)
   })
 
   test('the hovered point stays marked even when the dots are hidden', () => {
@@ -234,9 +246,26 @@ describe('Usage trend chart', () => {
     assert.match(trendChart, /periodCount === undefined\s*\? fillPeriodGaps\(data, granularity\)/)
   })
 
-  test('the tooltip shows a readable period and stays inside the panel', () => {
+  test('the tooltip follows the cursor near the edges without leaving the viewport', () => {
     assert.match(trendChart, /describePeriod\(hoveredData\.period, granularity, nowWallMs/)
-    assert.match(trendChart, /Math\.min\(Math\.max\(tooltipLeft, 12\), 88\)/)
+    assert.doesNotMatch(trendChart, /Math\.min\(Math\.max\(e\.clientX - rect\.left, half\), rect\.width - half\)/)
+    assert.match(trendChart, /const overflow = Math\.min\(/)
+    assert.match(trendChart, /tooltipWidthRef\.current = tooltip\.offsetWidth/)
+    assert.match(trendChart, /Math\.max\(0, rect\.left - 8\)/)
+    assert.match(trendChart, /Math\.max\(0, window\.innerWidth - rect\.right - 8\)/)
+    assert.match(trendChart, /maxWidth: 'min\(520px, calc\(100% - 16px\)\)'/)
+  })
+
+  test('the hover highlight uses the active metric colour', () => {
+    assert.match(trendChart, /const hoverColor = metric === 'cost' \? 'var\(--color-blue\)' : 'var\(--color-yellow\)'/)
+    assert.match(trendChart, /stopColor=\{hoverColor\}/)
+    assert.match(trendChart, /stroke=\{hoverColor\} strokeWidth=\{6\}/)
+  })
+
+  test('the model rows are ordered and aligned by the active metric', () => {
+    assert.match(trendChart, /sortTrendRows\(bucketSegments\(hoveredData\.period\), metric\)/)
+    assert.match(trendChart, /gridTemplateColumns: 'minmax\(0, 1fr\) auto auto'/)
+    assert.match(trendChart, /textAlign: 'right'/)
   })
 
   test('the overview leaves the period count open for all time and custom ranges', () => {
@@ -244,10 +273,87 @@ describe('Usage trend chart', () => {
   })
 })
 
+describe('Trend tooltip helpers', { skip: !trendTooltipModule }, () => {
+  test('orders model rows by the active metric', () => {
+    const { sortTrendRows } = trendTooltipModule
+    const rows = [
+      { model: 'a', tokens: 10, cost: 1 },
+      { model: 'b', tokens: 30, cost: 0.5 },
+      { model: 'c', tokens: 20, cost: 2 },
+    ]
+    assert.deepEqual(sortTrendRows(rows, 'tokens').map(r => r.model), ['b', 'c', 'a'])
+    assert.deepEqual(sortTrendRows(rows, 'cost').map(r => r.model), ['c', 'a', 'b'])
+  })
+
+  test('breaks ties with the other metric', () => {
+    const { sortTrendRows } = trendTooltipModule
+    const rows = [
+      { model: 'a', tokens: 10, cost: 1 },
+      { model: 'b', tokens: 20, cost: 1 },
+    ]
+    assert.deepEqual(sortTrendRows(rows, 'cost').map(r => r.model), ['b', 'a'])
+    assert.deepEqual(sortTrendRows(rows, 'tokens').map(r => r.model), ['b', 'a'])
+  })
+
+  test('centres on the cursor in the middle', () => {
+    const { trendTooltipX } = trendTooltipModule
+    assert.equal(trendTooltipX(500, 1000, 520, 192), 500)
+  })
+
+  test('keeps moving near the left and right edges instead of freezing', () => {
+    const { trendTooltipX } = trendTooltipModule
+    assert.ok(trendTooltipX(0, 1000, 520, 192) < trendTooltipX(60, 1000, 520, 192))
+    assert.ok(trendTooltipX(1000, 1000, 520, 192) > trendTooltipX(940, 1000, 520, 192))
+  })
+
+  test('never drifts past the available overflow', () => {
+    const { trendTooltipX } = trendTooltipModule
+    assert.equal(trendTooltipX(0, 1000, 520, 0), 268)
+    assert.equal(trendTooltipX(0, 1000, 520, 192), 76)
+    assert.equal(trendTooltipX(1000, 1000, 520, 0), 732)
+    assert.equal(trendTooltipX(1000, 1000, 520, 192), 924)
+  })
+
+  test('handles a zero-width chart', () => {
+    const { trendTooltipX } = trendTooltipModule
+    assert.equal(trendTooltipX(10, 0, 520, 0), 0)
+  })
+})
+
+describe('Trend colours', { skip: !trendColorsModule }, () => {
+  test('pins Claude variants and MiniMax to distinct brand shades', () => {
+    const { trendBrandColor } = trendColorsModule
+    assert.equal(trendBrandColor('claude-opus-5-5', '#cc7c5e'), '#9a5b3c')
+    assert.equal(trendBrandColor('claude-sonnet-5-5', '#cc7c5e'), '#c98a63')
+    assert.equal(trendBrandColor('MiniMax-M2', '#ec6b53'), '#ef4444')
+    assert.equal(trendBrandColor('claude-haiku', '#cc7c5e'), '#cc7c5e')
+  })
+
+  test('boosts the chroma of the brand colours', () => {
+    const { vibrantColor } = trendColorsModule
+    const chroma = (hex) => {
+      const n = parseInt(hex.slice(1), 16)
+      const r = (n >> 16) & 255
+      const g = (n >> 8) & 255
+      const b = n & 255
+      return Math.max(r, g, b) - Math.min(r, g, b)
+    }
+    for (const base of ['#cc7c5e', '#475569', '#dcc496', '#4d7cff']) {
+      assert.ok(chroma(vibrantColor(base)) > chroma(base))
+    }
+  })
+})
+
 describe('Usage trend by model', () => {
-  test('the trend chart has a models mode', () => {
-    assert.match(trendChart, /useState<'tokens' \| 'cost' \| 'models'>/)
-    assert.match(trendChart, /setModelRows\(\[\]\); setMetric\('models'\);/)
+  test('tokens and cost are both broken down by model', () => {
+    assert.match(trendChart, /useState<'tokens' \| 'cost'>/)
+    assert.doesNotMatch(trendChart, /tokenSplit|showModels/)
+    assert.match(trendChart, /const segment = metric === 'cost' \? m\.cost : m\.tokens/)
+  })
+
+  test('the token-type and input/output-cost stacking is gone', () => {
+    assert.doesNotMatch(trendChart, /grad-tokens|grad-cost/)
+    assert.doesNotMatch(trendChart, /'Input Cost'|'Output Cost'|'Cached:'|'Input:'|'Output:'/)
   })
 
   test('the model split comes from the per-model endpoint with the right granularity', () => {
@@ -257,8 +363,37 @@ describe('Usage trend by model', () => {
   })
 
   test('the bars are stacked by model and coloured per model', () => {
-    assert.match(trendChart, /modelBuckets\.get\(d\.period\)/)
+    assert.match(trendChart, /const stack = bucketSegments\(d\.period\)\s*\.filter/)
     assert.match(trendChart, /fill=\{m\.model \? modelColor\(m\.model\) : 'var\(--text-muted\)'\}/)
+  })
+
+  test('the model order and colours are stable across the metric tabs', () => {
+    assert.match(trendChart, /\.sort\(\(a, b\) => b\[1\]\.tokens - a\[1\]\.tokens\)/)
+    assert.match(trendChart, /modelTotals\.slice\(0, MODEL_LEGEND_MAX\)/)
+    assert.match(trendChart, /modelColors\.get\(model\)/)
+    assert.doesNotMatch(trendChart, /MODEL_CHART_COLORS/)
+  })
+
+  test('the trend colours use the existing brand palette', () => {
+    assert.match(trendChart, /import \{ getModelColor, getModelTextColor \} from '\.\.\/model-badge'/)
+    assert.match(trendChart, /vibrantColor\(trendBrandColor\(model, getModelColor\(model, theme\)\)\)/)
+    assert.match(trendChart, /vibrantColor\(getModelTextColor\(model, theme\)\)/)
+    assert.match(modelBadge, /if \(m\.includes\('gpt'\) \|\| m\.includes\('codex'\)\)/)
+    assert.match(modelBadge, /if \(m\.includes\('mimo'\)\)/)
+  })
+
+  test('the stack caps round at the real top and bottom of each bar', () => {
+    assert.match(trendChart, /const isTop = mi === stack\.length - 1/)
+    assert.match(trendChart, /const isBottom = mi === 0/)
+  })
+
+  test('the legend sits below the chart, after the x-axis labels', () => {
+    assert.match(trendChart, /borderTop: '1px solid var\(--chart-footer-border\)'[\s\S]*legendModels\.map/)
+  })
+
+  test('the stacks keep the legend order and pool the rest into other', () => {
+    assert.match(trendChart, /const segments = legendModels\.flatMap\(m => \{/)
+    assert.match(trendChart, /if \(other\.tokens > 0 \|\| other\.cost > 0\) segments\.push\(other\)/)
   })
 
   test('the legend lists the models, the rest as other', () => {
@@ -266,7 +401,13 @@ describe('Usage trend by model', () => {
     assert.match(trendChart, /t\('Other'\)/)
   })
 
-  test('the overview passes the theme and filters to the trend chart', () => {
-    assert.match(overview, /theme=\{theme\}\s*filterParams=\{dashboardFilterParams\}/)
+  test('the overview passes the dashboard filters to the trend chart', () => {
+    assert.match(overview, /filterParams=\{dashboardFilterParams\}/)
+  })
+
+  test('tooltip prices use three fixed decimals with tabular figures', () => {
+    assert.match(trendChart, /formatCostFixed\(m\.cost, 3\)/)
+    assert.match(trendChart, /formatCostFixed\(hoveredData\.total_cost_usd, 3\)/)
+    assert.match(trendChart, /fontVariantNumeric: 'tabular-nums'/)
   })
 })

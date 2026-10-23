@@ -462,7 +462,6 @@ export function OverviewTab({
           <TrendChart
             data={dailyUsage}
             title={`${dateRange === '24h' ? t('Hourly Usage Trend') : t('Daily Usage Trend')}`}
-            theme={theme}
             filterParams={dashboardFilterParams}
             granularity={dateRange === '24h' ? 'hour' : 'day'}
             periodCount={dateRange === '24h' ? 24 : dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : undefined}

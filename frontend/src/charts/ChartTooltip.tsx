@@ -1,12 +1,12 @@
-export function ChartTooltip({
-  left,
-  children,
-}: {
+import { forwardRef } from 'react'
+
+export const ChartTooltip = forwardRef<HTMLDivElement, {
   left: string
+  style?: React.CSSProperties
   children: React.ReactNode
-}) {
+}>(function ChartTooltip({ left, style, children }, ref) {
   return (
-    <div style={{
+    <div ref={ref} style={{
       position: 'absolute',
       top: '-10px',
       left,
@@ -23,11 +23,12 @@ export function ChartTooltip({
       border: '1px solid var(--glass-border)',
       backdropFilter: 'var(--glass-blur)',
       WebkitBackdropFilter: 'var(--glass-blur)',
+      ...style,
     }}>
       {children}
     </div>
   )
-}
+})
 
 export function TooltipRow({
   label,

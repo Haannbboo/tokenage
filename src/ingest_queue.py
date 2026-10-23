@@ -16,15 +16,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError
-from sqlalchemy.exc import TimeoutError as DatabaseTimeout
 from sqlalchemy.orm import Session
 
+from .database.errors import TRANSIENT_DB_ERRORS
 from .shared_state import (
     Event,
     QueueFull,
     SharedState,
-    StoreUnavailable,
     defer_updates,
     get_shared_state,
 )
@@ -37,15 +35,6 @@ PASS_SECONDS = 1
 # Short SQLite passes and a yield trade some drain throughput for API write latency.
 SQLITE_PASS_SECONDS = 0.05
 SQLITE_PAUSE_SECONDS = 0.01
-
-
-TRANSIENT_DB_ERRORS = (
-    StoreUnavailable,
-    DisconnectionError,
-    InterfaceError,
-    OperationalError,
-    DatabaseTimeout,
-)
 
 
 def publish(user_id: str, payloads: list[dict]) -> None:
@@ -167,7 +156,8 @@ class Consumer:
                 )
             else:
                 # Exiting defer_updates flushes only after the database commit.
-                # A store failure in the flush or ack lands in the except above:
+                # A flush failure lands in the except above; an ack failure
+                # propagates out of drain() and _run() backs off. Either way
                 # the committed pass is redelivered (accepted duplicates).
                 if last is not None:
                     self.store.ack(partition, last)

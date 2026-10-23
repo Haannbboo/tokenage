@@ -24,7 +24,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session
 
-from ..ingest_queue import TRANSIENT_DB_ERRORS
 from ..pricing.costs import calculate_costs, compute_input_split, resolve_pricing
 from ..utils import (
     micros_to_secs,
@@ -34,6 +33,7 @@ from ..utils import (
     secs_to_micros,
 )
 from .engine import get_engine
+from .errors import TRANSIENT_DB_ERRORS
 from .model_prices import load_model_price_overrides
 from .models import BaseUrl, Device, ToolCall, Usage, UsageHourly
 

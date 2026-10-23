@@ -16,10 +16,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database.base_url import resolve_base_url_id
+from .database.errors import TRANSIENT_DB_ERRORS
 from .database.model_prices import load_model_price_overrides
 from .database.models import ToolCall, Usage
 from .database.usage import log_usage, merge_duplicate_usage
-from .ingest_queue import TRANSIENT_DB_ERRORS
 from .pricing.costs import ResolvedPricing, calculate_costs, resolve_pricing
 from .pricing.snapshots import ensure_price_snapshot
 from .utils import (

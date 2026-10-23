@@ -8,6 +8,17 @@ def store(request, tmp_path):
     return request.param(tmp_path / "state.db")
 
 
+def test_wal_survives_short_operation_connections(store, tmp_path):
+    wal = tmp_path / "state.db-wal"
+    shm = tmp_path / "state.db-shm"
+    assert wal.exists()
+    assert shm.exists()
+    for i in range(3):
+        store.set("test", str(i), {"n": i}, 60)
+        assert wal.exists()
+        assert shm.exists()
+
+
 def test_affinity_queue_and_ack(store):
     assert partition_for("alice") == 15
     store.publish("alice", [{"n": 1}, {"n": 2}])

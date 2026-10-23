@@ -85,6 +85,7 @@ class SQLiteSharedState:
                 self.path, timeout=5, check_same_thread=False
             )
             self._anchor.execute("PRAGMA journal_mode=WAL")
+            self._anchor.execute("SELECT count(*) FROM sqlite_master").fetchone()
         except sqlite3.OperationalError as exc:
             raise StoreUnavailable() from exc
         with self._connection() as conn:

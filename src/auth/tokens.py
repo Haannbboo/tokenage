@@ -12,7 +12,7 @@ import secrets
 import time
 from uuid import uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -23,6 +23,7 @@ from ..database.models import AuthToken, Device, User
 TOKEN_KINDS = ("cli", "ingest", "web")
 LOCAL_OWNER_EMAIL = "owner@localhost"
 AUTH_STATEMENT_TIMEOUT_MILLISECONDS = 10_000
+ACTIVITY_UPDATE_INTERVAL_MICROS = 30 * 1_000_000
 
 
 def _now_micros() -> int:
@@ -143,42 +144,72 @@ def resolve_token(
 ) -> tuple[User, AuthToken] | None:
     """Return the token's user and the token row, or None for unknown/revoked.
 
-    DB errors propagate (fail closed); only a failed last_used_at update is
-    swallowed.
+    Validation DB errors propagate (fail closed). Activity refreshes may lag
+    30 seconds and failures are best effort for every caller, including CLI/web.
     """
     engine = get_engine(db_path)
-    with Session(engine, expire_on_commit=False) as session:
-        _set_auth_statement_timeout(session)
-        row = session.execute(
-            select(AuthToken, User)
-            .join(User, AuthToken.user_id == User.id)
-            .where(AuthToken.token_hash == hash_token(token))
-        ).first()
-        if row is None:
-            return None
-        auth_token, user = row
-        if auth_token.revoked_at is not None:
-            return None
-        # An ingest token not bound to a device is a pre-device-binding leftover.
-        if auth_token.kind == "ingest" and auth_token.device_id is None:
-            return None
-        session.expunge_all()
+    activity_started = False
     try:
-        with Session(engine, expire_on_commit=False) as update_session:
-            _set_auth_statement_timeout(update_session)
-            update_session.execute(
-                sa_update(AuthToken)
-                .where(AuthToken.id == auth_token.id)
-                .values(last_used_at=_now_micros())
-            )
-            if auth_token.device_id is not None:
-                update_session.execute(
-                    sa_update(Device)
-                    .where(Device.id == auth_token.device_id)
-                    .values(last_seen_at=_now_micros())
+        with Session(engine, expire_on_commit=False) as session:
+            _set_auth_statement_timeout(session)
+            row = session.execute(
+                select(AuthToken, User, Device)
+                .join(User, AuthToken.user_id == User.id)
+                .outerjoin(Device, AuthToken.device_id == Device.id)
+                .where(AuthToken.token_hash == hash_token(token))
+            ).first()
+            if row is None:
+                return None
+            auth_token, user, device = row
+            if auth_token.revoked_at is not None:
+                return None
+            # An ingest token not bound to a device is a pre-device-binding leftover.
+            if auth_token.kind == "ingest" and auth_token.device_id is None:
+                return None
+            if auth_token.device_id is not None and (
+                device is None
+                or device.revoked_at is not None
+                or device.user_id != user.id
+            ):
+                return None
+            # Detach before bookkeeping: rollback after a failed refresh must not
+            # expire the already validated identity or trigger another SELECT.
+            session.expunge_all()
+            now = _now_micros()
+            cutoff = now - ACTIVITY_UPDATE_INTERVAL_MICROS
+            if auth_token.last_used_at is None or auth_token.last_used_at < cutoff:
+                activity_started = True
+                session.execute(
+                    sa_update(AuthToken)
+                    .where(
+                        AuthToken.id == auth_token.id,
+                        AuthToken.revoked_at.is_(None),
+                        or_(
+                            AuthToken.last_used_at.is_(None),
+                            AuthToken.last_used_at < cutoff,
+                        ),
+                    )
+                    .values(last_used_at=now)
                 )
-            update_session.commit()
+                if auth_token.device_id is not None:
+                    session.execute(
+                        sa_update(Device)
+                        .where(
+                            Device.id == auth_token.device_id,
+                            Device.revoked_at.is_(None),
+                            or_(
+                                Device.last_seen_at.is_(None),
+                                Device.last_seen_at < cutoff,
+                            ),
+                        )
+                        .values(last_seen_at=now)
+                    )
+                session.commit()
     except SQLAlchemyError:
+        if not activity_started:
+            raise
+        # The session context also handles rollback/close failures here. The
+        # detached identity remains usable even if bookkeeping loses its DB.
         logging.getLogger(__name__).warning(
             "Failed to update last_used_at for token id=%s", auth_token.id
         )

@@ -13,8 +13,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from .database.base_url import resolve_base_url_id
+from .database.errors import TRANSIENT_DB_ERRORS
 from .database.model_prices import load_model_price_overrides
 from .database.models import ToolCall, Usage
 from .database.usage import log_usage, merge_duplicate_usage
@@ -55,7 +57,7 @@ def record_usage(
     base_url_provider: str | None = None,
     base_url_source: str | None = None,
     tool_calls: Sequence[tuple[str, str]] = (),
-    db_path: str | None = None,
+    session: Session,
 ) -> Usage | None:
     """Record a single LLM usage event. Returns the Usage object, or None if skipped.
 
@@ -90,7 +92,7 @@ def record_usage(
         session_id=session_id,
         user_id=user_id,
         device_id=device_id,
-        db_path=db_path,
+        session=session,
     )
     if duplicate is not None:
         for tool_use_id, tool_name in tool_calls:
@@ -101,12 +103,12 @@ def record_usage(
                 user_id=user_id,
                 client_source=client_source,
                 ts=duplicate.ts // 1000,  # ToolCall.ts is milliseconds
-                db_path=db_path,
+                session=session,
             )
         return duplicate
 
     # ponytail: one overrides query per recorded row; cache per user if it shows up.
-    overrides = load_model_price_overrides(user_id=user_id, db_path=db_path)
+    overrides = load_model_price_overrides(user_id=user_id, session=session)
     resolved = resolve_pricing(model, usage_ts, overrides=overrides)
     costs = calculate_costs(
         prompt_tokens=prompt_tokens,
@@ -118,7 +120,7 @@ def record_usage(
     )
     base_url_id = resolve_base_url_id(
         base_url=base_url,
-        db_path=db_path,
+        session=session,
         provider_name=base_url_provider or provider,
         source=base_url_source,
     )
@@ -126,7 +128,7 @@ def record_usage(
     # Snapshot the pricing that was in effect so the row's cost split can be
     # recomputed exactly later. Best-effort: a snapshot failure must never turn
     # a persisted usage row into a failed request.
-    snapshot_id = _record_price_snapshot(resolved, model, usage_ts, db_path)
+    snapshot_id = _record_price_snapshot(resolved, model, usage_ts, session)
 
     usage = Usage(
         ts=usage_ts,
@@ -154,7 +156,7 @@ def record_usage(
     )
     log_usage(
         usage,
-        db_path=db_path,
+        session=session,
         tool_calls=[
             {
                 "tool_use_id": tool_use_id,
@@ -173,22 +175,25 @@ def _record_price_snapshot(
     resolved: ResolvedPricing,
     model: str,
     usage_ts: int,
-    db_path: str | None,
+    session: Session,
 ) -> int | None:
     """Persist the exact rates used for this row, returning the snapshot id."""
     if resolved.match is None:
         return None
     date = datetime.fromtimestamp(micros_to_secs(usage_ts), tz=UTC).strftime("%Y-%m-%d")
     try:
-        return ensure_price_snapshot(
-            date=date,
-            model=model,
-            source=resolved.source or "unknown",
-            cost=resolved.cost,
-            db_path=db_path,
-        )
-    except Exception:
-        log.warning("Failed to record price snapshot for %s", model)
+        with session.begin_nested():
+            return ensure_price_snapshot(
+                date=date,
+                model=model,
+                source=resolved.source or "unknown",
+                cost=resolved.cost,
+                session=session,
+            )
+    except TRANSIENT_DB_ERRORS:
+        raise
+    except Exception as exc:
+        log.warning("Failed to record price snapshot error=%s", type(exc).__name__)
         return None
 
 
@@ -198,25 +203,19 @@ def update_tool_call_duration(
     user_id: str,
     client_source: str,
     duration_ms: int,
-    db_path: str | None = None,
+    session: Session,
 ) -> None:
     """Update the duration on an already-recorded tool call, if it exists."""
-    from sqlalchemy.orm import Session as SASession
-
-    from .database import get_engine
-
-    engine = get_engine(db_path)
-    with SASession(engine) as session:
-        session.execute(
-            update(ToolCall)
-            .where(
-                ToolCall.tool_use_id == tool_use_id,
-                ToolCall.user_id == user_id,
-                ToolCall.client_source == client_source,
-            )
-            .values(duration_ms=duration_ms)
+    session.execute(
+        update(ToolCall)
+        .where(
+            ToolCall.tool_use_id == tool_use_id,
+            ToolCall.user_id == user_id,
+            ToolCall.client_source == client_source,
         )
-        session.commit()
+        .values(duration_ms=duration_ms)
+    )
+    session.flush()
 
 
 def record_tool_call(
@@ -229,15 +228,11 @@ def record_tool_call(
     client_source: str | None = None,
     duration_ms: int | None = None,
     ts: int,
-    db_path: str | None = None,
+    session: Session,
 ) -> None:
     """Record a tool call and update session tool_calls_json."""
-    from sqlalchemy.orm import Session as SASession
-
-    from .database import get_engine
     from .database.sessions import upsert_session_from_tool_call
 
-    engine = get_engine(db_path)
     normalized_tool_name = normalize_tool_name(tool_name)
     tc = ToolCall(
         tool_use_id=tool_use_id,
@@ -249,14 +244,13 @@ def record_tool_call(
         duration_ms=duration_ms,
         ts=ts,
     )
-    with SASession(engine, expire_on_commit=False) as session:
-        if session.get(ToolCall, tool_use_id) is not None:
-            return  # already recorded; avoid double-counting on redelivery
-        session.add(tc)
-        try:
-            session.commit()
-        except IntegrityError:
-            # Concurrent redelivery raced us to the same PK; already recorded.
-            session.rollback()
-            return
-    upsert_session_from_tool_call(tc, db_path=db_path)
+    if session.get(ToolCall, tool_use_id) is not None:
+        return  # already recorded; avoid double-counting on redelivery
+    try:
+        with session.begin_nested():
+            session.add(tc)
+            session.flush()
+    except IntegrityError:
+        # Concurrent redelivery raced us to the same PK; already recorded.
+        return
+    upsert_session_from_tool_call(tc, session=session)

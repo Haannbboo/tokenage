@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import select, tuple_
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from ..database import PriceSnapshot, get_engine
 from ..utils import micros_to_secs, normalize_model_name
@@ -109,6 +110,7 @@ def ensure_price_snapshot(
     source: str,
     cost: ModelCost,
     db_path: str | None = None,
+    session: Session | None = None,
 ) -> int:
     """Insert a snapshot if this exact rate set is new; return its row id.
 
@@ -122,10 +124,11 @@ def ensure_price_snapshot(
     never sees another database's ids.
     """
     model = normalize_model_name(model)
-    engine = get_engine(db_path)
+    engine = session.get_bind().engine if session is not None else get_engine(db_path)
     payload = serialize_rates(cost)
     digest = rates_hash(payload)
-    cache = _SNAPSHOT_IDS.setdefault(engine, {})
+    # Never cache uncommitted IDs: an event savepoint or whole pass can roll back.
+    cache = {} if session is not None else _SNAPSHOT_IDS.setdefault(engine, {})
     cache_key = (date, model, source, digest)
     if cache_key in cache:
         return cache[cache_key]
@@ -145,16 +148,19 @@ def ensure_price_snapshot(
         insert_stmt = sqlite.insert(PriceSnapshot).values(**values)
     stmt = insert_stmt.on_conflict_do_nothing(index_elements=key_columns)
 
-    with engine.begin() as connection:
-        connection.execute(stmt)
-        row_id = connection.execute(
-            select(PriceSnapshot.id).where(
-                PriceSnapshot.date == date,
-                PriceSnapshot.model == model,
-                PriceSnapshot.source == source,
-                PriceSnapshot.rates_hash == digest,
-            )
-        ).scalar()
+    query = select(PriceSnapshot.id).where(
+        PriceSnapshot.date == date,
+        PriceSnapshot.model == model,
+        PriceSnapshot.source == source,
+        PriceSnapshot.rates_hash == digest,
+    )
+    if session is not None:
+        session.execute(stmt)
+        row_id = session.scalar(query)
+    else:
+        with engine.begin() as connection:
+            connection.execute(stmt)
+            row_id = connection.execute(query).scalar()
     if row_id is None:  # pragma: no cover - insert guarantees a row
         raise RuntimeError("price snapshot insert did not return a row id")
     cache[cache_key] = int(row_id)

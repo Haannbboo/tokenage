@@ -3,6 +3,7 @@
 import pytest
 
 from src.database.usage import fetch_recent_usage
+from tests.conftest import ingest_write
 
 
 @pytest.fixture
@@ -14,7 +15,8 @@ def test_db(fresh_db):
 def test_record_usage_inserts_row(test_db):
     from src.recorder import record_usage
 
-    record_usage(
+    ingest_write(
+        record_usage,
         device_id="test-device",
         ts=1779148800000000,
         provider="openai",
@@ -63,7 +65,8 @@ def test_record_usage_normalizes_models_and_rollups(test_db, monkeypatch):
     )
     usages = []
     for model in (" Space-Bunny-Free ", "STEALTH/SPACE-BUNNY-ALPHA"):
-        usage = record_usage(
+        usage = ingest_write(
+            record_usage,
             device_id="test-device",
             ts=1779148800000000,
             provider="normalization-test",
@@ -146,7 +149,8 @@ def test_record_usage_normalizes_provider_without_losing_pricing(test_db, monkey
     assert costs.resolve_cost_match("test-model").source == "test-source"
 
     for name in ("CUSTOM-PROVIDER", "Custom-Provider"):
-        usage = record_usage(
+        usage = ingest_write(
+            record_usage,
             device_id="test-device",
             ts=1779148800000000,
             provider=name,
@@ -222,7 +226,8 @@ def test_record_usage_computes_costs(test_db):
     )
 
     try:
-        record_usage(
+        ingest_write(
+            record_usage,
             device_id="test-device",
             provider="test-provider-without-override",
             model="test-model",
@@ -267,7 +272,8 @@ def test_record_usage_writes_price_snapshot(test_db):
     costs_module.MODEL_COST_SOURCES["snap-model"] = "litellm"
 
     try:
-        record_usage(
+        ingest_write(
+            record_usage,
             device_id="test-device",
             ts=1779148800000000,
             provider="snap-provider",
@@ -327,7 +333,8 @@ def test_record_usage_skips_zero_tokens_on_success(test_db):
     """Status 200 with all token fields zero/None should not be recorded."""
     from src.recorder import record_usage
 
-    record_usage(
+    ingest_write(
+        record_usage,
         device_id="test-device",
         provider="openrouter",
         model="test-model",
@@ -347,7 +354,8 @@ def test_record_usage_skips_none_tokens_on_success(test_db):
     """Status 200 with all token fields None should not be recorded."""
     from src.recorder import record_usage
 
-    record_usage(
+    ingest_write(
+        record_usage,
         device_id="test-device",
         provider="openrouter",
         model="test-model",
@@ -365,7 +373,8 @@ def test_record_usage_records_prompt_only_tokens(test_db):
     """Status 200 with prompt_tokens only should be recorded."""
     from src.recorder import record_usage
 
-    record_usage(
+    ingest_write(
+        record_usage,
         device_id="test-device",
         provider="openai",
         model="gpt-4",
@@ -386,7 +395,8 @@ def test_record_usage_records_zero_tokens_on_error(test_db):
     """Error status with zero tokens should still be recorded."""
     from src.recorder import record_usage
 
-    record_usage(
+    ingest_write(
+        record_usage,
         device_id="test-device",
         provider="openai",
         model="gpt-4",
@@ -407,7 +417,8 @@ def test_record_usage_records_zero_tokens_on_unknown_status(test_db):
     """None status with zero tokens should still be recorded."""
     from src.recorder import record_usage
 
-    record_usage(
+    ingest_write(
+        record_usage,
         device_id="test-device",
         provider="openai",
         model="gpt-4",
@@ -428,7 +439,8 @@ def test_record_tool_call_links_to_usage(test_db):
     """record_tool_call creates a tool_calls row linked to the usage row."""
     from src.recorder import record_tool_call, record_usage
 
-    usage = record_usage(
+    usage = ingest_write(
+        record_usage,
         device_id="test-device",
         provider="openai",
         model="gpt-4",
@@ -441,7 +453,8 @@ def test_record_tool_call_links_to_usage(test_db):
     )
     assert usage is not None
 
-    record_tool_call(
+    ingest_write(
+        record_tool_call,
         tool_use_id="call_abc123",
         usage_id=usage.id,
         tool_name="get_weather",
@@ -461,7 +474,8 @@ def test_record_tool_call_persists_and_returns_duration(test_db):
     from src.database.usage import fetch_tool_calls
     from src.recorder import record_tool_call, record_usage
 
-    usage = record_usage(
+    usage = ingest_write(
+        record_usage,
         device_id="test-device",
         provider="anthropic",
         model="claude-sonnet-4-5",
@@ -474,7 +488,8 @@ def test_record_tool_call_persists_and_returns_duration(test_db):
     )
     assert usage is not None
 
-    record_tool_call(
+    ingest_write(
+        record_tool_call,
         tool_use_id="toolu_dur",
         usage_id=usage.id,
         tool_name="Bash",
@@ -483,7 +498,8 @@ def test_record_tool_call_persists_and_returns_duration(test_db):
         db_path=test_db,
         user_id="test-user",
     )
-    record_tool_call(
+    ingest_write(
+        record_tool_call,
         tool_use_id="toolu_nodur",
         usage_id=usage.id,
         tool_name="Read",
@@ -502,7 +518,8 @@ def test_record_tool_call_multiple_per_usage(test_db):
     """Multiple tool calls from one usage row all get linked."""
     from src.recorder import record_tool_call, record_usage
 
-    usage = record_usage(
+    usage = ingest_write(
+        record_usage,
         device_id="test-device",
         provider="anthropic",
         model="claude-sonnet-4-5",
@@ -519,7 +536,8 @@ def test_record_tool_call_multiple_per_usage(test_db):
         ("toolu_1", "bash"),
         ("toolu_2", "file_read"),
     ]:
-        record_tool_call(
+        ingest_write(
+            record_tool_call,
             tool_use_id=tool_id,
             usage_id=usage.id,
             tool_name=tool_name,
@@ -539,7 +557,8 @@ def test_record_tool_call_duplicate_id_is_noop(test_db):
     """Redelivery of the same tool_use_id must not raise or double-count."""
     from src.recorder import record_tool_call, record_usage
 
-    usage = record_usage(
+    usage = ingest_write(
+        record_usage,
         device_id="test-device",
         provider="openai",
         model="gpt-4",
@@ -553,7 +572,8 @@ def test_record_tool_call_duplicate_id_is_noop(test_db):
     assert usage is not None
 
     for _ in range(2):
-        record_tool_call(
+        ingest_write(
+            record_tool_call,
             tool_use_id="dup_1",
             usage_id=usage.id,
             tool_name="bash",
@@ -576,7 +596,8 @@ def test_record_tool_call_scoped_collision_keeps_new_call(test_db):
     from src.database.models import ToolCall
     from src.recorder import record_tool_call
 
-    record_tool_call(
+    ingest_write(
+        record_tool_call,
         tool_use_id="call_abc",
         session_id="legacy-session",
         client_source="claude-code",
@@ -585,7 +606,8 @@ def test_record_tool_call_scoped_collision_keeps_new_call(test_db):
         db_path=test_db,
         user_id="test-user",
     )
-    record_tool_call(
+    ingest_write(
+        record_tool_call,
         tool_use_id="user-1:call_abc",
         user_id="user-1",
         session_id="user-1:new-session",
@@ -607,7 +629,8 @@ def test_record_tool_call_integrity_error_is_noop(test_db, monkeypatch):
 
     from src.recorder import record_tool_call, record_usage
 
-    usage = record_usage(
+    usage = ingest_write(
+        record_usage,
         device_id="test-device",
         provider="openai",
         model="gpt-4",
@@ -620,7 +643,8 @@ def test_record_tool_call_integrity_error_is_noop(test_db, monkeypatch):
     )
     assert usage is not None
 
-    record_tool_call(
+    ingest_write(
+        record_tool_call,
         tool_use_id="race_1",
         usage_id=usage.id,
         tool_name="bash",
@@ -632,7 +656,8 @@ def test_record_tool_call_integrity_error_is_noop(test_db, monkeypatch):
     # Simulate a second request racing past the "already recorded" pre-check.
     monkeypatch.setattr(SASession, "get", lambda self, *a, **k: None)
 
-    record_tool_call(
+    ingest_write(
+        record_tool_call,
         tool_use_id="race_1",
         usage_id=usage.id,
         tool_name="bash",
@@ -665,7 +690,7 @@ def _record_otlp_usage(test_db, **overrides):
         user_id="test-user",
     )
     fields.update(overrides)
-    return record_usage(device_id="test-device", **fields)
+    return ingest_write(record_usage, device_id="test-device", **fields)
 
 
 def _record_proxy_usage(test_db, **overrides):
@@ -686,7 +711,7 @@ def _record_proxy_usage(test_db, **overrides):
         user_id="test-user",
     )
     fields.update(overrides)
-    return record_usage(device_id="test-device", **fields)
+    return ingest_write(record_usage, device_id="test-device", **fields)
 
 
 @pytest.mark.parametrize("otlp_first", [True, False])

@@ -33,6 +33,7 @@ from ..utils import (
     secs_to_micros,
 )
 from .engine import get_engine
+from .errors import TRANSIENT_DB_ERRORS
 from .model_prices import load_model_price_overrides
 from .models import BaseUrl, Device, ToolCall, Usage, UsageHourly
 
@@ -111,7 +112,7 @@ def merge_duplicate_usage(
     session_id: str | None,
     user_id: str,
     device_id: str,
-    db_path: str | None = None,
+    session: Session,
 ) -> Usage | None:
     """Find a same-shaped usage row already recorded by the other collection path
     and enrich it instead of inserting a duplicate.
@@ -137,43 +138,41 @@ def merge_duplicate_usage(
     other_path_sources = _CLIENT_SOURCES_BY_FAMILY[family]
     endpoint_filter = Usage.endpoint != "otlp" if is_otlp else Usage.endpoint == "otlp"
 
-    engine = get_engine(db_path)
-    with Session(engine, expire_on_commit=False) as session:
-        existing = session.scalar(
-            select(Usage)
-            .where(
-                and_(
-                    endpoint_filter,
-                    Usage.user_id == user_id,
-                    Usage.device_id == device_id,
-                    Usage.client_source.in_(other_path_sources),
-                    Usage.model == normalize_model_name(model),
-                    Usage.prompt_tokens == prompt_tokens,
-                    Usage.completion_tokens == completion_tokens,
-                    Usage.cached_tokens == cached_tokens,
-                    Usage.total_tokens == total_tokens,
-                    # Proxy normalizes a missing cache-write to 0 while the OTLP
-                    # extractors leave it NULL; coalesce so the two paths still
-                    # match on the same logical request.
-                    func.coalesce(Usage.cache_creation_tokens, 0)
-                    == func.coalesce(cache_creation_tokens, 0),
-                    Usage.ts >= ts - DEDUP_WINDOW_MICROS,
-                    Usage.ts <= ts + DEDUP_WINDOW_MICROS,
-                )
+    existing = session.scalar(
+        select(Usage)
+        .where(
+            and_(
+                endpoint_filter,
+                Usage.user_id == user_id,
+                Usage.device_id == device_id,
+                Usage.client_source.in_(other_path_sources),
+                Usage.model == normalize_model_name(model),
+                Usage.prompt_tokens == prompt_tokens,
+                Usage.completion_tokens == completion_tokens,
+                Usage.cached_tokens == cached_tokens,
+                Usage.total_tokens == total_tokens,
+                # Proxy normalizes a missing cache-write to 0 while the OTLP
+                # extractors leave it NULL; coalesce so the two paths still
+                # match on the same logical request.
+                func.coalesce(Usage.cache_creation_tokens, 0)
+                == func.coalesce(cache_creation_tokens, 0),
+                Usage.ts >= ts - DEDUP_WINDOW_MICROS,
+                Usage.ts <= ts + DEDUP_WINDOW_MICROS,
             )
-            .order_by(func.abs(Usage.ts - ts))
-            # Row lock is PostgreSQL-only; the SQLite dialect ignores FOR UPDATE
-            # (SQLite serializes writes via its whole-file write lock instead).
-            .with_for_update()
-            .limit(1)
         )
-        if existing is None:
-            return None
+        .order_by(func.abs(Usage.ts - ts))
+        # Row lock is PostgreSQL-only; the SQLite dialect ignores FOR UPDATE
+        # (SQLite serializes writes via its whole-file write lock instead).
+        .with_for_update()
+        .limit(1)
+    )
+    if existing is None:
+        return None
 
-        session_id_was_empty = not existing.session_id
-        if session_id is not None and (is_otlp or existing.session_id is None):
-            existing.session_id = session_id
-        session.commit()
+    session_id_was_empty = not existing.session_id
+    if session_id is not None and (is_otlp or existing.session_id is None):
+        existing.session_id = session_id
+    session.flush()
 
     logger.info(
         "merged duplicate usage from %s into %s ts=%s model=%s prompt=%s "
@@ -190,9 +189,12 @@ def merge_duplicate_usage(
 
     if session_id_was_empty and existing.session_id:
         try:
-            from .sessions import upsert_session_from_usage
+            from .sessions import _upsert_session_from_usage
 
-            upsert_session_from_usage(existing, db_path=db_path)
+            with session.begin_nested():
+                _upsert_session_from_usage(session, existing)
+        except TRANSIENT_DB_ERRORS:
+            raise
         except Exception:
             import logging
 
@@ -205,7 +207,7 @@ def merge_duplicate_usage(
 
 def log_usage(
     usage: Usage,
-    db_path: str | None = None,
+    session: Session,
     tool_calls: Sequence[dict[str, Any]] = (),
 ) -> None:
     """Persist a single usage row and its rollups in one transaction.
@@ -215,36 +217,35 @@ def log_usage(
     already recorded is skipped, so a redelivered report cannot double count.
 
     The row and its usage_hourly increment land together or not at all: the
-    error propagates and the transaction rolls back. Callers must not assume a
-    retry (the proxy client drops the report on anything but 429).
+    error propagates to the consumer, which owns the transaction and retry.
 
-    The sessions rollup stays best-effort inside a SAVEPOINT: a failure or a
-    lock timeout there must not discard a valid usage row.
+    Non-transient sessions rollup failures stay best-effort inside a SAVEPOINT;
+    transient database errors must retry the whole consumer pass.
     """
     from .sessions import _upsert_session_from_usage
 
     _require_device_id(usage)
     usage.provider = normalize_provider_name(usage.provider)
     usage.model = normalize_model_name(usage.model)
-    with Session(get_engine(db_path), expire_on_commit=False) as session:
-        session.add(usage)
-        # Flush so usage.id exists for the session rollup. The insert also
-        # takes SQLite's write lock up front, so the later reads in this
-        # transaction never need a lock upgrade (which fails without waiting).
-        session.flush()
-        if tool_calls:
-            _insert_tool_calls(session, usage.id, tool_calls)
-        upsert_hourly_aggregate(session, usage)
-        try:
-            with session.begin_nested():
-                _upsert_session_from_usage(session, usage)
-        except Exception:
-            logger.warning(
-                "Failed to update session record for usage ts=%s",
-                usage.ts,
-                exc_info=True,
-            )
-        session.commit()
+    session.add(usage)
+    # Flush so usage.id exists for the session rollup.
+    session.flush()
+    if tool_calls:
+        _insert_tool_calls(session, usage.id, tool_calls)
+    # ponytail: sum per key per batch if the 1,000 QPS measurement shows it.
+    upsert_hourly_aggregate(session, usage)
+    try:
+        with session.begin_nested():
+            _upsert_session_from_usage(session, usage)
+    except TRANSIENT_DB_ERRORS:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Failed to update session record for usage ts=%s error=%s",
+            usage.ts,
+            type(exc).__name__,
+        )
+    session.flush()
 
 
 def _insert_tool_calls(

@@ -1,8 +1,8 @@
 """In-process queue consumer; blocking ingest and DB calls run on daemon threads.
 
-Delivery is at least once: write each event, then acknowledge it in the store.
-A crash mid-pass or a stalled owner resuming after takeover can redeliver up
-to one pass (500 events). PR 1c will group writes into one transaction per batch, then ack.
+Delivery is at least once: one transaction per partition pass, then commit,
+flush correlation state, and acknowledge. A crash after commit and before ack
+redelivers up to one pass (500 events); these rare duplicates are accepted.
 """
 
 from __future__ import annotations
@@ -16,29 +16,25 @@ from contextlib import asynccontextmanager
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError
-from sqlalchemy.exc import TimeoutError as DatabaseTimeout
+from sqlalchemy.orm import Session
 
+from .database.errors import TRANSIENT_DB_ERRORS
 from .shared_state import (
-    LEASE_SECONDS,
     Event,
     QueueFull,
     SharedState,
-    StoreUnavailable,
+    defer_updates,
     get_shared_state,
 )
 
 log = logging.getLogger(__name__)
 POLL_SECONDS = 0.25
-
-
-TRANSIENT_DB_ERRORS = (
-    StoreUnavailable,
-    DisconnectionError,
-    InterfaceError,
-    OperationalError,
-    DatabaseTimeout,
-)
+# A pass holds the SQLite write lock (and Postgres row locks) until it commits;
+# keep it short so API writers get gaps, well under the 10s lease.
+PASS_SECONDS = 1
+# Short SQLite passes and a yield trade some drain throughput for API write latency.
+SQLITE_PASS_SECONDS = 0.05
+SQLITE_PAUSE_SECONDS = 0.01
 
 
 def publish(user_id: str, payloads: list[dict]) -> None:
@@ -71,7 +67,7 @@ class Consumer:
         self.worker: threading.Thread | None = None
         self.retry_delay = POLL_SECONDS
 
-    def _process(self, event: Event) -> None:
+    def _process(self, event: Event, session: Session) -> None:
         payload = event.payload
         if payload["kind"] == "otlp":
             from .otlp import _parse_log_record
@@ -80,6 +76,7 @@ class Consumer:
                 *payload["record"],
                 user_id=payload["user_id"],
                 device_id=payload["device_id"],
+                session=session,
             )
         elif payload["kind"] == "usage":
             from .recorder import record_usage
@@ -88,6 +85,7 @@ class Consumer:
                 **payload["fields"],
                 user_id=payload["user_id"],
                 device_id=payload["device_id"],
+                session=session,
             )
         else:
             raise ValueError("unknown queue event kind")
@@ -100,41 +98,81 @@ class Consumer:
                 break
             if not self.store.claim(partition, self.owner):
                 continue
+            sqlite = False
             last = None
-            deadline = time.monotonic() + LEASE_SECONDS / 2
+            processed = 0
+            deadline = time.monotonic() + PASS_SECONDS
             try:
-                for event in self.store.read(partition):
-                    if self.stop_event.is_set():
-                        break
-                    if time.monotonic() >= deadline:
-                        break
-                    try:
-                        self._process(event)
-                    except TRANSIENT_DB_ERRORS as exc:
-                        self.retry_delay = 5
-                        log.warning(
-                            "Ingest partition unavailable partition=%s error=%s",
-                            partition,
-                            type(exc).__name__,
-                        )
-                        break
-                    except Exception as exc:
-                        # Exception text can contain record bodies or SQL values.
-                        log.warning(
-                            "Skipping ingest event user=%s device=%s kind=%s error=%s message=processing-failed",
-                            event.payload.get("user_id"),
-                            event.payload.get("device_id"),
-                            event.payload.get("kind"),
-                            type(exc).__name__,
-                        )
-                    last = event.position
-                    done += 1
+                from .database import get_engine
+
+                events = self.store.read(partition)
+                with defer_updates() as updates:
+                    with Session(get_engine()) as session:
+                        # sqlite3 legacy mode does not BEGIN for SAVEPOINT; without
+                        # this, releasing the first savepoint commits that event.
+                        # IMMEDIATE takes the write lock now: a read-first WAL
+                        # transaction fails without waiting once another writer commits.
+                        dialect = session.get_bind().dialect.name
+                        if dialect == "sqlite":
+                            sqlite = True
+                            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                            # Start the budget after acquiring the write lock.
+                            deadline = time.monotonic() + SQLITE_PASS_SECONDS
+                        elif dialect == "postgresql":
+                            # Bound row-lock waits (e.g. behind a reprice) below the
+                            # lease; the timeout is transient, so the pass retries.
+                            session.connection().exec_driver_sql(
+                                "SET LOCAL lock_timeout = '5s'"
+                            )
+                        for event in events:
+                            if self.stop_event.is_set() or time.monotonic() >= deadline:
+                                break
+                            before = updates.copy()
+                            try:
+                                with session.begin_nested():
+                                    self._process(event, session)
+                            except TRANSIENT_DB_ERRORS:
+                                raise
+                            except Exception as exc:
+                                updates.clear()
+                                updates.update(before)
+                                # Exception text can contain record bodies or SQL values.
+                                log.warning(
+                                    "Skipping ingest event user=%s device=%s kind=%s error=%s message=processing-failed",
+                                    event.payload.get("user_id"),
+                                    event.payload.get("device_id"),
+                                    event.payload.get("kind"),
+                                    type(exc).__name__,
+                                )
+                            last = event.position
+                            processed += 1
+                        session.commit()
+            except Exception as exc:
+                self.retry_delay = 5
+                log.warning(
+                    "Ingest partition unavailable partition=%s error=%s",
+                    partition,
+                    type(exc).__name__,
+                )
+            else:
+                # Exiting defer_updates flushes only after the database commit.
+                # A flush failure lands in the except above; an ack failure
+                # propagates out of drain() and _run() backs off. Either way
+                # the committed pass is redelivered (accepted duplicates).
+                if last is not None:
+                    self.store.ack(partition, last)
+                done += processed
             finally:
-                try:
-                    if last is not None:
-                        self.store.ack(partition, last)
-                finally:
-                    self.store.release(partition, self.owner)
+                self.store.release(partition, self.owner)
+                if sqlite:
+                    # SQLite has one writer for every partition and API request.
+                    # Yield between partitions so waiting API writers can acquire it.
+                    self.stop_event.wait(SQLITE_PAUSE_SECONDS)
+                    # A short pass may leave work queued. The fairness pause
+                    # already lets API writers run; reserve the idle poll for
+                    # an unproductive drain, preserving any failure backoff.
+                    if processed and self.retry_delay == POLL_SECONDS:
+                        self.retry_delay = 0
         return done
 
     def _run(self) -> None:

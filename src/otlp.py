@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request
+from sqlalchemy.orm import Session
 
 from src.config.app import CONFIG
 
@@ -21,7 +22,7 @@ from .ingest_queue import (
 from .provider_parser import parse_provider_metadata
 from .ratelimit import resolve_ingest_request_async
 from .recorder import record_tool_call, record_usage, update_tool_call_duration
-from .shared_state import SharedMapping, defer_updates
+from .shared_state import SharedMapping
 
 log = logging.getLogger(__name__)
 CLAUDE_EVENT = "claude_code.api_request"
@@ -211,6 +212,7 @@ def _flush_claude_tools(
     session_id: str | None,
     user_id: str,
     usage_start_ms: int,
+    session: Session,
 ) -> None:
     """Record buffered Claude tools that will never get a tool_result.
 
@@ -235,6 +237,7 @@ def _flush_claude_tools(
             user_id=user_id,
             client_source="claude-code",
             ts=entry["ts"],
+            session=session,
         )
     if remaining:
         _claude_tool_buffer[prompt_key] = remaining
@@ -513,6 +516,7 @@ def _parse_opencode_record(
     *,
     user_id: str,
     device_id: str,
+    session: Session,
 ) -> None:
     fields = _extract_opencode_fields(
         record,
@@ -522,7 +526,7 @@ def _parse_opencode_record(
         user_id=user_id,
     )
     tool_calls = fields.pop("_tool_info", [])
-    usage = record_usage(**fields, device_id=device_id)
+    usage = record_usage(**fields, device_id=device_id, session=session)
     if usage:
         for tool_info in tool_calls:
             record_tool_call(
@@ -534,6 +538,7 @@ def _parse_opencode_record(
                 user_id=user_id,
                 client_source=client_source,
                 ts=tool_info["ts"],
+                session=session,
             )
 
 
@@ -700,24 +705,7 @@ def _parse_log_record(
     *,
     user_id: str,
     device_id: str,
-) -> None:
-    with defer_updates():
-        _parse_log_record_with_state(
-            record,
-            service_name,
-            resource_session_id,
-            user_id=user_id,
-            device_id=device_id,
-        )
-
-
-def _parse_log_record_with_state(
-    record: dict,
-    service_name: str,
-    resource_session_id: str,
-    *,
-    user_id: str,
-    device_id: str,
+    session: Session,
 ) -> None:
     if service_name in RETIRED_SERVICE_NAMES:
         return
@@ -769,6 +757,7 @@ def _parse_log_record_with_state(
                 user_id=user_id,
                 client_source="claude-code",
                 ts=entry["ts"],
+                session=session,
             )
     elif event_name == "codex.tool_decision" and service_name in CODEX_SERVICE_NAMES:
         conv_id = _attr(attrs, "conversation.id")
@@ -801,6 +790,7 @@ def _parse_log_record_with_state(
                 user_id=user_id,
                 client_source="codex",
                 duration_ms=duration_ms,
+                session=session,
             )
     elif (
         service_name in ({"opencode"} | KILO_SERVICE_NAMES)
@@ -825,7 +815,7 @@ def _parse_log_record_with_state(
             record, attrs, usage_session_id or "", user_id=user_id
         )
         if fields is not None:
-            usage = record_usage(**fields, device_id=device_id)
+            usage = record_usage(**fields, device_id=device_id, session=session)
             if usage:
                 prompt_id = _attr(attrs, "prompt.id")
                 prompt_key = _scoped_id(prompt_id, user_id) if prompt_id else None
@@ -842,6 +832,7 @@ def _parse_log_record_with_state(
                         usage.session_id,
                         user_id,
                         usage_ts_ms - window_ms,
+                        session=session,
                     )
                     _claude_last_usage[prompt_key] = (
                         usage.id,
@@ -854,7 +845,7 @@ def _parse_log_record_with_state(
         fields = _extract_codex_fields(record, attrs, service_name, user_id=user_id)
         if fields is not None:
             tool_calls = fields.pop("_tool_info", [])
-            usage = record_usage(**fields, device_id=device_id)
+            usage = record_usage(**fields, device_id=device_id, session=session)
             if usage:
                 for tool_info in tool_calls:
                     record_tool_call(
@@ -866,6 +857,7 @@ def _parse_log_record_with_state(
                         user_id=user_id,
                         client_source="codex",
                         ts=tool_info["ts"],
+                        session=session,
                     )
     elif event_name == CODEX_API_REQUEST_EVENT and service_name in CODEX_SERVICE_NAMES:
         _handle_codex_state_event(attrs, user_id=user_id)
@@ -880,6 +872,7 @@ def _parse_log_record_with_state(
             usage_session_id or "",
             user_id=user_id,
             device_id=device_id,
+            session=session,
         )
     elif event_name == KILO_EVENT and service_name in KILO_SERVICE_NAMES:
         _parse_opencode_record(
@@ -889,6 +882,7 @@ def _parse_log_record_with_state(
             client_source="kilo",
             user_id=user_id,
             device_id=device_id,
+            session=session,
         )
     elif (
         service_name not in KNOWN_SERVICE_NAMES

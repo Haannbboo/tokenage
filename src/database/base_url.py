@@ -7,7 +7,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..utils import normalize_provider_name
-from .engine import get_engine
 from .models import BaseUrl
 
 
@@ -30,51 +29,37 @@ def _apply_base_url_updates(
 def get_or_create_base_url(
     base_url: str,
     *,
-    db_path: str | None = None,
+    session: Session,
     provider_name: str | None = None,
     source: str | None = None,
 ) -> int:
     """Resolve a stable `base_urls.id`, updating missing metadata when possible."""
     if provider_name is not None:
         provider_name = normalize_provider_name(provider_name)
-    engine = get_engine(db_path)
-
     for attempt in range(2):
-        with Session(engine) as session:
-            row = session.scalar(select(BaseUrl).where(BaseUrl.base_url == base_url))
-            if row is not None:
-                if _apply_base_url_updates(
-                    row,
-                    provider_name=provider_name,
-                    source=source,
-                ):
-                    session.commit()
-                return int(row.id)
-
-            row = BaseUrl(
-                base_url=base_url,
-                provider_name=provider_name,
-                source=source,
-            )
-            session.add(row)
-            try:
-                session.commit()
-                return int(row.id)
-            except IntegrityError:
-                # On PostgreSQL, the transaction is aborted after an IntegrityError.
-                # Retry in a fresh transaction so we can observe the winning row.
-                session.rollback()
-                if attempt == 0:
-                    continue
+        row = session.scalar(select(BaseUrl).where(BaseUrl.base_url == base_url))
+        if row is not None:
+            _apply_base_url_updates(row, provider_name=provider_name, source=source)
+            session.flush()
+            return int(row.id)
+        try:
+            with session.begin_nested():
+                row = BaseUrl(
+                    base_url=base_url, provider_name=provider_name, source=source
+                )
+                session.add(row)
+                session.flush()
+            return int(row.id)
+        except IntegrityError:
+            if attempt:
                 raise
-
-    raise RuntimeError(f"Failed to resolve base_url id for {base_url}")
+    raise RuntimeError("Failed to resolve base_url id")
 
 
 def resolve_base_url_id(
     *,
     base_url: str | None,
-    db_path: str | None = None,
+    session: Session,
     provider_name: str | None = None,
     source: str | None = None,
 ) -> int | None:
@@ -83,7 +68,7 @@ def resolve_base_url_id(
 
     return get_or_create_base_url(
         base_url,
-        db_path=db_path,
+        session=session,
         provider_name=provider_name,
         source=source,
     )

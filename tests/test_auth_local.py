@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from tests.conftest import drain
+from tests.conftest import drain, ingest_write
 
 OWNER = "owner@localhost"
 SESSION_COOKIE = "tokenage_session"
@@ -115,7 +115,8 @@ def test_local_data_is_scoped_to_the_owner_not_shared(api_module, fresh_db):
     from src.recorder import record_usage
 
     _, third = mint_token("c@example.com", kind="cli", db_path=fresh_db.db_path)
-    record_usage(
+    ingest_write(
+        record_usage,
         device_id="test-device",
         provider="p",
         model="m",

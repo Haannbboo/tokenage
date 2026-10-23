@@ -1,4 +1,5 @@
 import { periodToMs } from './periodGaps.ts'
+import { t } from './i18n/index.ts'
 
 const dayFormatters = new Map<string, Intl.DateTimeFormat>()
 const timeFormatters = new Map<string, Intl.DateTimeFormat>()
@@ -60,4 +61,12 @@ export function describePeriod(
   else if (dayDiff === 1) label.relative = 'yesterday'
   if (granularity === 'hour') label.time = timeFormatter(locale).format(date)
   return label
+}
+
+/** The label as a sentence: "Today 1:00 PM", "Yesterday", "Tue, Oct 21". */
+export function periodLabelText(label: PeriodLabel | null): string | null {
+  if (!label) return null
+  if (label.relative === 'today') return `${t('Today')}${label.time ? ` ${label.time}` : ''}`
+  if (label.relative === 'yesterday') return `${t('Yesterday')}${label.time ? ` ${label.time}` : ''}`
+  return `${label.day}${label.time ? `, ${label.time}` : ''}`
 }

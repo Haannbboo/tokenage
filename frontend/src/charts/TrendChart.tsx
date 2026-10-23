@@ -1,32 +1,62 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { DailyUsage } from '../types'
-import { fillGaps, formatCost, formatNumber, formatThroughput, value, resolveTimezone } from '../utils'
+import { fillGaps, formatCost, formatModelName, formatNumber, value, resolveTimezone, wallClockMs, getTimezoneOffset } from '../utils'
+import { getModelColor } from '../model-badge'
+import { fillPeriodGaps } from '../periodGaps'
+import { describePeriod, periodLabelText } from '../periodLabels'
 import { useApp } from '../contexts/AppContext'
 import { ChartTooltip, TooltipRow, TooltipDivider } from './ChartTooltip'
-import { t } from '../i18n/index.ts'
+import { getLang, LANG_LOCALES, t } from '../i18n/index.ts'
+
+type ModelBucketRow = {
+  dimension: string
+  period: string
+  total_tokens: number | null
+  total_cost_usd: number | null
+  requests: number | null
+}
+
+/** How many models get their own colour; the rest are lumped into "Other". */
+const MODEL_LEGEND_MAX = 5
 
 export function TrendChart({
   data,
   title,
+  theme = 'light',
   granularity = 'day',
   periodCount,
   showDots = true,
+  filterParams = {},
 }: {
   data: DailyUsage[],
   title: string,
+  theme?: 'light' | 'dark',
   granularity?: 'hour' | 'day',
-  periodCount: number,
+  /** Buckets to show, anchored to now. Without it the plot spans the data. */
+  periodCount?: number,
   showDots?: boolean,
+  filterParams?: {
+    provider?: string
+    model?: string | null
+    client_source?: string | null
+    device_id?: string | null
+    since?: string | null
+    until?: string | null
+  }
 }) {
   const { timezone } = useApp()
   const tz = resolveTimezone(timezone)
-  const [metric, setMetric] = useState<'tokens' | 'cost' | 'throughput'>('tokens');
+  const [metric, setMetric] = useState<'tokens' | 'cost' | 'models'>('tokens');
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [showCacheHit, setShowCacheHit] = useState(false);
-  const filled = useMemo(() => fillGaps(data, granularity, periodCount, tz), [data, granularity, periodCount, tz]);
+  const filled = useMemo(
+    () => (periodCount === undefined
+      ? fillPeriodGaps(data, granularity)
+      : fillGaps(data, granularity, periodCount, tz)),
+    [data, granularity, periodCount, tz],
+  );
   const maxTokens = Math.max(...filled.map(x => value(x.total_tokens)), 1);
   const maxCost = Math.max(...filled.map(x => value(x.total_cost_usd)), 0.001);
-  const maxThroughput = Math.max(...filled.map(x => value(x.avg_throughput)), 1);
   const maxRequests = Math.max(...filled.map(x => value(x.requests)), 1);
   // cache_creation_tokens is a disjoint bucket on top of prompt_tokens (Anthropic
   // semantics), so it must be added to the denominator for a true hit rate.
@@ -39,13 +69,84 @@ export function TrendChart({
   const chartWidth = 1000 - (paddingX * 2);
 
   const hoveredData = hoveredIdx !== null ? filled[hoveredIdx] : null;
+  // The tooltip follows the hovered bucket, but never leaves the panel.
+  const tooltipLeft = hoveredIdx === null
+    ? 50
+    : (paddingX + ((hoveredIdx + 0.5) / filled.length) * chartWidth) / 10;
+  // Model split: one row per (model, bucket) from /usage/daily-by-dimension.
+  const tzOffset = getTimezoneOffset(tz);
+  const [modelRows, setModelRows] = useState<ModelBucketRow[]>([]);
+  useEffect(() => {
+    if (metric !== 'models') return;
+    const controller = new AbortController();
+    async function fetchModelRows() {
+      try {
+        const url = new URL('/usage/daily-by-dimension', window.location.origin);
+        url.searchParams.set('dimension', 'model');
+        url.searchParams.set('granularity', granularity);
+        if (filterParams.provider) url.searchParams.set('provider', filterParams.provider);
+        if (filterParams.model) url.searchParams.set('model', filterParams.model);
+        if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source);
+        if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id);
+        if (filterParams.since) url.searchParams.set('since', filterParams.since);
+        if (filterParams.until) url.searchParams.set('until', filterParams.until);
+        url.searchParams.set('tz_offset', tzOffset);
+
+        const res = await fetch(url.toString(), { signal: controller.signal });
+        if (res.ok) {
+          const rows = await res.json();
+          if (!controller.signal.aborted) setModelRows(rows);
+        }
+      } catch {
+        // Ignore abort errors
+      }
+    }
+    fetchModelRows();
+    return () => {
+      controller.abort();
+      // The rows belong to the old filters until the new ones land.
+      setModelRows([]);
+    };
+  }, [metric, filterParams, granularity, tzOffset]);
+
+  const modelBuckets = useMemo(() => {
+    const map = new Map<string, { model: string; tokens: number; cost: number; requests: number }[]>();
+    for (const row of modelRows) {
+      const list = map.get(row.period) ?? [];
+      list.push({
+        model: row.dimension,
+        tokens: value(row.total_tokens),
+        cost: value(row.total_cost_usd),
+        requests: value(row.requests),
+      });
+      map.set(row.period, list);
+    }
+    for (const list of map.values()) list.sort((a, b) => b.tokens - a.tokens);
+    return map;
+  }, [modelRows]);
+
+  // The models that get their own colour, biggest first.
+  const modelTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const row of modelRows) {
+      totals.set(row.dimension, (totals.get(row.dimension) ?? 0) + value(row.total_tokens));
+    }
+    return [...totals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([model, tokens]) => ({ model, tokens }));
+  }, [modelRows]);
+  const legendModels = modelTotals.slice(0, MODEL_LEGEND_MAX);
+  const otherModelTokens = modelTotals.slice(MODEL_LEGEND_MAX).reduce((sum, m) => sum + m.tokens, 0);
+  const modelColor = (model: string) => getModelColor(model, theme);
+  const nowWallMs = wallClockMs(new Date(), tz);
+  const hoveredPeriod = hoveredData ? describePeriod(hoveredData.period, granularity, nowWallMs, LANG_LOCALES[getLang()]) : null;
+  const hoveredPeriodLabel = periodLabelText(hoveredPeriod);
   const hCached = hoveredData ? value(hoveredData.cached_tokens) : 0;
   // Cache-write tokens are fresh input (billed differently from cache-read),
   // so they're folded into the Input bucket rather than the Cached bucket --
   // otherwise Input+Cached+Output would undercount total_tokens.
   const hInput = hoveredData ? Math.max(0, value(hoveredData.prompt_tokens) - hCached) + value(hoveredData.cache_creation_tokens) : 0;
   const hOutput = hoveredData ? value(hoveredData.completion_tokens) : 0;
-  const hThroughput = hoveredData ? value(hoveredData.avg_throughput) : 0;
   const hTotalInput = hoveredData ? value(hoveredData.prompt_tokens) + value(hoveredData.cache_creation_tokens) : 0;
   const hHitRate = hTotalInput > 0 ? (hCached / hTotalInput) * 100 : 0;
 
@@ -55,7 +156,22 @@ export function TrendChart({
         <span>📈 {title}</span>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '16px' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
-            {metric === 'tokens' ? (
+            {metric === 'models' ? (
+              <>
+                {legendModels.map(m => (
+                  <div key={m.model} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ width: '12px', height: '12px', background: modelColor(m.model), borderRadius: '2px' }} />
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{formatModelName(m.model)}</span>
+                  </div>
+                ))}
+                {otherModelTokens > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ width: '12px', height: '12px', background: 'var(--text-muted)', borderRadius: '2px' }} />
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Other')}</span>
+                  </div>
+                )}
+              </>
+            ) : metric === 'tokens' ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <div style={{ width: '12px', height: '12px', background: '#94a3b8', borderRadius: '2px' }} />
@@ -70,7 +186,7 @@ export function TrendChart({
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Output')}</span>
                 </div>
               </>
-            ) : metric === 'cost' ? (
+            ) : (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <div style={{ width: '12px', height: '12px', background: '#d97706', borderRadius: '2px' }} />
@@ -79,13 +195,6 @@ export function TrendChart({
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <div style={{ width: '12px', height: '12px', background: '#a855f7', borderRadius: '2px' }} />
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Output Cost')}</span>
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <div style={{ width: '12px', height: '12px', background: 'var(--color-pink)', borderRadius: '2px' }} />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>Throughput</span>
                 </div>
               </>
             )}
@@ -113,9 +222,9 @@ export function TrendChart({
               onClick={() => setMetric('cost')}
             >{t('Cost')}</button>
             <button
-              className={`tab-toggle-btn ${metric === 'throughput' ? 'active' : ''}`}
-              onClick={() => setMetric('throughput')}
-            >{t('Throughput')}</button>
+              className={`tab-toggle-btn ${metric === 'models' ? 'active' : ''}`}
+              onClick={() => { setModelRows([]); setMetric('models'); }}
+            >{t('Models')}</button>
           </div>
         </div>
       </div>
@@ -132,11 +241,31 @@ export function TrendChart({
         ) : (
           <>
             {hoveredIdx !== null && hoveredData && (
-              <ChartTooltip left={`${(paddingX + ((hoveredIdx + 0.5) / filled.length) * chartWidth) / 10}%`}>
+              <ChartTooltip left={`${Math.min(Math.max(tooltipLeft, 12), 88)}%`}>
                 <div style={{ fontWeight: 600, marginBottom: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', fontSize: '13px' }}>
-                  {hoveredData.period}
+                  {hoveredPeriodLabel ?? hoveredData.period}
                 </div>
-                {metric === 'tokens' ? (
+                {metric === 'models' ? (
+                  <>
+                    {(modelBuckets.get(hoveredData.period) ?? []).slice(0, MODEL_LEGEND_MAX).map(m => (
+                      <TooltipRow key={m.model} label={formatModelName(m.model)} labelColor={modelColor(m.model)}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontWeight: 600 }}>{formatNumber(m.tokens)}</span>
+                          <span style={{ color: 'var(--text-muted)' }}>{formatCost(m.cost, 4)}</span>
+                        </div>
+                      </TooltipRow>
+                    ))}
+                    <TooltipDivider />
+                    <TooltipRow label={t('Total Tokens:')}>
+                      <span style={{ fontWeight: 800 }}>{formatNumber(value(hoveredData.total_tokens))}</span>
+                    </TooltipRow>
+                    {hoveredData.total_cost_usd !== null && value(hoveredData.total_cost_usd) > 0 && (
+                      <TooltipRow label={t('Est. Cost:')} labelColor="#f472b6">
+                        <span style={{ fontWeight: 800, color: '#f472b6' }}>{formatCost(hoveredData.total_cost_usd, 4)}</span>
+                      </TooltipRow>
+                    )}
+                  </>
+                ) : metric === 'tokens' ? (
                   <>
                     <TooltipRow label={t('Input:')} labelColor="#94a3b8">
                       <span style={{ fontWeight: 600 }}>{formatNumber(hInput)}</span>
@@ -180,20 +309,7 @@ export function TrendChart({
                       <span style={{ fontWeight: 600 }}>{formatNumber(value(hoveredData.total_tokens))}</span>
                     </TooltipRow>
                   </>
-                ) : (
-                  <>
-                    <TooltipRow label="Throughput:" labelColor="var(--color-pink)">
-                      <span style={{ fontWeight: 800, color: 'var(--color-pink)' }}>{formatThroughput(hThroughput)}</span>
-                    </TooltipRow>
-                    <TooltipDivider />
-                    <TooltipRow label="Output Tokens:">
-                      <span style={{ fontWeight: 600 }}>{formatNumber(value(hoveredData.completion_tokens))}</span>
-                    </TooltipRow>
-                    <TooltipRow label="Latency:">
-                      <span style={{ fontWeight: 600 }}>{value(hoveredData.avg_latency_ms).toFixed(0)}ms</span>
-                    </TooltipRow>
-                  </>
-                )}
+                ) : null}
                 <TooltipRow label={t('Requests:')} labelColor="var(--color-pink)">
                   <span style={{ fontWeight: 600, color: 'var(--color-pink)' }}>{formatNumber(hoveredData.requests)}</span>
                 </TooltipRow>
@@ -242,6 +358,23 @@ export function TrendChart({
                 />
               ))}
 
+              {/* The hovered bucket, highlighted behind the bars */}
+              {hoveredIdx !== null && (() => {
+                const barSlot = chartWidth / filled.length;
+                const cx = paddingX + (hoveredIdx + 0.5) / filled.length * chartWidth;
+                return (
+                  <rect
+                    x={cx - barSlot / 2}
+                    y={0}
+                    width={Math.max(barSlot, 3)}
+                    height={200}
+                    fill="var(--text-muted)"
+                    opacity={0.12}
+                    style={{ pointerEvents: 'none' }}
+                  />
+                );
+              })()}
+
               {/* Stacked Bars */}
               {(() => {
                 const barSlot = chartWidth / filled.length;
@@ -260,7 +393,38 @@ export function TrendChart({
                   const x = cx - barW / 2;
                   const dimmed = hoveredIdx !== null && hoveredIdx !== i;
 
-                  if (metric === 'tokens') {
+                  if (metric === 'models') {
+                    const models = modelBuckets.get(d.period) ?? [];
+                    if (models.length === 0) return null;
+
+                    const segments = models.slice(0, MODEL_LEGEND_MAX);
+                    const otherTokens = models.slice(MODEL_LEGEND_MAX).reduce((sum, m) => sum + m.tokens, 0);
+                    const stack = otherTokens > 0
+                      ? [...segments, { model: '', tokens: otherTokens, cost: 0, requests: 0 }]
+                      : segments;
+
+                    let yCursor = 200;
+                    return (
+                      <g key={i} style={{ opacity: dimmed ? 0.3 : 1, transition: 'opacity 0.2s' }}>
+                        {stack.map((m, mi) => {
+                          if (m.tokens <= 0) return null;
+                          const h = (m.tokens / maxTokens) * 200;
+                          const y = yCursor - h;
+                          yCursor = y;
+                          const isTop = mi === 0;
+                          const isBottom = mi === stack.length - 1;
+                          return (
+                            <path
+                              key={m.model || `other-${mi}`}
+                              d={roundedRect(x, y, barW, h, isTop ? radius : 0, isBottom ? radius : 0)}
+                              fill={m.model ? modelColor(m.model) : 'var(--text-muted)'}
+                              opacity={0.85}
+                            />
+                          );
+                        })}
+                      </g>
+                    );
+                  } else if (metric === 'tokens') {
                     const cached = value(d.cached_tokens);
                     // Cache-write tokens fold into Input; see hInput above.
                     const input = Math.max(0, value(d.prompt_tokens) - cached) + value(d.cache_creation_tokens);
@@ -318,18 +482,6 @@ export function TrendChart({
                         )}
                       </g>
                     );
-                  } else {
-                    const throughput = value(d.avg_throughput);
-                    if (throughput === 0) return null;
-
-                    const hThroughput = (throughput / maxThroughput) * 200;
-                    const yThroughput = 200 - hThroughput;
-
-                    return (
-                      <g key={i} style={{ opacity: dimmed ? 0.3 : 1, transition: 'opacity 0.2s' }}>
-                        <path d={roundedRect(x, yThroughput, barW, hThroughput, radius, radius)} fill="var(--color-pink)" style={{ opacity: 0.8 }} />
-                      </g>
-                    );
                   }
                 });
               })()}
@@ -384,6 +536,20 @@ export function TrendChart({
                         />
                       );
                     })}
+                    {/* The hovered point stays marked even when the dots are off. */}
+                    {hoveredIdx !== null && (() => {
+                      const x = paddingX + (hoveredIdx + 0.5) / filled.length * chartWidth;
+                      const y = 200 - (value(filled[hoveredIdx].requests) / maxRequests) * 200;
+                      return (
+                        <circle
+                          cx={x} cy={y} r="5"
+                          fill="var(--chart-dot-fill)"
+                          stroke="var(--color-pink)"
+                          strokeWidth="3"
+                          style={{ pointerEvents: 'none' }}
+                        />
+                      );
+                    })()}
                   </>
                 );
               })()}
@@ -428,6 +594,21 @@ export function TrendChart({
                   })()}
                 </>
               )}
+
+              {/* A crosshair keeps the hovered bucket findable when the bars
+                  are only a couple of pixels wide. */}
+              {hoveredIdx !== null && (() => {
+                const cx = paddingX + (hoveredIdx + 0.5) / filled.length * chartWidth;
+                return (
+                  <line
+                    x1={cx} y1={0} x2={cx} y2={200}
+                    stroke="var(--text-secondary)"
+                    strokeWidth={1}
+                    opacity={0.5}
+                    style={{ pointerEvents: 'none' }}
+                  />
+                );
+              })()}
 
                 {/* Right Y-axis labels */}
                 {showCacheHit && [0, 25, 50, 75, 100].map(tick => (

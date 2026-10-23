@@ -502,6 +502,7 @@ def usage_daily_by_dimension(
     model: str | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
+    granularity: str = "day",
     tz_offset: str = "+00:00",
 ):
     return aggregate_daily_by_dimension(
@@ -513,6 +514,7 @@ def usage_daily_by_dimension(
         model=model,
         client_source=client_source,
         device_id=device_id,
+        granularity=granularity,
         tz_offset=tz_offset,
     )
 

@@ -1,5 +1,5 @@
 import { createContext, createElement, useContext, useState, type ReactNode } from 'react'
-import { zh } from './zh'
+import { zh } from './zh.ts'
 
 export type Lang = 'en' | 'zh'
 

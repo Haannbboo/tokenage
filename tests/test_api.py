@@ -595,6 +595,7 @@ def test_daily_by_dimension_endpoint_passes_all_filters(api_module, monkeypatch)
         "model": "claude-sonnet-4-6",
         "client_source": "claude-code",
         "device_id": None,
+        "granularity": "day",
         "tz_offset": "-07:00",
     }
 

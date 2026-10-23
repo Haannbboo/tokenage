@@ -2545,6 +2545,59 @@ def test_aggregate_daily_by_dimension_groups_by_model(fresh_db):
     assert by_model_and_date[("gpt-4o", "2026-05-07")]["total_tokens"] == 500
 
 
+def test_aggregate_daily_by_dimension_can_bucket_by_hour(fresh_db):
+    """aggregate_daily_by_dimension buckets by local hour when asked."""
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+
+    for ts, tokens in [
+        (TS_2026_05_07_10, 1000),
+        (TS_2026_05_07_10, 500),
+        (TS_2026_05_08_10, 2000),
+    ]:
+        database_module.log_usage(
+            database_module.Usage(
+                device_id="test-device",
+                ts=ts,
+                provider="anthropic",
+                model="claude-sonnet-4-6",
+                client_source=None,
+                session_id=None,
+                endpoint="/v1/messages",
+                prompt_tokens=tokens // 2,
+                completion_tokens=tokens // 2,
+                reasoning_tokens=None,
+                cached_tokens=None,
+                total_tokens=tokens,
+                latency_ms=500,
+                ttft_ms=None,
+                tool_tokens=None,
+                cache_creation_tokens=None,
+                input_cost_usd=0.01,
+                output_cost_usd=0.01,
+                total_cost_usd=0.02,
+                status=200,
+                base_url_id=None,
+                user_id="test-user",
+            ),
+            db_path=db_path,
+        )
+
+    result = database_module.aggregate_daily_by_dimension(
+        dimension="model",
+        since="2026-05-07T00:00:00Z",
+        until="2026-05-09T00:00:00Z",
+        user_id="test-user",
+        granularity="hour",
+    )
+
+    periods = {r["period"] for r in result}
+    assert periods == {"2026-05-07 10:00", "2026-05-08 10:00"}
+    by_period = {r["period"]: r for r in result}
+    assert by_period["2026-05-07 10:00"]["total_tokens"] == 1500
+
+
 def test_aggregate_daily_by_dimension_groups_by_provider(fresh_db):
     """aggregate_daily_by_dimension returns daily data grouped by provider."""
     database_module = fresh_db.database_module

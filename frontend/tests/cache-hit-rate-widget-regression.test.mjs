@@ -9,12 +9,15 @@ const overview = readFileSync(join(root, 'src/pages/OverviewTab.tsx'), 'utf8')
 const statTile = readFileSync(join(root, 'src/components/StatTile.tsx'), 'utf8')
 const sparkline = readFileSync(join(root, 'src/Sparkline.tsx'), 'utf8')
 const zh = readFileSync(join(root, 'src/i18n/zh.ts'), 'utf8')
+const trendChart = readFileSync(join(root, 'src/charts/TrendChart.tsx'), 'utf8')
 const css = readFileSync(join(root, 'src/App.css'), 'utf8')
 
 // Type stripping is on by default from node 22.18; older runtimes skip the
 // runtime scale checks instead of failing the whole file.
 const scaleModule = await import('../src/sparklineScale.ts').catch(() => null)
 const gapsModule = await import('../src/periodGaps.ts').catch(() => null)
+// The i18n module reads the saved language on import.
+globalThis.localStorage = globalThis.localStorage ?? { getItem: () => null, setItem: () => {} }
 const labelsModule = await import('../src/periodLabels.ts').catch(() => null)
 
 describe('Cache hit rate dashboard widget', () => {
@@ -197,5 +200,73 @@ describe('Period labels', { skip: !labelsModule }, () => {
 
   test('an unknown period has no label', () => {
     assert.equal(labelsModule.describePeriod('not-a-period', 'day', now, 'en-US'), null)
+  })
+
+  test('the label reads as a sentence', () => {
+    const today = labelsModule.describePeriod('2026-10-22 13:00', 'hour', now, 'en-US')
+    assert.ok(labelsModule.periodLabelText(today).startsWith('Today '), today.time)
+
+    const older = labelsModule.describePeriod('2026-10-20', 'day', now, 'en-US')
+    assert.ok(/Oct 20/.test(labelsModule.periodLabelText(older)))
+  })
+})
+
+describe('Usage trend chart', () => {
+  test('the throughput view is gone', () => {
+    assert.doesNotMatch(trendChart, /'throughput'/)
+    assert.doesNotMatch(trendChart, /setMetric\('throughput'\)/)
+    assert.doesNotMatch(trendChart, /maxThroughput/)
+    assert.doesNotMatch(zh, /'Throughput':/)
+  })
+
+  test('the hovered bucket gets a band and a crosshair', () => {
+    assert.match(trendChart, /\{hoveredIdx !== null && \(\(\) => \{/)
+    assert.match(trendChart, /fill="var\(--text-muted\)"\s*opacity=\{0\.12\}/)
+    assert.match(trendChart, /stroke="var\(--text-secondary\)"\s*strokeWidth=\{1\}\s*opacity=\{0\.5\}/)
+  })
+
+  test('the hovered point stays marked even when the dots are hidden', () => {
+    assert.match(trendChart, /The hovered point stays marked even when the dots are off/)
+  })
+
+  test('without a period count the plot spans the data instead of a fixed window', () => {
+    assert.match(trendChart, /periodCount\?: number/)
+    assert.match(trendChart, /periodCount === undefined\s*\? fillPeriodGaps\(data, granularity\)/)
+  })
+
+  test('the tooltip shows a readable period and stays inside the panel', () => {
+    assert.match(trendChart, /describePeriod\(hoveredData\.period, granularity, nowWallMs/)
+    assert.match(trendChart, /Math\.min\(Math\.max\(tooltipLeft, 12\), 88\)/)
+  })
+
+  test('the overview leaves the period count open for all time and custom ranges', () => {
+    assert.match(overview, /periodCount=\{dateRange === '24h' \? 24 : dateRange === '7d' \? 7 : dateRange === '30d' \? 30 : undefined\}/)
+  })
+})
+
+describe('Usage trend by model', () => {
+  test('the trend chart has a models mode', () => {
+    assert.match(trendChart, /useState<'tokens' \| 'cost' \| 'models'>/)
+    assert.match(trendChart, /setModelRows\(\[\]\); setMetric\('models'\);/)
+  })
+
+  test('the model split comes from the per-model endpoint with the right granularity', () => {
+    assert.match(trendChart, /new URL\('\/usage\/daily-by-dimension', window\.location\.origin\)/)
+    assert.match(trendChart, /url\.searchParams\.set\('dimension', 'model'\)/)
+    assert.match(trendChart, /url\.searchParams\.set\('granularity', granularity\)/)
+  })
+
+  test('the bars are stacked by model and coloured per model', () => {
+    assert.match(trendChart, /modelBuckets\.get\(d\.period\)/)
+    assert.match(trendChart, /fill=\{m\.model \? modelColor\(m\.model\) : 'var\(--text-muted\)'\}/)
+  })
+
+  test('the legend lists the models, the rest as other', () => {
+    assert.match(trendChart, /const legendModels = modelTotals\.slice\(0, MODEL_LEGEND_MAX\)/)
+    assert.match(trendChart, /t\('Other'\)/)
+  })
+
+  test('the overview passes the theme and filters to the trend chart', () => {
+    assert.match(overview, /theme=\{theme\}\s*filterParams=\{dashboardFilterParams\}/)
   })
 })

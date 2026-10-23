@@ -59,7 +59,6 @@ export const zh: Record<string, string> = {
   'Output Cost': '输出费用',
   'Tokens': 'Tokens',
   'Cost': '费用',
-  'Throughput': '吞吐量',
   'Avg Speed': '平均速度',
   'Speed': '速度',
   'Success': '成功率',

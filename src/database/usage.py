@@ -1686,10 +1686,14 @@ def aggregate_daily_by_dimension(
     model: str | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
+    granularity: str = "day",
     tz_offset: str = "+00:00",
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Local-day usage grouped by a dimension (model/provider/client_source/device)."""
+    """Local usage grouped by a dimension (model/provider/client_source/device).
+
+    The buckets are local days unless `granularity` asks for hours.
+    """
     name_cols: list[Any] = []
     dim_col: Any
     if dimension == "provider":
@@ -1701,7 +1705,7 @@ def aggregate_daily_by_dimension(
         name_cols = [Device.device_name.label("dimension_name")]
     else:
         dim_col = UsageHourly.model
-    period, fmt = _local_period("day", tz_offset)
+    period, fmt = _local_period(granularity, tz_offset)
     rows = _rollup(
         dim_col.label("dimension"),
         *name_cols,

@@ -12,7 +12,7 @@ import {
   formatCompact, formatCost, formatLatency, formatNumber, formatRate, formatThroughput,
   value, getAgentDisplayName, cacheHitRate, resolveTimezone, wallClockMs,
 } from '../utils'
-import { describePeriod } from '../periodLabels'
+import { describePeriod, periodLabelText } from '../periodLabels'
 import { fillPeriodGaps } from '../periodGaps'
 
 type OverviewTabProps = {
@@ -91,14 +91,9 @@ export function OverviewTab({
   const { timezone } = useApp()
   const nowWallMs = wallClockMs(new Date(), resolveTimezone(timezone))
   const hoveredPeriod = cursorIdx === null ? null : filledUsage[cursorIdx]?.period
-  const period = hoveredPeriod ? describePeriod(hoveredPeriod, granularity, nowWallMs, LANG_LOCALES[getLang()]) : null
-  const hoverLabel = period
-    ? period.relative === 'today'
-      ? `${t('Today')}${period.time ? ` ${period.time}` : ''}`
-      : period.relative === 'yesterday'
-        ? `${t('Yesterday')}${period.time ? ` ${period.time}` : ''}`
-        : `${period.day}${period.time ? `, ${period.time}` : ''}`
-    : null
+  const hoverLabel = periodLabelText(
+    hoveredPeriod ? describePeriod(hoveredPeriod, granularity, nowWallMs, LANG_LOCALES[getLang()]) : null,
+  )
 
   const costPoints = filledUsage.map(d => ({ value: value(d.total_cost_usd), period: d.period }))
   const tokenPoints = filledUsage.map(d => ({ value: value(d.total_tokens), period: d.period }))
@@ -467,8 +462,10 @@ export function OverviewTab({
           <TrendChart
             data={dailyUsage}
             title={`${dateRange === '24h' ? t('Hourly Usage Trend') : t('Daily Usage Trend')}`}
+            theme={theme}
+            filterParams={dashboardFilterParams}
             granularity={dateRange === '24h' ? 'hour' : 'day'}
-            periodCount={dateRange === '24h' ? 24 : dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : 365}
+            periodCount={dateRange === '24h' ? 24 : dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : undefined}
             showDots={dateRange !== 'all'}
           />
         </div>

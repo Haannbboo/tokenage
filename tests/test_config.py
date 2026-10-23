@@ -389,3 +389,56 @@ def test_load_config_reads_google_creds_from_yaml(config_module, tmp_path, monke
 
     assert config["auth"]["google_client_id"] == "from-yaml"
     assert config["auth"]["google_client_secret"] == "from-yaml"
+
+
+@pytest.mark.parametrize("workers", [1, 2, 4])
+def test_worker_count_shared_by_runtime_and_gunicorn(
+    config_module, tmp_path, monkeypatch, workers
+):
+    import runpy
+
+    from src.config.server_config import load_server_config
+
+    config_path = tmp_path / "workers.yaml"
+    config_path.write_text(f"server:\n  workers: {workers}\n", encoding="utf-8")
+    monkeypatch.setenv("TOKENAGE_CONFIG", str(config_path))
+    # The count deliberately has no generic environment override.
+    monkeypatch.setenv("TOKENAGE_SERVER__WORKERS", "99")
+    assert config_module.load_config()["server"]["workers"] == workers
+    assert load_server_config().workers == workers
+    assert runpy.run_path("src/config/api.conf.py")["workers"] == workers
+
+
+@pytest.mark.parametrize("value", [0, -1, True, False, 1.5, "2", None, [], {}])
+def test_invalid_worker_count_rejected(config_module, tmp_path, monkeypatch, value):
+    import yaml
+
+    from src.config.server_config import load_server_config
+
+    config_path = tmp_path / "workers.yaml"
+    config_path.write_text(yaml.safe_dump({"server": {"workers": value}}))
+    monkeypatch.setenv("TOKENAGE_CONFIG", str(config_path))
+    for loader in (config_module.load_config, load_server_config):
+        with pytest.raises(ValueError, match="server.workers"):
+            loader()
+
+
+def test_worker_default_and_config_sync(config_module, tmp_path, monkeypatch):
+    from src.config.server_config import load_server_config
+
+    config_path = tmp_path / "workers.yaml"
+    config_path.write_text("server: {}\n", encoding="utf-8")
+    monkeypatch.setenv("TOKENAGE_CONFIG", str(config_path))
+    assert config_module.load_config()["server"]["workers"] == 2
+    assert load_server_config().workers == 2
+    assert config_module.sync_config_file_with_defaults(
+        str(config_path), "config.example.yaml"
+    )
+    import yaml
+
+    assert yaml.safe_load(config_path.read_text())["server"]["workers"] == 2
+    config_path.write_text("server:\n  workers: 3\n", encoding="utf-8")
+    config_module.sync_config_file_with_defaults(
+        str(config_path), "config.example.yaml"
+    )
+    assert yaml.safe_load(config_path.read_text())["server"]["workers"] == 3

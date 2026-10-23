@@ -12,7 +12,7 @@ load_dotenv(os.path.join(ROOT, ".env"))
 
 _server = load_server_config()
 bind = f"{_server.host}:{_server.api_port}"
-workers = 1
+workers = _server.workers
 worker_class = "uvicorn.workers.UvicornWorker"
 accesslog = os.path.join(ROOT, "logs/api.access.log")
 errorlog = os.path.join(ROOT, "logs/api.error.log")

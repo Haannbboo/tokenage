@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.engine import Engine
 
 from src.config.app import CONFIG
@@ -94,4 +94,15 @@ def _sqlite_pragmas(dbapi_conn: Any, _record: Any) -> None:
 def init_db(db_path: str | None = None) -> None:
     """Create ORM-managed tables if they do not already exist."""
     engine = get_engine(db_path)
-    Base.metadata.create_all(engine)
+    # A warm startup only needs a read: do not wait behind ingest writers.
+    # create_all likewise skips existing tables (index upgrades are migrations).
+    if set(Base.metadata.tables).issubset(inspect(engine).get_table_names()):
+        return
+    # create_all checks before creating, so concurrent cold worker startups
+    # need to serialize that check and the DDL on the database itself.
+    with engine.begin() as connection:
+        if engine.dialect.name == "sqlite":
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        elif engine.dialect.name == "postgresql":
+            connection.exec_driver_sql("SELECT pg_advisory_xact_lock(1953459813)")
+        Base.metadata.create_all(connection)

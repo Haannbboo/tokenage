@@ -13,6 +13,14 @@ class ServerConfig:
     host: str
     api_port: int
     base_url: str | None = None
+    workers: int = 2
+
+
+def validate_workers(value: object) -> int:
+    """Require a positive integer process count (booleans are not counts)."""
+    if type(value) is not int or value < 1:
+        raise ValueError("server.workers must be an integer >= 1")
+    return value
 
 
 def resolve_server_urls(config: dict) -> dict[str, str]:
@@ -64,4 +72,5 @@ def load_server_config() -> ServerConfig:
         host=host,
         api_port=int(server.get("api_port", 4001)),
         base_url=base_url,
+        workers=validate_workers(server.get("workers", 2)),
     )

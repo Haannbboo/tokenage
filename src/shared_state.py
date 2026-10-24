@@ -84,9 +84,23 @@ class SQLiteSharedState:
             self._anchor = sqlite3.connect(
                 self.path, timeout=5, check_same_thread=False
             )
-            self._anchor.execute("PRAGMA journal_mode=WAL")
+            # Switching a new file to WAL may return SQLITE_BUSY immediately
+            # despite busy_timeout when another worker is opening it too.
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    mode = self._anchor.execute("PRAGMA journal_mode").fetchone()[0]
+                    if mode != "wal":
+                        self._anchor.execute("PRAGMA journal_mode=WAL")
+                    break
+                except sqlite3.OperationalError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.01)
             self._anchor.execute("SELECT count(*) FROM sqlite_master").fetchone()
         except sqlite3.OperationalError as exc:
+            if getattr(self, "_anchor", None) is not None:
+                self._anchor.close()
             raise StoreUnavailable() from exc
         with self._connection() as conn:
             conn.executescript("""

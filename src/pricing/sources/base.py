@@ -11,8 +11,10 @@ from __future__ import annotations
 import http.client
 import json
 import logging
+import os
 import re
 import socket
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -92,7 +94,17 @@ def save_cache_json(name: str, data: Any) -> None:
     path = cache_path(name)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        # Each worker may refresh at startup. Readers must see a complete
+        # generation, and concurrent writers must not share a temporary file.
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as temporary:
+            try:
+                temporary.write(json.dumps(data, indent=2))
+                temporary.close()
+                os.replace(temporary.name, path)
+            finally:
+                Path(temporary.name).unlink(missing_ok=True)
     except OSError:
         log.warning("Failed to write pricing cache: %s", path)
 

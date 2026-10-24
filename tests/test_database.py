@@ -5606,3 +5606,58 @@ def test_reprice_statement_count_does_not_grow_per_row(fresh_db, monkeypatch):
     # 12x the rows: a per-row reload would add ~55 statements. Small
     # differences come from the first run creating the shared snapshot.
     assert counts["many"] - counts["few"] < 10, counts
+
+
+def test_hourly_upsert_binds_fresh_values_per_row(fresh_db):
+    from decimal import Decimal
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from src.database.models import Usage, UsageHourly
+    from src.database.usage import (
+        _HOURLY_COUNTER_COLUMNS,
+        _HOURLY_KEY_COLUMNS,
+        hourly_values,
+        upsert_hourly_aggregate,
+    )
+
+    engine = fresh_db.database_module.get_engine(fresh_db.db_path)
+
+    def usage(model, tokens, cost):
+        return Usage(
+            user_id="test-user",
+            device_id="test-device",
+            ts=TS_2026_04_17_10,
+            provider="anthropic",
+            model=model,
+            client_source=None,
+            prompt_tokens=tokens,
+            completion_tokens=3,
+            prompt_length=0,
+            input_cost_usd=Decimal(cost),
+            output_cost_usd=Decimal("0.00000003"),
+            total_cost_usd=Decimal(cost) + Decimal("0.00000003"),
+        )
+
+    # The cached statement binds exactly what hourly_values produces.
+    assert set(hourly_values(usage("first", 1, "0"))) == {
+        *_HOURLY_KEY_COLUMNS,
+        *_HOURLY_COUNTER_COLUMNS,
+    }
+    with Session(engine) as session:
+        upsert_hourly_aggregate(session, usage("first", 7, "0.00000001"))
+        session.commit()
+        upsert_hourly_aggregate(session, usage("first", 999, "12"))
+        session.rollback()
+        upsert_hourly_aggregate(session, usage("first", 11, "0.00000002"))
+        upsert_hourly_aggregate(session, usage("second", 23, "0.00000007"))
+        session.commit()
+        rows = {r.model: r for r in session.scalars(select(UsageHourly))}
+        assert rows["first"].request_count == 2
+        assert rows["first"].prompt_tokens == 18
+        assert rows["first"].total_cost_usd == Decimal("0.00000009")
+        assert rows["second"].request_count == 1
+        assert rows["second"].prompt_tokens == 23
+        assert rows["second"].total_cost_usd == Decimal("0.00000010")
+        assert all(r.client_source == "" for r in rows.values())

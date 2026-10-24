@@ -93,7 +93,7 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if printf '%s\n' "$files" | grep -Eq '^(src/database/|src/schema_migrations\.py$|tests/conftest\.py$|tests/test_database\.py$|tests/test_tenancy_pg\.py$|\.github/workflows/ci\.yml$)'; then
+          if printf '%s\n' "$files" | grep -Eq '^(src/database/|src/auth/|tests/test_auth_activity\.py$|src/schema_migrations\.py$|tests/conftest\.py$|tests/test_database\.py$|tests/test_tenancy_pg\.py$|\.github/workflows/ci\.yml$)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "No database changes; skipping Postgres tests."

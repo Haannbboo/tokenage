@@ -59,6 +59,10 @@ def test_direct_loopback_is_the_owner(api_module, client_kwargs, headers):
         ({"client": ("203.0.113.9", 1)}, {}),  # non-loopback peer
         ({"client": ("::ffff:10.0.0.1", 1)}, {}),
         ({}, {"x-forwarded-for": "203.0.113.9"}),
+        (
+            {"client": ("127.0.0.1", 1)},
+            {"host": "usage.example.com", "x-forwarded-for": "203.0.113.9"},
+        ),
         ({}, {"forwarded": "for=203.0.113.9"}),
         ({}, {"x-real-ip": "203.0.113.9"}),
         ({}, {"host": "evil.example"}),  # DNS rebinding

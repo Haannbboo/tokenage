@@ -397,3 +397,32 @@ def ingest_write(function, *args, db_path=None, **kwargs):
             result = function(*args, session=session, **kwargs)
             session.commit()
             return result
+
+
+@pytest.fixture
+def redis_store_factory():
+    """Isolate Redis contract tests without flushing any shared database."""
+    from uuid import uuid4
+
+    instances = []
+    prefix = "tokenage-test:" + uuid4().hex + ":"
+
+    def create(store_class=None):
+        from src.shared_state import RedisSharedState
+
+        url = os.environ.get("TOKENAGE_TEST_REDIS_URL")
+        if not url:
+            pytest.skip("TOKENAGE_TEST_REDIS_URL is not set")
+        instance = (store_class or RedisSharedState)(url, prefix=prefix)
+        instances.append(instance)
+        return instance
+
+    yield create
+    if instances:
+        client = instances[0]._client
+        keys = list(client.scan_iter(match=prefix + "*"))
+        if keys:
+            client.delete(*keys)
+        for instance in instances:
+            instance._client.close()
+            instance._client.connection_pool.disconnect()

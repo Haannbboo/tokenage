@@ -184,8 +184,9 @@ def test_tool_and_usage_correlate_across_consumers(api_module, fresh_db):
         )
 
 
+@pytest.mark.parametrize("backend", ["sqlite", "redis"])
 def test_server_status_reports_queue_without_http(
-    api_module, monkeypatch, tmp_path, capsys
+    api_module, monkeypatch, tmp_path, capsys, backend, redis_store_factory
 ):
     from src import ops
     from src.shared_state import get_shared_state, partition_for
@@ -195,7 +196,11 @@ def test_server_status_reports_queue_without_http(
     monkeypatch.setattr(ops, "_conf", lambda: conf)
     monkeypatch.setattr(ops, "_config_path", lambda: tmp_path / "missing.yaml")
     monkeypatch.setattr(ops, "_ctl", lambda *a: None)
-    store = get_shared_state()
+    if backend == "redis":
+        import src.shared_state as shared_state
+
+        monkeypatch.setattr(shared_state, "get_shared_state", redis_store_factory)
+    store = get_shared_state() if backend == "sqlite" else redis_store_factory()
     store.publish("status-user", [{}])
     store.claim(partition_for("status-user"), "test-owner")
     assert ops.status() == 0

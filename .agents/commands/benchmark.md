@@ -6,6 +6,7 @@ Finds the highest request rate the server sustains for OTLP and proxy ingest on 
 
 - Once per PR, before opening it, when the diff touches the ingest path: `src/otlp.py`, `src/ingest_queue.py`, `src/shared_state.py`, `src/recorder.py`, `src/database/` write helpers, the DB engine, or server worker/process config.
 - Never per commit, never for frontend/client-only/docs changes.
+- Run load and stress tests only on GCP VMs, never on the dev machine. Local runs are limited to unit tests and short single-process profiles.
 - **Suggest it; do not run it.** It creates billable GCP VMs. Tell the human what you'd run and roughly how long (~1 h), and start only after explicit approval. Delete everything afterwards.
 
 ## What is measured

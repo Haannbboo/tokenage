@@ -1,7 +1,8 @@
-import type { DailyUsage } from './types'
+import type { DailyUsage, PeriodGranularity } from './types'
 
 const DAY_MS = 86400_000
 const HOUR_MS = 3600_000
+const FIFTEEN_MIN_MS = 900_000
 
 export function zeroUsageRow(period: string): DailyUsage {
   return {
@@ -16,21 +17,22 @@ export function zeroUsageRow(period: string): DailyUsage {
 }
 
 // The period is a wall-clock label in the display timezone ("2026-10-22" or
-// "2026-10-22 14:00"), so it is read as UTC to keep the spacing exact.
-export function periodToMs(period: string, granularity: 'hour' | 'day'): number | null {
-  const [date, hour] = period.split(' ')
+// "2026-10-22 14:00" or "2026-10-22 14:15"), so it is read as UTC to keep the
+// spacing exact.
+export function periodToMs(period: string, granularity: PeriodGranularity): number | null {
+  const [date, time] = period.split(' ')
   const [y, m, d] = date.split('-').map(Number)
   if (!y || !m || !d) return null
-  if (granularity === 'hour' && !hour) return null
-  const h = hour ? Number(hour.split(':')[0]) : 0
-  return Date.UTC(y, m - 1, d, h)
+  if (granularity !== 'day' && !time) return null
+  const [h, min] = time ? time.split(':').map(Number) : [0, 0]
+  return Date.UTC(y, m - 1, d, h, granularity === '15m' ? min : 0)
 }
 
-function msToPeriod(ms: number, granularity: 'hour' | 'day'): string {
+function msToPeriod(ms: number, granularity: PeriodGranularity): string {
   const iso = new Date(ms).toISOString()
-  return granularity === 'hour'
-    ? `${iso.slice(0, 10)} ${iso.slice(11, 13)}:00`
-    : iso.slice(0, 10)
+  if (granularity === 'hour') return `${iso.slice(0, 10)} ${iso.slice(11, 13)}:00`
+  if (granularity === '15m') return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`
+  return iso.slice(0, 10)
 }
 
 /**
@@ -39,10 +41,10 @@ function msToPeriod(ms: number, granularity: 'hour' | 'day'): string {
  * the series. Only the span between the first and the last period is filled,
  * so the result always stays inside the selected range.
  */
-export function fillPeriodGaps(data: DailyUsage[], granularity: 'hour' | 'day'): DailyUsage[] {
+export function fillPeriodGaps(data: DailyUsage[], granularity: PeriodGranularity): DailyUsage[] {
   if (data.length < 2) return data
 
-  const step = granularity === 'hour' ? HOUR_MS : DAY_MS
+  const step = granularity === 'hour' ? HOUR_MS : granularity === '15m' ? FIFTEEN_MIN_MS : DAY_MS
   const byKey = new Map<number, DailyUsage>()
   for (const row of data) {
     const key = periodToMs(row.period, granularity)

@@ -19,8 +19,10 @@ from sqlalchemy import (
     BigInteger,
     and_,
     bindparam,
+    case,
     func,
     literal_column,
+    or_,
     select,
     update,
 )
@@ -1013,16 +1015,52 @@ def _hourly_filters(
         filters.append(UsageHourly.hour >= since_hour)
     if until_hour is not None:
         filters.append(UsageHourly.hour <= until_hour)
-    if provider:
-        filters.append(UsageHourly.provider == normalize_provider_name(provider))
-    if model:
-        filters.append(UsageHourly.model == normalize_model_name(model))
-    if client_source:
-        filters.append(UsageHourly.client_source == client_source)
-    if device_id:
-        filters.append(_device_filter(UsageHourly.device_id, device_id))
+    filters.extend(
+        _field_filters(
+            UsageHourly,
+            provider=provider,
+            model=model,
+            client_source=client_source,
+            device_id=device_id,
+        )
+    )
     return filters
 
+
+def _field_filters(
+    table: Any,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    client_source: str | None = None,
+    device_id: str | None = None,
+) -> list[Any]:
+    """The provider, model, source and device filters of either table."""
+    filters: list[Any] = []
+    if provider:
+        filters.append(table.provider == normalize_provider_name(provider))
+    if model:
+        filters.append(table.model == normalize_model_name(model))
+    if client_source:
+        filters.append(table.client_source == client_source)
+    if device_id:
+        filters.append(_device_filter(table.device_id, device_id))
+    return filters
+
+
+# The counters the rollup sums, and the raw columns they come from.
+RAW_SUM_FIELDS = (
+    ("prompt_tokens", Usage.prompt_tokens),
+    ("completion_tokens", Usage.completion_tokens),
+    ("reasoning_tokens", Usage.reasoning_tokens),
+    ("cached_tokens", Usage.cached_tokens),
+    ("cache_creation_tokens", Usage.cache_creation_tokens),
+    ("total_tokens", Usage.total_tokens),
+    ("input_cost_usd", Usage.input_cost_usd),
+    ("output_cost_usd", Usage.output_cost_usd),
+    ("total_cost_usd", Usage.total_cost_usd),
+    ("latency_sum_ms", Usage.latency_ms),
+)
 
 ROLLUP_SUM_FIELDS = (
     "prompt_tokens",
@@ -1042,6 +1080,23 @@ ROLLUP_SUM_FIELDS = (
     "status_5xx",
     "status_unknown",
 )
+
+
+def _derive_averages(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add the averages the rollup columns only sum up."""
+    for row in rows:
+        latency_sum = row["latency_sum_ms"] or 0
+        row["avg_latency_ms"] = latency_sum / row["requests"] if row["requests"] else 0
+        row["avg_throughput"] = (
+            row["completion_tokens"] * 1000.0 / latency_sum if latency_sum > 0 else None
+        )
+        row["avg_effective_price_usd"] = (
+            row["total_cost_usd"] / row["total_tokens"] if row["total_tokens"] else 0
+        )
+        row["avg_effective_price_per_million_usd"] = (
+            row["avg_effective_price_usd"] * 1_000_000
+        )
+    return rows
 
 
 def _rollup(
@@ -1091,19 +1146,108 @@ def _rollup(
         query = query.outerjoin(Device, UsageHourly.device_id == Device.id)
     with get_engine(db_path).connect() as connection:
         rows = [_row_to_dict(row) for row in connection.execute(query)]
-    for row in rows:
-        latency_sum = row["latency_sum_ms"] or 0
-        row["avg_latency_ms"] = latency_sum / row["requests"]
-        row["avg_throughput"] = (
-            row["completion_tokens"] * 1000.0 / latency_sum if latency_sum > 0 else None
+    return _derive_averages(rows)
+
+
+def _raw_filters(
+    *,
+    user_id: str,
+    since: str | None = None,
+    until: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    client_source: str | None = None,
+    device_id: str | None = None,
+) -> list[Any]:
+    """The filters of the raw rows, in the raw rows' own units (microseconds)."""
+    filters: list[Any] = [Usage.user_id == user_id]
+    if since:
+        filters.append(Usage.ts >= _iso_to_micros(since))
+    if until:
+        # A date-only until covers that whole day.
+        until_micros = (
+            _iso_to_micros(until) + 86_400_000_000 - 1
+            if len(until) == 10
+            else _iso_to_micros(until)
         )
-        row["avg_effective_price_usd"] = (
-            row["total_cost_usd"] / row["total_tokens"] if row["total_tokens"] else 0
+        filters.append(Usage.ts <= until_micros)
+    filters.extend(
+        _field_filters(
+            Usage,
+            provider=provider,
+            model=model,
+            client_source=client_source,
+            device_id=device_id,
         )
-        row["avg_effective_price_per_million_usd"] = (
-            row["avg_effective_price_usd"] * 1_000_000
+    )
+    return filters
+
+
+def _raw_rollup(
+    *group_cols: Any,
+    user_id: str,
+    since: str | None = None,
+    until: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    client_source: str | None = None,
+    device_id: str | None = None,
+    order_by: Any = None,
+    join_device: bool = False,
+    db_path: str | None = None,
+) -> list[dict[str, Any]]:
+    """Sum the raw usage rows over a range and filters, grouped by *group_cols*.
+
+    The hourly rollup cannot be split finer than an hour, so a finer
+    granularity sums the rows themselves. The counters match the rollup's.
+    """
+    success = or_(Usage.status.is_(None), Usage.status < 400)
+    query = (
+        select(
+            *group_cols,
+            func.count(Usage.id).label("requests"),
+            *(
+                func.coalesce(func.sum(column), 0).label(name)
+                for name, column in RAW_SUM_FIELDS
+            ),
+            func.sum(case((success, 1), else_=0)).label("successful_requests"),
+            func.sum(case((success, 0), else_=1)).label("failed_requests"),
+            func.sum(case((Usage.status == 429, 1), else_=0)).label("status_429"),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            Usage.status >= 400, Usage.status < 500, Usage.status != 429
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("status_4xx"),
+            func.sum(case((Usage.status >= 500, 1), else_=0)).label("status_5xx"),
+            # A failure is always a 429, a 4xx or a 5xx, so none is unknown.
+            literal_column("0").label("status_unknown"),
         )
-    return rows
+        .select_from(Usage)
+        .where(
+            *_raw_filters(
+                user_id=user_id,
+                since=since,
+                until=until,
+                provider=provider,
+                model=model,
+                client_source=client_source,
+                device_id=device_id,
+            )
+        )
+        .group_by(*group_cols)
+        .order_by(func.sum(Usage.total_tokens).desc() if order_by is None else order_by)
+    )
+    if join_device:
+        query = query.outerjoin(Device, Usage.device_id == Device.id)
+    with get_engine(db_path).connect() as connection:
+        rows = [_row_to_dict(row) for row in connection.execute(query)]
+    return _derive_averages(rows)
 
 
 def fetch_recent_usage(
@@ -1620,29 +1764,40 @@ def summarize_usage_by_model(
 # === Period aggregation ===
 
 
-def _local_period(granularity: str, tz_offset: str) -> tuple[Any, str]:
-    """Local period key (the period start as local-shifted epoch seconds) of a
-    usage_hourly row and its display format.
+def _granularity(granularity: str) -> tuple[int, str]:
+    """The bucket size in seconds and the label format of a granularity.
+
+    Anything finer than an hour reads the raw rows: the hourly rollup holds
+    one row per hour and cannot be split further.
+    """
+    if granularity == "hour":
+        return 3600, "%Y-%m-%d %H:00"
+    if granularity == "15m":
+        return 900, "%Y-%m-%d %H:%M"
+    return 86400, "%Y-%m-%d"
+
+
+def _bucket_start(size: int, tz_offset: str, column: Any, scale: int) -> Any:
+    """The local bucket start of a row, in the row's own time unit.
+
+    `column` holds the row time in `scale` units: seconds for the hourly
+    rollup, microseconds for the raw rows.
 
     ponytail: a half-hour offset shifts whole UTC hours, so a request within
     30 min of local midnight can land on the neighbouring day; 15-min rows
     would make it exact.
     """
-    size, fmt = (
-        (3600, "%Y-%m-%d %H:00") if granularity == "hour" else (86400, "%Y-%m-%d")
-    )
     # Inline integers: Postgres only matches the GROUP BY to the SELECT
     # expression when both render identically, which bind params don't.
-    offset = literal_column(str(_tz_seconds(tz_offset)), BigInteger)
+    offset = literal_column(str(_tz_seconds(tz_offset) * scale), BigInteger)
     # Modulo, not division: `/` is float on MySQL, so this stays an integer.
-    local = UsageHourly.hour + offset
-    period = local - local % literal_column(str(size), BigInteger)
-    return period.label("period"), fmt
+    local = column + offset
+    return local - local % literal_column(str(size * scale), BigInteger)
 
 
-def _format_periods(rows: list[dict[str, Any]], fmt: str) -> None:
+def _format_periods(rows: list[dict[str, Any]], fmt: str, scale: int = 1) -> None:
     for row in rows:
-        row["period"] = datetime.fromtimestamp(row["period"], UTC).strftime(fmt)
+        row["period"] = datetime.fromtimestamp(row["period"] / scale, UTC).strftime(fmt)
 
 
 def aggregate_usage_by_period(
@@ -1658,9 +1813,19 @@ def aggregate_usage_by_period(
     tz_offset: str = "+00:00",
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Bucket usage into local-time hourly or daily periods."""
-    period, fmt = _local_period(granularity, tz_offset)
-    rows = _rollup(
+    """Bucket usage into local-time periods.
+
+    Hourly and daily buckets read the hourly rollup; a finer granularity sums
+    the raw rows, which the rollup cannot be split into.
+    """
+    size, fmt = _granularity(granularity)
+    if size < 3600:
+        period = _bucket_start(size, tz_offset, Usage.ts, 1_000_000).label("period")
+        rollup, scale = _raw_rollup, 1_000_000
+    else:
+        period = _bucket_start(size, tz_offset, UsageHourly.hour, 1).label("period")
+        rollup, scale = _rollup, 1
+    rows = rollup(
         period,
         user_id=user_id,
         since=since,
@@ -1672,7 +1837,7 @@ def aggregate_usage_by_period(
         order_by=period,
         db_path=db_path,
     )
-    _format_periods(rows, fmt)
+    _format_periods(rows, fmt, scale)
     return rows
 
 
@@ -1692,21 +1857,33 @@ def aggregate_daily_by_dimension(
 ) -> list[dict[str, Any]]:
     """Local usage grouped by a dimension (model/provider/client_source/device).
 
-    The buckets are local days unless `granularity` asks for hours.
+    The buckets are local days unless `granularity` asks for hours or finer.
     """
+    size, fmt = _granularity(granularity)
+    fine = size < 3600
+    table = Usage if fine else UsageHourly
     name_cols: list[Any] = []
     dim_col: Any
     if dimension == "provider":
-        dim_col = UsageHourly.provider
+        dim_col = table.provider
     elif dimension == "client_source":
-        dim_col = UsageHourly.client_source
+        # The rollup stores an empty source, the raw rows keep it NULL.
+        dim_col = (
+            func.coalesce(table.client_source, "") if fine else table.client_source
+        )
     elif dimension == "device":
-        dim_col = UsageHourly.device_id  # NULL = Unknown
+        dim_col = table.device_id  # NULL = Unknown
         name_cols = [Device.device_name.label("dimension_name")]
     else:
-        dim_col = UsageHourly.model
-    period, fmt = _local_period(granularity, tz_offset)
-    rows = _rollup(
+        dim_col = table.model
+    period = _bucket_start(
+        size,
+        tz_offset,
+        Usage.ts if fine else UsageHourly.hour,
+        1_000_000 if fine else 1,
+    ).label("period")
+    rollup = _raw_rollup if fine else _rollup
+    rows = rollup(
         dim_col.label("dimension"),
         *name_cols,
         period,
@@ -1721,5 +1898,5 @@ def aggregate_daily_by_dimension(
         join_device=dimension == "device",
         db_path=db_path,
     )
-    _format_periods(rows, fmt)
+    _format_periods(rows, fmt, 1_000_000 if fine else 1)
     return rows

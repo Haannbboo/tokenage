@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { DailyUsage, UsageSummary } from '../types'
-import { customBound, getSinceDate, getTimezoneOffset, resolveTimezone, FIXED_PROVIDER_COLORS, PALETTE, netThroughput } from '../utils'
+import { getSinceDate, rangeGranularity } from '../dateRange.ts'
+import { getTimezoneOffset, resolveTimezone, FIXED_PROVIDER_COLORS, PALETTE, netThroughput } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -11,7 +12,7 @@ type DashboardDataOptions = {
 }
 
 export function useDashboardData({ includeDaily = true, includeHeatmap = true, includeCount = true }: DashboardDataOptions = {}) {
-  const { refreshTrigger, setError, activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil, timezone } = useApp()
+  const { refreshTrigger, setError, activeFilter, activeSource, activeDevice, dateRange, timezone } = useApp()
   const tz = resolveTimezone(timezone)
 
   const [summary, setSummary] = useState<UsageSummary[]>([])
@@ -45,8 +46,7 @@ export function useDashboardData({ includeDaily = true, includeHeatmap = true, i
   }, [summary]);
 
   const applyFilterParams = useCallback((url: URL) => {
-    const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
-    const until = dateRange === 'custom' ? customBound(customUntil) : null
+    const since = getSinceDate(dateRange)
 
     if (activeFilter) {
       if (activeFilter.provider) url.searchParams.set('provider', activeFilter.provider)
@@ -55,18 +55,16 @@ export function useDashboardData({ includeDaily = true, includeHeatmap = true, i
     if (activeSource) url.searchParams.set('client_source', activeSource)
     if (activeDevice) url.searchParams.set('device_id', activeDevice)
     if (since) url.searchParams.set('since', since)
-    if (until) url.searchParams.set('until', until)
     return url
-  }, [dateRange, customSince, customUntil, activeFilter, activeSource, activeDevice])
+  }, [dateRange, activeFilter, activeSource, activeDevice])
 
   const dashboardFilterParams = useMemo(() => ({
     provider: activeFilter?.provider,
     model: activeFilter?.model,
     client_source: activeSource,
     device_id: activeDevice,
-    since: dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange),
-    until: dateRange === 'custom' ? customBound(customUntil) : null,
-  }), [activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil])
+    since: getSinceDate(dateRange),
+  }), [activeFilter, activeSource, activeDevice, dateRange])
 
   // Dashboard fetch
   useEffect(() => {
@@ -84,7 +82,7 @@ export function useDashboardData({ includeDaily = true, includeHeatmap = true, i
         const summaryUrl = applyFilterParams(new URL('/usage/summary', window.location.origin))
         const dailyUrl = applyFilterParams(new URL('/usage/daily', window.location.origin))
         dailyUrl.searchParams.set('tz_offset', getTimezoneOffset(tz))
-        if (dateRange === '24h') dailyUrl.searchParams.set('granularity', 'hour')
+        dailyUrl.searchParams.set('granularity', rangeGranularity(dateRange))
 
         const heatmapUrl = new URL('/usage/daily', window.location.origin)
         heatmapUrl.searchParams.set('since', new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString())
@@ -131,22 +129,20 @@ export function useDashboardData({ includeDaily = true, includeHeatmap = true, i
 
     void fetchDashboard()
     return () => controller.abort()
-  }, [activeFilter, activeSource, activeDevice, dateRange, customSince, customUntil, refreshTrigger, applyFilterParams, setError, tz, includeDaily, includeHeatmap, includeCount])
+  }, [activeFilter, activeSource, activeDevice, dateRange, refreshTrigger, applyFilterParams, setError, tz, includeDaily, includeHeatmap, includeCount])
 
   // Sources fetch
   useEffect(() => {
     const controller = new AbortController()
-    const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
-    const until = dateRange === 'custom' ? customBound(customUntil) : null
+    const since = getSinceDate(dateRange)
     const url = new URL('/usage/sources', window.location.origin)
     if (since) url.searchParams.set('since', since)
-    if (until) url.searchParams.set('until', until)
     fetch(url.toString(), { signal: controller.signal })
       .then(r => r.ok ? r.json() : Promise.reject(r))
       .then((data: string[]) => setSources(data))
       .catch(() => {})
     return () => controller.abort()
-  }, [dateRange, customSince, customUntil, refreshTrigger])
+  }, [dateRange, refreshTrigger])
 
   const totals = useMemo(() => {
     const data = summary

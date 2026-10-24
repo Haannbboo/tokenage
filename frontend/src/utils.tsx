@@ -1,4 +1,4 @@
-import type { DateRangeOption, DailyUsage } from './types'
+import type { DailyUsage, PeriodGranularity } from './types'
 import { zeroUsageRow } from './periodGaps'
 import { getLang, LANG_LOCALES, type Lang } from './i18n/index.ts'
 import { getTheme, type Theme } from './theme'
@@ -226,29 +226,19 @@ export function formatTime(input: string | number, tz?: string) {
   return new Intl.DateTimeFormat(undefined, options).format(date)
 }
 
-// The custom range is datetime-local (no zone); the API reads naive bounds as UTC.
-export function customBound(local: string): string {
-  return local && new Date(local).toISOString()
-}
-
-export function getSinceDate(option: DateRangeOption): string | null {
-  if (option === 'custom' || option === 'all') return null
-  if (option === '24h') return new Date(Date.now() - 24 * 3600_000).toISOString()
-  if (option === '7d') return new Date(Date.now() - 7 * 86400_000).toISOString()
-  if (option === '30d') return new Date(Date.now() - 30 * 86400_000).toISOString()
-  return null
-}
-
-function tzDateParts(date: Date, tz?: string): { year: number; month: number; day: number; hour: number } {
+function tzDateParts(date: Date, tz?: string): { year: number; month: number; day: number; hour: number; minute: number } {
   if (!tz) {
-    return { year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate(), hour: date.getHours() }
+    return {
+      year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate(),
+      hour: date.getHours(), minute: date.getMinutes(),
+    }
   }
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', hour12: false,
+    timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', hour12: false,
   }).formatToParts(date)
   const get = (type: string) => parseInt(parts.find(p => p.type === type)?.value || '0', 10)
   const hour = get('hour') % 24
-  return { year: get('year'), month: get('month'), day: get('day'), hour }
+  return { year: get('year'), month: get('month'), day: get('day'), hour, minute: get('minute') }
 }
 
 /**
@@ -259,38 +249,6 @@ function tzDateParts(date: Date, tz?: string): { year: number; month: number; da
 export function wallClockMs(now: Date, tz?: string): number {
   const p = tzDateParts(now, tz)
   return Date.UTC(p.year, p.month - 1, p.day, p.hour)
-}
-
-export function fillGaps(data: DailyUsage[], granularity: 'hour' | 'day', periodCount: number, tz?: string): DailyUsage[] {
-  const effectiveTz = tz
-  const zeroRow = zeroUsageRow
-
-  const map = new Map(data.map(d => [d.period, d]))
-  const result: DailyUsage[] = []
-
-  const now = new Date()
-
-  if (granularity === 'hour') {
-    // Step back from the current instant by (periodCount-1) hours
-    const startMs = now.getTime() - (periodCount - 1) * 3600_000
-    for (let i = 0; i < periodCount; i++) {
-      const d = new Date(startMs + i * 3600_000)
-      const p = tzDateParts(d, effectiveTz)
-      const key = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')} ${String(p.hour).padStart(2, '0')}:00`
-      result.push(map.get(key) ?? zeroRow(key))
-    }
-  } else {
-    // Step back from the current instant by (periodCount-1) days
-    const startMs = now.getTime() - (periodCount - 1) * 86400_000
-    for (let i = 0; i < periodCount; i++) {
-      const d = new Date(startMs + i * 86400_000)
-      const p = tzDateParts(d, effectiveTz)
-      const key = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`
-      result.push(map.get(key) ?? zeroRow(key))
-    }
-  }
-
-  return result
 }
 
 export function getTimezoneOffset(tz?: string): string {
@@ -319,6 +277,51 @@ export function getTimezoneOffset(tz?: string): string {
   const absMin = Math.abs(diffMin)
   return `${sign}${String(Math.floor(absMin / 60)).padStart(2, '0')}:${String(absMin % 60).padStart(2, '0')}`
 }
+
+
+export function fillGaps(data: DailyUsage[], granularity: PeriodGranularity, periodCount: number, tz?: string): DailyUsage[] {
+  const effectiveTz = tz
+  const zeroRow = zeroUsageRow
+
+  const map = new Map(data.map(d => [d.period, d]))
+  const result: DailyUsage[] = []
+
+  const now = new Date()
+
+  if (granularity === 'hour') {
+    // Step back from the current instant by (periodCount-1) hours
+    const startMs = now.getTime() - (periodCount - 1) * 3600_000
+    for (let i = 0; i < periodCount; i++) {
+      const d = new Date(startMs + i * 3600_000)
+      const p = tzDateParts(d, effectiveTz)
+      const key = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')} ${String(p.hour).padStart(2, '0')}:00`
+      result.push(map.get(key) ?? zeroRow(key))
+    }
+  } else if (granularity === '15m') {
+    // Step back from the current quarter hour by (periodCount-1) quarter hours
+    const quarterMs = 900_000
+    const anchor = Math.floor(now.getTime() / quarterMs) * quarterMs
+    const startMs = anchor - (periodCount - 1) * quarterMs
+    for (let i = 0; i < periodCount; i++) {
+      const d = new Date(startMs + i * quarterMs)
+      const p = tzDateParts(d, effectiveTz)
+      const key = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')} ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`
+      result.push(map.get(key) ?? zeroRow(key))
+    }
+  } else {
+    // Step back from the current instant by (periodCount-1) days
+    const startMs = now.getTime() - (periodCount - 1) * 86400_000
+    for (let i = 0; i < periodCount; i++) {
+      const d = new Date(startMs + i * 86400_000)
+      const p = tzDateParts(d, effectiveTz)
+      const key = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`
+      result.push(map.get(key) ?? zeroRow(key))
+    }
+  }
+
+  return result
+}
+
 
 export const PALETTE = [
   '#00b578', // Emerald/Teal

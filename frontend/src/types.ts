@@ -94,7 +94,9 @@ export type ActiveFilter = {
   provider: string;
   model: string | null;
 } | null
-export type DateRangeOption = '24h' | '7d' | '30d' | 'all' | 'custom'
+export type DateRangeOption = '24h' | '5h' | '7d' | '30d' | 'all'
+/** The bucket the time axis is drawn in. */
+export type PeriodGranularity = 'hour' | '15m' | 'day'
 
 export type SessionOutcome = 'solved' | 'partial' | 'failed' | 'stuck' | 'no_op' | 'unknown'
 export type SessionEvaluationSource = 'manual' | 'heuristic' | 'llm'

@@ -268,8 +268,8 @@ describe('Usage trend chart', () => {
     assert.match(trendChart, /textAlign: 'right'/)
   })
 
-  test('the overview leaves the period count open for all time and custom ranges', () => {
-    assert.match(overview, /periodCount=\{dateRange === '24h' \? 24 : dateRange === '7d' \? 7 : dateRange === '30d' \? 30 : undefined\}/)
+  test('the overview leaves the period count open for all time', () => {
+    assert.match(overview, /periodCount=\{rangePeriodCount\(dateRange\)\}/)
   })
 })
 

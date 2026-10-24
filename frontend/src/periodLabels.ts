@@ -1,5 +1,6 @@
 import { periodToMs } from './periodGaps.ts'
 import { t } from './i18n/index.ts'
+import type { PeriodGranularity } from './types'
 
 const dayFormatters = new Map<string, Intl.DateTimeFormat>()
 const timeFormatters = new Map<string, Intl.DateTimeFormat>()
@@ -43,7 +44,7 @@ export type PeriodLabel = {
  */
 export function describePeriod(
   period: string,
-  granularity: 'hour' | 'day',
+  granularity: PeriodGranularity,
   nowWallMs: number,
   locale: string,
 ): PeriodLabel | null {
@@ -59,7 +60,7 @@ export function describePeriod(
   const label: PeriodLabel = { day: dayFormatter(locale).format(date) }
   if (dayDiff === 0) label.relative = 'today'
   else if (dayDiff === 1) label.relative = 'yesterday'
-  if (granularity === 'hour') label.time = timeFormatter(locale).format(date)
+  if (granularity !== 'day') label.time = timeFormatter(locale).format(date)
   return label
 }
 

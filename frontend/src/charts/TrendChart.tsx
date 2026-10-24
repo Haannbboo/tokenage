@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
-import type { DailyUsage } from '../types'
+import type { DailyUsage, PeriodGranularity } from '../types'
 import { fillGaps, formatCostFixed, formatModelName, formatNumber, value, resolveTimezone, wallClockMs, getTimezoneOffset } from '../utils'
 import { fillPeriodGaps } from '../periodGaps'
 import { describePeriod, periodLabelText } from '../periodLabels'
@@ -31,7 +31,7 @@ export function TrendChart({
 }: {
   data: DailyUsage[],
   title: string,
-  granularity?: 'hour' | 'day',
+  granularity?: PeriodGranularity,
   /** Buckets to show, anchored to now. Without it the plot spans the data. */
   periodCount?: number,
   showDots?: boolean,
@@ -41,7 +41,6 @@ export function TrendChart({
     client_source?: string | null
     device_id?: string | null
     since?: string | null
-    until?: string | null
   }
 }) {
   const { timezone, theme } = useApp()
@@ -117,7 +116,6 @@ export function TrendChart({
         if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source);
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id);
         if (filterParams.since) url.searchParams.set('since', filterParams.since);
-        if (filterParams.until) url.searchParams.set('until', filterParams.until);
         url.searchParams.set('tz_offset', tzOffset);
 
         const res = await fetch(url.toString(), { signal: controller.signal });

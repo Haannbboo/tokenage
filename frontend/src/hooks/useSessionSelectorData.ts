@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react'
 import type { DateRangeOption, SessionSelectorRow } from '../types'
-import { customBound, getSinceDate } from '../utils'
+import { getSinceDate } from '../dateRange.ts'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
 export function useSessionSelectorData(opts: {
   activeSource: string | null
   dateRange: DateRangeOption
-  customSince: string
-  customUntil: string
 }) {
   const { refreshTrigger, setError } = useApp()
   const [sessions, setSessions] = useState<SessionSelectorRow[]>([])
@@ -21,8 +19,7 @@ export function useSessionSelectorData(opts: {
     async function fetchSessionSelectorData() {
       setError(null)
       try {
-        const since = opts.dateRange === 'custom' ? customBound(opts.customSince) : getSinceDate(opts.dateRange)
-        const until = opts.dateRange === 'custom' ? customBound(opts.customUntil) : null
+        const since = getSinceDate(opts.dateRange)
         const sessionsUrl = new URL('/sessions', window.location.origin)
         sessionsUrl.searchParams.set('view', 'selector')
         sessionsUrl.searchParams.set('sort_by', 'started')
@@ -31,7 +28,6 @@ export function useSessionSelectorData(opts: {
         sessionsUrl.searchParams.set('offset', '0')
         if (opts.activeSource) sessionsUrl.searchParams.set('client_source', opts.activeSource)
         if (since) sessionsUrl.searchParams.set('since', since)
-        if (until) sessionsUrl.searchParams.set('until', until)
 
         const response = await fetch(sessionsUrl.toString(), sig)
         if (!response.ok) throw new Error(t('Failed to fetch session data'))
@@ -45,7 +41,7 @@ export function useSessionSelectorData(opts: {
 
     void fetchSessionSelectorData()
     return () => controller.abort()
-  }, [opts.activeSource, opts.dateRange, opts.customSince, opts.customUntil, refreshTrigger, setError])
+  }, [opts.activeSource, opts.dateRange, refreshTrigger, setError])
 
   return { sessions }
 }

@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { DateRangeOption, ModelEffectivenessResponse } from '../types'
-import { customBound, getSinceDate } from '../utils'
+import { getSinceDate } from '../dateRange.ts'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
 export function useModelEffectivenessData(opts: {
   activeSource: string | null
   dateRange: DateRangeOption
-  customSince: string
-  customUntil: string
   hideNoop?: boolean
 }) {
   const { refreshTrigger, setError } = useApp()
@@ -26,14 +24,12 @@ export function useModelEffectivenessData(opts: {
     async function fetchModelEffectivenessData() {
       setModelEffectivenessLoading(true)
       try {
-        const since = opts.dateRange === 'custom' ? customBound(opts.customSince) : getSinceDate(opts.dateRange)
-        const until = opts.dateRange === 'custom' ? customBound(opts.customUntil) : null
+        const since = getSinceDate(opts.dateRange)
 
         const url = new URL('/model-effectiveness', window.location.origin)
         url.searchParams.set('group_by', 'model')
         if (opts.activeSource) url.searchParams.set('client_source', opts.activeSource)
         if (since) url.searchParams.set('since', since)
-        if (until) url.searchParams.set('until', until)
         if (opts.hideNoop) url.searchParams.set('hide_noop', 'true')
 
         const response = await fetch(url.toString(), { signal: controller.signal })
@@ -49,7 +45,7 @@ export function useModelEffectivenessData(opts: {
 
     void fetchModelEffectivenessData()
     return () => controller.abort()
-  }, [opts.activeSource, opts.dateRange, opts.customSince, opts.customUntil, opts.hideNoop, refreshTrigger, modelEffectivenessRefreshKey, setError])
+  }, [opts.activeSource, opts.dateRange, opts.hideNoop, refreshTrigger, modelEffectivenessRefreshKey, setError])
 
   return { modelEffectiveness, modelEffectivenessLoading, refreshModelEffectiveness }
 }

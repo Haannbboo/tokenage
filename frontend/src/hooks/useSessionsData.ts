@@ -1,14 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { SessionSummary, DateRangeOption } from '../types'
-import { customBound, getSinceDate, buildSessionInsights } from '../utils'
+import { buildSessionInsights } from '../utils'
+import { getSinceDate } from '../dateRange.ts'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
 export function useSessionsData(opts: {
   activeSource: string | null
   dateRange: DateRangeOption
-  customSince: string
-  customUntil: string
   hideNoop?: boolean
 }) {
   const { refreshTrigger, setError } = useApp()
@@ -38,7 +37,7 @@ export function useSessionsData(opts: {
   }, [sessions])
 
   // Filter-change keys — when any of these change, reset to page 1
-  const filterKey = `${opts.activeSource}|${opts.dateRange}|${opts.customSince}|${opts.customUntil}|${opts.hideNoop}`
+  const filterKey = `${opts.activeSource}|${opts.dateRange}|${opts.hideNoop}`
 
   // Sessions fetch
   useEffect(() => {
@@ -63,13 +62,11 @@ export function useSessionsData(opts: {
       setError(null)
       setSessionsLoading(true)
       try {
-        const since = opts.dateRange === 'custom' ? customBound(opts.customSince) : getSinceDate(opts.dateRange)
-        const until = opts.dateRange === 'custom' ? customBound(opts.customUntil) : null
+        const since = getSinceDate(opts.dateRange)
 
         const sessionsUrl = new URL('/sessions', window.location.origin)
         if (opts.activeSource) sessionsUrl.searchParams.set('client_source', opts.activeSource)
         if (since) sessionsUrl.searchParams.set('since', since)
-        if (until) sessionsUrl.searchParams.set('until', until)
         sessionsUrl.searchParams.set('sort_by', sessionSortBy)
         sessionsUrl.searchParams.set('sort_order', sessionSortOrder)
         sessionsUrl.searchParams.set('limit', '50')
@@ -96,7 +93,7 @@ export function useSessionsData(opts: {
 
     void fetchSessionsData()
     return () => controller.abort()
-  }, [opts.activeSource, opts.dateRange, opts.customSince, opts.customUntil, opts.hideNoop, refreshTrigger, sessionSortBy, sessionSortOrder, sessionPage, setError])
+  }, [opts.activeSource, opts.dateRange, opts.hideNoop, refreshTrigger, sessionSortBy, sessionSortOrder, sessionPage, setError])
 
   return {
     sessions,

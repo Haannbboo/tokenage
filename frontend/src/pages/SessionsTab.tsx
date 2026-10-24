@@ -8,9 +8,10 @@ import { t } from '../i18n/index.ts'
 import {
   formatCompact, formatCost, formatDuration, formatLatency, formatNumber,
   formatTime, getModelIcon, getSourceBadgeBg, getSourceBadgeText, getSourceIcon,
-  shortSessionId, sessionAgentName, sessionDisplayName, sessionTaskTitle, getSinceDate, customBound, resolveTimezone, ToolBadge, formatModelName,
+  shortSessionId, sessionAgentName, sessionDisplayName, sessionTaskTitle, resolveTimezone, ToolBadge, formatModelName,
 } from '../utils'
 import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
+import { getSinceDate } from '../dateRange.ts'
 import type { DailyEffectivenessReport, EvaluationJob, ModelEffectivenessGroup, SessionOutcome, SessionSummary, SessionsSummary } from '../types'
 
 type SessionsTabProps = {
@@ -74,7 +75,7 @@ function getLocalDateKey(date: Date, tz?: string): string {
 export function SessionsTab({
   onNavigateToLogs,
 }: SessionsTabProps) {
-  const { lang, showToast, requestUsageRefresh, refreshTrigger, setError, activeSource, dateRange, customSince, customUntil, setActiveFilter, timezone } = useApp()
+  const { lang, showToast, requestUsageRefresh, refreshTrigger, setError, activeSource, dateRange, setActiveFilter, timezone } = useApp()
   const tz = resolveTimezone(timezone)
   const [hideNoop, setHideNoop] = useState(true)
   const {
@@ -89,29 +90,26 @@ export function SessionsTab({
     handleSessionSort,
     sessionInsights,
     setSessionPage,
-  } = useSessionsData({ activeSource, dateRange, customSince, customUntil, hideNoop })
+  } = useSessionsData({ activeSource, dateRange, hideNoop })
 
   const [sessionsSummary, setSessionsSummary] = useState<SessionsSummary | null>(null)
   useEffect(() => {
     const url = new URL('/sessions/summary', window.location.origin)
     if (activeSource) url.searchParams.set('client_source', activeSource)
-    if (dateRange !== 'all') {
-      const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
-      if (since) url.searchParams.set('since', since)
-      if (dateRange === 'custom' && customUntil) url.searchParams.set('until', customBound(customUntil))
-    }
+    const since = getSinceDate(dateRange)
+    if (since) url.searchParams.set('since', since)
     if (hideNoop) url.searchParams.set('hide_noop', 'true')
     fetch(url.toString())
       .then(r => r.json())
       .then(setSessionsSummary)
       .catch(() => setSessionsSummary(null))
-  }, [activeSource, dateRange, customSince, customUntil, hideNoop])
+  }, [activeSource, dateRange, hideNoop])
 
   const {
     modelEffectiveness,
     modelEffectivenessLoading,
     refreshModelEffectiveness,
-  } = useModelEffectivenessData({ activeSource, dateRange, customSince, customUntil, hideNoop })
+  } = useModelEffectivenessData({ activeSource, dateRange, hideNoop })
 
   const [activeEvaluationJobs, setActiveEvaluationJobs] = useState<Record<string, EvaluationJob>>({})
   const activeEvaluationJobsRef = useRef<Record<string, EvaluationJob>>({})

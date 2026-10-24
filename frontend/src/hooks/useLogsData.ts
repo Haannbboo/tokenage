@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { UsageRow, DateRangeOption, ActiveFilter } from '../types'
 import type { RequestLogColumnId } from './useRequestLogColumns'
-import { customBound, getSinceDate } from '../utils'
+import { getSinceDate } from '../dateRange.ts'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -27,8 +27,6 @@ export function useLogsData(opts: {
   toolFilter: string | null
   deviceFilter: string | null
   dateRange: DateRangeOption
-  customSince: string
-  customUntil: string
 }) {
   const { refreshTrigger, setError } = useApp()
 
@@ -79,8 +77,7 @@ export function useLogsData(opts: {
       setError(null)
       setLogsLoading(true)
       try {
-        const since = opts.dateRange === 'custom' ? customBound(opts.customSince) : getSinceDate(opts.dateRange)
-        const until = opts.dateRange === 'custom' ? customBound(opts.customUntil) : null
+        const since = getSinceDate(opts.dateRange)
 
         const usageUrl = new URL('/usage', window.location.origin)
         usageUrl.searchParams.set('limit', String(limit))
@@ -94,7 +91,6 @@ export function useLogsData(opts: {
         if (opts.toolFilter) usageUrl.searchParams.set('tool_name', opts.toolFilter)
         if (opts.deviceFilter) usageUrl.searchParams.set('device_id', opts.deviceFilter)
         if (since) usageUrl.searchParams.set('since', since)
-        if (until) usageUrl.searchParams.set('until', until)
 
         const countUrl = new URL('/usage/count', window.location.origin)
         if (opts.activeFilter) {
@@ -106,7 +102,6 @@ export function useLogsData(opts: {
         if (opts.toolFilter) countUrl.searchParams.set('tool_name', opts.toolFilter)
         if (opts.deviceFilter) countUrl.searchParams.set('device_id', opts.deviceFilter)
         if (since) countUrl.searchParams.set('since', since)
-        if (until) countUrl.searchParams.set('until', until)
 
         const responses = await Promise.all([
           fetch(usageUrl.toString(), sig),
@@ -129,7 +124,7 @@ export function useLogsData(opts: {
 
     void fetchLogs()
     return () => controller.abort()
-  }, [opts.activeFilter, opts.activeSource, opts.sessionFilter, opts.toolFilter, opts.deviceFilter, opts.dateRange, opts.customSince, opts.customUntil, limit, page, refreshTrigger, setError])
+  }, [opts.activeFilter, opts.activeSource, opts.sessionFilter, opts.toolFilter, opts.deviceFilter, opts.dateRange, limit, page, refreshTrigger, setError])
 
   const totalPages = Math.ceil(totalLogs / limit)
 

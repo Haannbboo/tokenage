@@ -14,6 +14,14 @@ import {
 } from '../utils'
 import { describePeriod, periodLabelText } from '../periodLabels'
 import { fillPeriodGaps } from '../periodGaps'
+import { rangeGranularity, rangePeriodCount } from '../dateRange.ts'
+import type { DateRangeOption, PeriodGranularity } from '../types'
+
+const TREND_TITLES: Record<PeriodGranularity, string> = {
+  '15m': '15-Minute Usage Trend',
+  hour: 'Hourly Usage Trend',
+  day: 'Daily Usage Trend',
+}
 
 type OverviewTabProps = {
   theme: any
@@ -22,7 +30,7 @@ type OverviewTabProps = {
   heatmapData: any[]
   dashboardInitialLoading: boolean
   dashboardRefreshing: boolean
-  dateRange: string
+  dateRange: DateRangeOption
   dashboardFilterParams: any
   totals: any
   showFirstRunOnboarding: boolean
@@ -83,7 +91,7 @@ export function OverviewTab({
 
   // /usage/daily only returns periods that have usage; the missing buckets are
   // filled in so the sparklines sit on a real time axis.
-  const granularity = dateRange === '24h' ? 'hour' : 'day'
+  const granularity = rangeGranularity(dateRange)
   const filledUsage = useMemo(() => fillPeriodGaps(dailyUsage, granularity), [dailyUsage, granularity])
 
   // The hovered period is a wall-clock label in the display timezone, so "now"
@@ -461,10 +469,10 @@ export function OverviewTab({
         <div style={{ flex: '1 1 0', minWidth: 0 }}>
           <TrendChart
             data={dailyUsage}
-            title={`${dateRange === '24h' ? t('Hourly Usage Trend') : t('Daily Usage Trend')}`}
+            title={t(TREND_TITLES[granularity])}
             filterParams={dashboardFilterParams}
-            granularity={dateRange === '24h' ? 'hour' : 'day'}
-            periodCount={dateRange === '24h' ? 24 : dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : undefined}
+            granularity={granularity}
+            periodCount={rangePeriodCount(dateRange)}
             showDots={dateRange !== 'all'}
           />
         </div>

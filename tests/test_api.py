@@ -358,6 +358,23 @@ def test_usage_by_period_endpoint_passes_params(api_module, monkeypatch):
     assert captured["granularity"] == "day"
 
 
+def test_usage_daily_endpoint_passes_the_fine_granularity(api_module, monkeypatch):
+    """The five hour range asks the api for quarter hour buckets."""
+    captured = {}
+
+    def fake_aggregate(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(api_module, "aggregate_usage_by_period", fake_aggregate)
+
+    response = TestClient(api_module.app).get(
+        "/usage/daily", params={"granularity": "15m", "tz_offset": "+00:00"}
+    )
+    assert response.status_code == 200
+    assert captured["granularity"] == "15m"
+
+
 def test_usage_by_source_endpoint(api_module, monkeypatch):
     captured = {}
 

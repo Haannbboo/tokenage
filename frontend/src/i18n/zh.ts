@@ -9,11 +9,11 @@ export const zh: Record<string, string> = {
   'Switch to dark mode': '切换到暗色模式',
 
   // Date range
+  'Last 5 Hours': '最近 5 小时',
   'Last 24 Hours': '最近 24 小时',
   'Last 7 Days': '最近 7 天',
   'Last 30 Days': '最近 30 天',
   'All Time': '全部时间',
-  'Custom Range': '自定义范围',
 
   // Source filter
   'All Sources': '全部来源',
@@ -44,6 +44,7 @@ export const zh: Record<string, string> = {
 
   // Chart titles
   'Hourly Usage Trend': '每小时用量趋势',
+  '15-Minute Usage Trend': '每 15 分钟用量趋势',
   'Daily Usage Trend': '每日用量趋势',
   'Cache Hit Rate': '缓存命中率',
   'Tool Calls': '工具调用',
@@ -115,8 +116,6 @@ export const zh: Record<string, string> = {
   'Model': '模型',
   'Source': '来源',
   'Date Range': '时间范围',
-  'Since': '开始时间',
-  'Until': '结束时间',
   'Refresh': '刷新',
   'Filter logs by session': '按会话筛选日志',
   'Clear session filter': '清除会话筛选',

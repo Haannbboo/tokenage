@@ -2556,7 +2556,8 @@ def test_aggregate_daily_by_dimension_can_bucket_by_hour(fresh_db):
         (TS_2026_05_07_10, 500),
         (TS_2026_05_08_10, 2000),
     ]:
-        database_module.log_usage(
+        ingest_write(
+            database_module.log_usage,
             database_module.Usage(
                 device_id="test-device",
                 ts=ts,

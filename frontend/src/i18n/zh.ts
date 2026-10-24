@@ -209,6 +209,7 @@ export const zh: Record<string, string> = {
   'Broken': '异常',
   'OTLP Tracking Setup': 'OTLP 追踪设置',
   'OTLP configured': 'OTLP 已配置',
+  'Not installed': '未安装',
   'Expected endpoint': '预期端点',
   'Configured endpoint': '已配置端点',
   'Missing config': '缺少配置',

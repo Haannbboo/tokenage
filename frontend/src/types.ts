@@ -224,12 +224,14 @@ export type DailyEffectivenessReport = {
   groups: DailyEffectivenessGroup[]
 }
 
+// The client and the server release separately, so `status` is an open string:
+// a client may report a status this server has never heard of.
 export type SetupAgentHealth = {
   configured: boolean
-  endpoint_matches: boolean
+  endpoint_matches: boolean | null
   configured_endpoint: string | null
-  expected_endpoint: string
-  status: 'ready' | 'missing_config' | 'wrong_endpoint'
+  expected_endpoint: string | null
+  status: 'ready' | 'missing_config' | 'wrong_endpoint' | 'configured' | (string & {})
 }
 
 export type SetupDiagnostics = {

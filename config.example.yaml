@@ -78,6 +78,19 @@ db:
 #   # google_client_id / google_client_secret / allowlist apply to `google` only.
 
 # Event queue + shared state (leases, rate limits, sign-in codes).
-# Unset → SQLite file on this machine ($TOKENAGE_HOME/state.db). Multi-machine needs Redis.
+# Unset → SQLite file on this machine ($TOKENAGE_HOME/state.db).
 # queue:
-#   url: sqlite:////path/to/state.db
+#   url: sqlite:////path/to/state.db  # TOKENAGE_QUEUE_URL overrides this.
+#   prefix: "tokenage:"
+#   # Redis: redis://:password@redis-host:6379/0 (percent-encode the password).
+#   # TLS: rediss://...?ssl_ca_certs=/path/ca.pem when the server CA is not in the
+#   # system trust store (e.g. GCP Memorystore, which also listens on 6378).
+#   # Single-node Redis >= 6.2; no Cluster/Sentinel. Use a dedicated DB or a unique
+#   # queue.prefix per installation. Self-hosted: appendonly yes, appendfsync
+#   # everysec (up to 1s crash loss), maxmemory-policy noeviction. Managed Redis
+#   # may only offer snapshots (Memorystore: RDB, no AOF).
+#   # Multi-machine needs Redis AND a shared Postgres usage DB; a local SQLite
+#   # usage DB per host misroutes rows. Delivery is at-least-once: a Redis timeout
+#   # after a write, or a failed post-commit flush, can duplicate usage rows.
+#   # Switch stores only at zero queue lag (`tokenage server status`);
+#   # pending events and sign-in state are not migrated between stores.

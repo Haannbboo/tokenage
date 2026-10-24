@@ -1,4 +1,4 @@
-"""Real interpreter processes share SQLite state, correlation and revocation.
+"""Real interpreter processes share SQLite/Redis state, correlation and revocation.
 
 Children import production code from scratch, without pytest's in-process SQLite
 speed patches or inherited engines. Commands and responses travel over pipes;
@@ -102,6 +102,19 @@ for line in sys.stdin:
 """
 
 
+@pytest.fixture
+def queue_backend(request, monkeypatch, redis_store_factory):
+    if request.param == "redis":
+        store = redis_store_factory()
+        monkeypatch.setenv(
+            "TOKENAGE_MULTI_WORKER_TEST_URL", os.environ["TOKENAGE_TEST_REDIS_URL"]
+        )
+        monkeypatch.setenv("TEST_REDIS_PREFIX", store.prefix)
+    else:
+        monkeypatch.delenv("TOKENAGE_MULTI_WORKER_TEST_URL", raising=False)
+        monkeypatch.delenv("TEST_REDIS_PREFIX", raising=False)
+
+
 class Worker:
     def __init__(self, env):
         self.stderr = tempfile.TemporaryFile(mode="w+t", dir=env["TOKENAGE_HOME"])
@@ -157,7 +170,11 @@ def workers(tmp_path, count):
             {
                 "pricing": {"auto_fetch": False},
                 "db": {"path": str(tmp_path / "usage.db")},
-                "queue": {"url": f"sqlite:///{tmp_path / 'state.db'}"},
+                "queue": {
+                    "url": os.environ.get("TOKENAGE_MULTI_WORKER_TEST_URL")
+                    or f"sqlite:///{tmp_path / 'state.db'}",
+                    "prefix": os.environ.get("TEST_REDIS_PREFIX", "tokenage:"),
+                },
             }
         )
     )
@@ -177,7 +194,7 @@ def workers(tmp_path, count):
         assert child.process.returncode == 0, child.diagnostics
 
 
-@pytest.mark.parametrize("count", [2, 3, 5])
+@pytest.mark.parametrize("count", [2, 3, 4, 5])
 def test_concurrent_cold_database_startup(tmp_path, count):
     with workers(tmp_path, count) as children:
         # Every interpreter has finished imports; release the constructors
@@ -187,8 +204,11 @@ def test_concurrent_cold_database_startup(tmp_path, count):
         assert [child.receive() for child in children] == [True] * count
 
 
-@pytest.mark.parametrize("count", [2, 3, 5])
-def test_interleaved_tool_usage_matches_once_across_processes(tmp_path, count):
+@pytest.mark.parametrize("count", [2, 3, 4, 5])
+@pytest.mark.parametrize("queue_backend", ["sqlite", "redis"], indirect=True)
+def test_interleaved_tool_usage_matches_once_across_processes(
+    tmp_path, count, queue_backend
+):
     with workers(tmp_path, count) as children:
         assert children[0].call("init")
         _, user_id, device_id, _ = children[0].call("mint")
@@ -283,8 +303,11 @@ def test_interleaved_tool_usage_matches_once_across_processes(tmp_path, count):
         ]
 
 
-@pytest.mark.parametrize("count", [2, 3, 5])
-def test_signin_state_single_use_and_expiry_across_processes(tmp_path, count):
+@pytest.mark.parametrize("count", [2, 3, 4, 5])
+@pytest.mark.parametrize("queue_backend", ["sqlite", "redis"], indirect=True)
+def test_signin_state_single_use_and_expiry_across_processes(
+    tmp_path, count, queue_backend
+):
     with workers(tmp_path, count) as children:
         assert children[0].call("state-store")
         for child in children[1:]:
@@ -305,7 +328,7 @@ def test_signin_state_single_use_and_expiry_across_processes(tmp_path, count):
         }
 
 
-@pytest.mark.parametrize("count", [2, 3, 5])
+@pytest.mark.parametrize("count", [2, 3, 4, 5])
 def test_revoked_token_rejected_on_next_request_in_other_process(tmp_path, count):
     with workers(tmp_path, count) as children:
         first, *others = children
@@ -320,7 +343,7 @@ def test_revoked_token_rejected_on_next_request_in_other_process(tmp_path, count
         assert [child.receive() for child in others] == [401] * len(others)
 
 
-@pytest.mark.parametrize("count", [2, 3, 5])
+@pytest.mark.parametrize("count", [2, 3, 4, 5])
 def test_warm_startup_does_not_wait_for_sqlite_writer(tmp_path, count):
     with workers(tmp_path, count) as children:
         first, *others = children

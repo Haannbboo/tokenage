@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import sqlite3
@@ -19,11 +20,18 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
+
+import redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
+
+log = logging.getLogger(__name__)
 
 PARTITIONS = 16
 LEASE_SECONDS = 10
 MAX_PENDING_EVENTS = 50_000
+RATE_LIMIT_WINDOW_SECONDS = 60
 
 
 def partition_for(user_id: str) -> int:
@@ -246,13 +254,251 @@ class SQLiteSharedState:
                 "SELECT count(*),min(ts) FROM limits WHERE key=?", (key,)
             ).fetchone()
             if count >= limit:
-                return max(1, math.ceil((oldest or now) + 60 - now))
-            conn.execute("INSERT INTO limits VALUES (?,?,?)", (key, now, now + 60))
+                return max(
+                    1, math.ceil((oldest or now) + RATE_LIMIT_WINDOW_SECONDS - now)
+                )
+            conn.execute(
+                "INSERT INTO limits VALUES (?,?,?)",
+                (key, now, now + RATE_LIMIT_WINDOW_SECONDS),
+            )
             return None
+
+
+class RedisSharedState:
+    """Redis 6.2+ store; atomic scripts serialize competing hosts.
+
+    Streams contain only pending events. Like SQLite, acknowledgement removes
+    events through the finished position, after the usage transaction commits.
+    """
+
+    def __init__(self, url: str, *, prefix: str = "tokenage:"):
+        self.prefix = prefix
+        try:
+            pool = redis.ConnectionPool.from_url(url)
+            # URL query parameters must not disable bounded calls or enable
+            # retries of writes whose response was lost (notably publish/pop).
+            pool.connection_kwargs.update(
+                socket_timeout=5,
+                socket_connect_timeout=5,
+                decode_responses=True,
+                # Load-bearing: never retry a write whose reply was lost.
+                retry=Retry(NoBackoff(), 0),
+            )
+            self._client = redis.Redis(connection_pool=pool)
+        except (ValueError, redis.RedisError) as exc:
+            log.warning("shared store unavailable error=%s", type(exc).__name__)
+            raise StoreUnavailable() from None
+
+    @contextmanager
+    def _available(self):
+        try:
+            yield
+        except (ValueError, redis.RedisError) as exc:
+            # Redis exceptions may contain credentials or payload fragments.
+            log.warning("shared store unavailable error=%s", type(exc).__name__)
+            raise StoreUnavailable() from None
+
+    def _key(self, kind: str, *parts: Any) -> str:
+        return self.prefix + kind + ":" + json.dumps(parts, separators=(",", ":"))
+
+    def publish(self, user_id: str, payloads: list[dict[str, Any]]) -> None:
+        rows = [json.dumps(payload) for payload in payloads]
+        with self._available():
+            accepted = self._client.eval(
+                """
+                if redis.call('XLEN', KEYS[1]) + #ARGV - 1 > tonumber(ARGV[1]) then
+                    return 0
+                end
+                for i = 2, #ARGV do
+                    redis.call('XADD', KEYS[1], '*', 'payload', ARGV[i])
+                end
+                return 1
+                """,
+                1,
+                self._key("events", partition_for(user_id)),
+                MAX_PENDING_EVENTS,
+                *rows,
+            )
+            if not accepted:
+                raise QueueFull()
+
+    def read(self, partition: int) -> list[Event]:
+        with self._available():
+            rows = cast(
+                list[tuple[str, dict[str, str]]],
+                self._client.xrange(self._key("events", partition), count=500),
+            )
+            return [
+                Event(position, json.loads(fields["payload"]))
+                for position, fields in rows
+            ]
+
+    def ack(self, partition: int, position: str) -> None:
+        # MINID is exclusive. Increment the sequence to include position itself;
+        # exact trimming preserves every later event, including the same ms.
+        with self._available():
+            milliseconds, sequence = map(int, position.split("-"))
+            self._client.xtrim(
+                self._key("events", partition),
+                minid=f"{milliseconds}-{sequence + 1}",
+                approximate=False,
+            )
+
+    def claim(self, partition: int, owner: str) -> bool:
+        with self._available():
+            return bool(
+                self._client.set(
+                    self._key("lease", partition),
+                    owner,
+                    nx=True,
+                    px=max(1, math.ceil(LEASE_SECONDS * 1000)),
+                )
+            )
+
+    def release(self, partition: int, owner: str) -> None:
+        with self._available():
+            self._client.eval(
+                """
+                if redis.call('GET', KEYS[1]) == ARGV[1] then
+                    return redis.call('DEL', KEYS[1])
+                end
+                return 0
+                """,
+                1,
+                self._key("lease", partition),
+                owner,
+            )
+
+    def status(self) -> list[PartitionStatus]:
+        with self._available():
+            keys = [
+                self._key(kind, partition)
+                for partition in range(PARTITIONS)
+                for kind in ("events", "lease")
+            ]
+            clock, values = self._client.eval(
+                """
+                local values = {}
+                for i = 1, #KEYS, 2 do
+                    local first = redis.call('XRANGE', KEYS[i], '-', '+', 'COUNT', 1)
+                    values[#values + 1] = {
+                        redis.call('XLEN', KEYS[i]),
+                        first[1] and first[1][1] or false,
+                        redis.call('GET', KEYS[i + 1])
+                    }
+                end
+                return {redis.call('TIME'), values}
+                """,
+                len(keys),
+                *keys,
+            )
+            redis_now = int(clock[0]) + int(clock[1]) / 1_000_000
+            local_now = time.time()
+            return [
+                PartitionStatus(
+                    p,
+                    depth,
+                    local_now - (redis_now - int(first.split("-")[0]) / 1000)
+                    if first
+                    else None,
+                    owner,
+                )
+                for p, (depth, first, owner) in enumerate(values)
+            ]
+
+    def get(self, namespace: str, key: str) -> Any:
+        with self._available():
+            value = self._client.get(self._key("kv", namespace, key))
+            return json.loads(value) if value is not None else None
+
+    def set(
+        self, namespace: str, key: str, value: Any, ttl: float, cap: int | None = None
+    ) -> None:
+        with self._available():
+            self._client.eval(
+                """
+                local t = redis.call('TIME')
+                local now = t[1] * 1000 + t[2] / 1000
+                redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
+                redis.call('ZREM', KEYS[2], KEYS[1])
+                if ARGV[3] ~= '' then
+                    local n = redis.call('ZCARD', KEYS[2]) - tonumber(ARGV[3]) + 1
+                    if n > 0 then
+                        local victims = redis.call('ZRANGE', KEYS[2], 0, n - 1)
+                        for _, key in ipairs(victims) do
+                            redis.call('DEL', key)
+                            redis.call('ZREM', KEYS[2], key)
+                        end
+                    end
+                end
+                if tonumber(ARGV[2]) > 0 then
+                    redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+                    redis.call('ZADD', KEYS[2], now + tonumber(ARGV[2]), KEYS[1])
+                else
+                    redis.call('DEL', KEYS[1])
+                end
+                local last = redis.call('ZRANGE', KEYS[2], -1, -1, 'WITHSCORES')
+                if #last > 0 then
+                    redis.call('PEXPIREAT', KEYS[2], math.ceil(tonumber(last[2])))
+                else
+                    redis.call('DEL', KEYS[2])
+                end
+                """,
+                2,
+                self._key("kv", namespace, key),
+                self._key("kv-index", namespace),
+                json.dumps(value),
+                math.ceil(ttl * 1000),
+                cap if cap is not None else "",
+            )
+
+    def pop(self, namespace: str, key: str) -> Any:
+        with self._available():
+            value = self._client.eval(
+                """
+                local value = redis.call('GET', KEYS[1])
+                redis.call('DEL', KEYS[1])
+                redis.call('ZREM', KEYS[2], KEYS[1])
+                return value
+                """,
+                2,
+                self._key("kv", namespace, key),
+                self._key("kv-index", namespace),
+            )
+            return json.loads(value) if value is not None else None
+
+    def rate_limit(self, key: str, limit: int) -> int | None:
+        # A fixed INCR/EXPIRE window would permit bursts SQLite rejects. A
+        # sorted set keeps the same sliding window, using the server's clock
+        # so independently clocked hosts agree. Rejected attempts never count.
+        with self._available():
+            retry = self._client.eval(
+                """
+                local t = redis.call('TIME')
+                local now = t[1] * 1000000 + t[2]
+                local window = tonumber(ARGV[3]) * 1000000
+                redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', '(' .. (now - window))
+                if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then
+                    local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+                    if #oldest == 0 then return math.max(1, math.ceil(tonumber(ARGV[3]))) end
+                    return math.max(1, math.ceil((oldest[2] + window - now) / 1000000))
+                end
+                redis.call('ZADD', KEYS[1], now, ARGV[2])
+                redis.call('PEXPIRE', KEYS[1], math.ceil(window / 1000) + 1000)
+                return 0
+                """,
+                1,
+                self._key("limit", key),
+                limit,
+                os.urandom(16).hex(),
+                RATE_LIMIT_WINDOW_SECONDS,
+            )
+            return retry or None
 
 
 _store_lock = threading.Lock()
 _store_url: str | None = None
+_store_prefix: str | None = None
 _store: SharedState | None = None
 
 
@@ -263,16 +509,24 @@ def get_shared_state() -> SharedState:
 
     url = os.environ.get("TOKENAGE_QUEUE_URL") or (CONFIG.get("queue") or {}).get("url")
     url = url or f"sqlite:///{Path(get_tracker_home()) / 'state.db'}"
-    if not isinstance(url, str) or not url.startswith("sqlite:///"):
+    if not isinstance(url, str) or not url.startswith(
+        ("sqlite:///", "redis://", "rediss://")
+    ):
         # Do not include a URL: it may contain credentials.
         raise ValueError(
-            "Unsupported queue URL scheme; this release supports sqlite:///"
+            "Unsupported queue URL scheme; use sqlite:///, redis:// or rediss://"
         )
-    global _store_url, _store
+    prefix = (CONFIG.get("queue") or {}).get("prefix", "tokenage:")
+    global _store_url, _store_prefix, _store
     with _store_lock:
-        if url != _store_url or _store is None:
-            _store = SQLiteSharedState(os.path.expanduser(url[10:]))
+        if url != _store_url or prefix != _store_prefix or _store is None:
+            _store = (
+                SQLiteSharedState(os.path.expanduser(url[10:]))
+                if url.startswith("sqlite:///")
+                else RedisSharedState(url, prefix=prefix)
+            )
             _store_url = url
+            _store_prefix = prefix
         return _store
 
 

@@ -1440,3 +1440,14 @@ def test_otlp_is_mounted_under_the_api(api_module, fresh_db, monkeypatch):
     assert [tuple(r) for r in rows] == [(user.id, "otlp")]
     # Counted once, against the token's ingest limit; never the API user limit.
     assert gate_hits == []
+
+
+def test_version_reports_image_commit(api_module, monkeypatch):
+    monkeypatch.setenv("TOKENAGE_GIT_COMMIT", "image-commit")
+    assert TestClient(api_module.app).get("/version").json()["commit"] == "image-commit"
+
+
+def test_version_reports_clone_commit(api_module, monkeypatch):
+    monkeypatch.delenv("TOKENAGE_GIT_COMMIT", raising=False)
+    monkeypatch.setattr(api_module, "get_commit", lambda: "clone-head")
+    assert TestClient(api_module.app).get("/version").json()["commit"] == "clone-head"

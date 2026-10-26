@@ -23,7 +23,7 @@ from protocol.usage_report import UsageReport
 from src.config.app import CONFIG, _config_lock
 from src.config.server_config import resolve_server_urls
 
-from ._version import get_version
+from ._version import get_commit, get_version
 from .auth import (
     _resolve_request_user,
     get_current_user,
@@ -1142,6 +1142,7 @@ async def version():
     return {
         "name": app.title,
         "version": get_version(),
+        "commit": await asyncio.to_thread(get_commit),
         "protocol_min": MIN_SUPPORTED_GENERATION,
         "protocol_max": MAX_SUPPORTED_GENERATION,
         # Where clients should point agents. A property of this server's own

@@ -80,6 +80,7 @@ def test_start_creates_config_checks_ports_then_migrates_then_starts(box):
     assert ops.start() == 0
 
     assert (box.home / "config.yaml").exists()
+    assert "path" not in ops._load_config(box.home / "config.yaml").get("db", {})
     conf = (box.home / "supervisord.conf").read_text()
     for prog in ops.PROGRAMS:
         assert f"[program:{prog}]" in conf

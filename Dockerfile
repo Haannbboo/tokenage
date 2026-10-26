@@ -1,35 +1,30 @@
-FROM python:3.13-slim
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS dashboard
+WORKDIR /build/frontend
+COPY frontend/package.json ./
+RUN npm install --no-package-lock
+COPY frontend/ ./
+RUN npm run build
 
+FROM python:3.13-slim-bookworm AS server
+COPY --from=ghcr.io/astral-sh/uv:0.11.5 /uv /usr/local/bin/uv
 WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
 COPY src/pyproject.toml src/pyproject.toml
-RUN pip install --no-cache-dir uv && uv pip install --system --no-cache -r src/pyproject.toml
-
-# Copy application code
+RUN uv pip install --system --no-cache -r src/pyproject.toml
 COPY src/ src/
 COPY protocol/ protocol/
-
-COPY frontend/dist/ frontend/dist/
-COPY config.example.yaml VERSION install.sh ./
-
-# Create directories for runtime
-RUN mkdir -p /root/.tokenage/logs
-
-# Copy entrypoint
+COPY install.sh VERSION config.example.yaml ./
+COPY --from=dashboard /build/frontend/dist/ frontend/dist/
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-# Copy supervisord config
-COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
-
+RUN groupadd --gid 10001 tokenage && useradd --uid 10001 --gid tokenage --create-home tokenage \
+    && mkdir /data && chown tokenage:tokenage /data \
+    && chmod 755 /entrypoint.sh && chmod -R a+rX /app
+ARG GIT_COMMIT=unknown
+ENV TOKENAGE_HOME=/data TOKENAGE_GIT_COMMIT=$GIT_COMMIT PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+LABEL org.opencontainers.image.source="https://github.com/haannbboo/tokenage" \
+      org.opencontainers.image.revision=$GIT_COMMIT
+USER tokenage
 EXPOSE 4001
-
-ENV TOKENAGE_CONFIG=/root/.tokenage/config.yaml
-
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=6 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4001/version', timeout=4).read()"
 ENTRYPOINT ["/entrypoint.sh"]
+CMD ["gunicorn", "src.api:app", "-c", "src/config/api.conf.py", "--bind", "0.0.0.0:4001", "--access-logfile", "-", "--error-logfile", "-"]

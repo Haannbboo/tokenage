@@ -1,0 +1,28 @@
+# Loaded inside the stock nginx image's http block via conf.d/tokenage.conf.
+# Set server.base_url and server.api_port in config.yaml to the public origin.
+upstream tokenage {
+    zone tokenage 64k;
+    least_conn;
+    # Resolve at startup/reload, not during requests: dynamic peer removal can
+    # cancel a pending connect-failure retry in nginx 1.28. Reload after replacing
+    # a container to pick up its new address (see README).
+    server tokenage:4001 max_fails=1 fail_timeout=10s;
+    # server 192.168.x.y:<api_port> max_fails=1 fail_timeout=10s;
+    # server <tailscale-host>:<api_port> backup;
+    # Add weight=2 for twice the share, or backup for a standby.
+}
+server {
+    listen 80;
+    client_max_body_size 10m;
+    location / {
+        proxy_pass http://tokenage;
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 1s;
+        # POSTs may retry connect failures, before any request was sent.
+        # Never add non_idempotent: a sent ingest POST must not be replayed.
+        proxy_next_upstream error timeout;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

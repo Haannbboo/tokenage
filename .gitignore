@@ -41,3 +41,9 @@ plugins/shared/src/*.js
 
 # Independent review reports (.agents/commands/review/SKILL.md)
 .adversarial-review.*/
+
+# Operator-owned Docker configuration
+/docker/config.yaml
+/docker/nginx.conf
+/docker/nginx/*
+!/docker/nginx/.gitkeep

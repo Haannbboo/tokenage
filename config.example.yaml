@@ -65,8 +65,9 @@ server:
   # Budget workers * 15 connections per node within the PostgreSQL limit.
   # workers: 2
 
-db:
-  path: ~/.tokenage/usage.db
+db: {}
+  # When unset, path defaults to $TOKENAGE_HOME/usage.db.
+  # path: ~/.tokenage/usage.db
   # For PostgreSQL/MySQL, use `url` instead of `path`, for example:
   # url: postgresql+psycopg://user:password@db-host:5432/tokenage
   # url: mysql+pymysql://user:password@db-host:3306/tokenage

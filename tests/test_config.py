@@ -439,7 +439,12 @@ def test_worker_default_and_config_sync(config_module, tmp_path, monkeypatch):
     # The example leaves the key commented: syncing must not add it, since a
     # sync rewrite drops the user's comments on every existing install.
     config_module.sync_config_file_with_defaults(str(config_path), example)
-    assert "workers" not in yaml.safe_load(config_path.read_text())["server"]
+    synced = yaml.safe_load(config_path.read_text())
+    assert "workers" not in synced["server"]
+    assert "path" not in synced["db"]
+    assert config_module.load_config()["db"]["path"] == str(
+        Path(config_module.get_tracker_home()) / "usage.db"
+    )
     config_path.write_text("server:\n  workers: 3\n", encoding="utf-8")
     config_module.sync_config_file_with_defaults(str(config_path), example)
     assert yaml.safe_load(config_path.read_text())["server"]["workers"] == 3

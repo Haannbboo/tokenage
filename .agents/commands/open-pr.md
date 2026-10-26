@@ -79,6 +79,8 @@ gh pr create \
   --body-file /tmp/pr-body.md
 ```
 
+Aim for a title of about 50 characters, conventional style; it becomes the squash commit title.
+
 If a PR already exists for the current branch, update that PR instead of opening a duplicate:
 
 ```bash

@@ -247,8 +247,10 @@ class SQLiteSharedState:
             return json.loads(row[0]) if row and row[1] > time.time() else None
 
     def rate_limit(self, key: str, limit: int) -> int | None:
-        now = time.time()
         with self._connection(True) as conn:
+            # Read the clock after taking the write lock: a stale `now` from a
+            # waiting caller would put a later entry in its past (Retry-After 61).
+            now = time.time()
             conn.execute("DELETE FROM limits WHERE expires<?", (now,))
             count, oldest = conn.execute(
                 "SELECT count(*),min(ts) FROM limits WHERE key=?", (key,)

@@ -12,11 +12,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
+from functools import cache
 from typing import Any
 
 from sqlalchemy import (
     BigInteger,
     and_,
+    bindparam,
     func,
     literal_column,
     select,
@@ -348,65 +350,52 @@ def hourly_values(usage: Usage) -> dict[str, Any]:
     return values
 
 
-def upsert_hourly_aggregate(session: Session, usage: Usage) -> None:
-    """Add *usage* to usage_hourly on *session*; the caller owns the commit."""
-    _require_device_id(usage)
-    values = hourly_values(usage)
+_HOURLY_KEY_COLUMNS = (
+    "user_id",
+    "hour",
+    "provider",
+    "model",
+    "client_source",
+    "device_id",
+)
+_HOURLY_COUNTER_COLUMNS = tuple(
+    c.name
+    for c in UsageHourly.__table__.c
+    if c.name not in ("id", *_HOURLY_KEY_COLUMNS)
+)
 
-    engine = session.get_bind()
+
+@cache
+def _hourly_upsert_statement(dialect: str) -> Any:
+    # Built once per dialect: constructing this ON CONFLICT insert per row was
+    # the consumer's largest CPU cost. Values are bound per execution.
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-    insert_fn = pg_insert if engine.dialect.name == "postgresql" else sqlite_insert
-
-    statement = insert_fn(UsageHourly).values(**values)
+    insert_fn = pg_insert if dialect == "postgresql" else sqlite_insert
+    statement = insert_fn(UsageHourly).values(
+        {
+            name: bindparam(name)
+            for name in (*_HOURLY_KEY_COLUMNS, *_HOURLY_COUNTER_COLUMNS)
+        }
+    )
     statement = statement.on_conflict_do_update(
-        index_elements=[
-            "user_id",
-            "hour",
-            "provider",
-            "model",
-            "client_source",
-            "device_id",
-        ],
+        index_elements=list(_HOURLY_KEY_COLUMNS),
         set_={
-            "request_count": UsageHourly.request_count
-            + statement.excluded.request_count,
-            "prompt_tokens": UsageHourly.prompt_tokens
-            + statement.excluded.prompt_tokens,
-            "completion_tokens": UsageHourly.completion_tokens
-            + statement.excluded.completion_tokens,
-            "reasoning_tokens": UsageHourly.reasoning_tokens
-            + statement.excluded.reasoning_tokens,
-            "cached_tokens": UsageHourly.cached_tokens
-            + statement.excluded.cached_tokens,
-            "total_tokens": UsageHourly.total_tokens + statement.excluded.total_tokens,
-            "tool_tokens": UsageHourly.tool_tokens + statement.excluded.tool_tokens,
-            "cache_creation_tokens": UsageHourly.cache_creation_tokens
-            + statement.excluded.cache_creation_tokens,
-            "prompt_length": UsageHourly.prompt_length
-            + statement.excluded.prompt_length,
-            "input_cost_usd": UsageHourly.input_cost_usd
-            + statement.excluded.input_cost_usd,
-            "output_cost_usd": UsageHourly.output_cost_usd
-            + statement.excluded.output_cost_usd,
-            "total_cost_usd": UsageHourly.total_cost_usd
-            + statement.excluded.total_cost_usd,
-            "successful_requests": UsageHourly.successful_requests
-            + statement.excluded.successful_requests,
-            "failed_requests": UsageHourly.failed_requests
-            + statement.excluded.failed_requests,
-            "latency_sum_ms": UsageHourly.latency_sum_ms
-            + statement.excluded.latency_sum_ms,
-            "status_429": UsageHourly.status_429 + statement.excluded.status_429,
-            "status_4xx": UsageHourly.status_4xx + statement.excluded.status_4xx,
-            "status_5xx": UsageHourly.status_5xx + statement.excluded.status_5xx,
-            "status_unknown": UsageHourly.status_unknown
-            + statement.excluded.status_unknown,
+            name: getattr(UsageHourly, name) + statement.excluded[name]
+            for name in _HOURLY_COUNTER_COLUMNS
         },
     )
+    return statement
 
-    session.execute(statement)
+
+def upsert_hourly_aggregate(session: Session, usage: Usage) -> None:
+    """Add *usage* to usage_hourly on *session*; the caller owns the commit."""
+    _require_device_id(usage)
+    session.execute(
+        _hourly_upsert_statement(session.get_bind().dialect.name),
+        hourly_values(usage),
+    )
 
 
 @dataclass(frozen=True)

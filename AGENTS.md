@@ -51,6 +51,7 @@ When handling PR comments, CI failures, or CodeRabbit feedback, read `.agents/co
 - Ask whether to squash when merging.
 - Never add merge commits when asked to merge.
 - Commit messages: one-line conventional style, no co-authorship.
+- Commit and PR titles: aim for about 50 characters; longer is fine when needed. The PR title becomes the squash commit on `main`.
 
 Example commit style:
 

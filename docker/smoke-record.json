@@ -1,0 +1,15 @@
+{
+  "resourceLogs": [{
+    "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "claude-code"}}]},
+    "scopeLogs": [{"logRecords": [{
+      "timeUnixNano": "1800000000000000000",
+      "attributes": [
+        {"key": "event.name", "value": {"stringValue": "claude_code.api_request"}},
+        {"key": "model", "value": {"stringValue": "docker-smoke-model"}},
+        {"key": "input_tokens", "value": {"intValue": "10"}},
+        {"key": "output_tokens", "value": {"intValue": "5"}},
+        {"key": "status_code", "value": {"intValue": "200"}}
+      ]
+    }]}]
+  }]
+}

@@ -132,24 +132,66 @@ def test_stop_named_or_everything(box):
     assert ctl(box, "stop", "all") and ctl(box, "shutdown")
 
 
-def test_bootstrap_records_the_stamp_and_reports_display_urls(box, monkeypatch, capsys):
+@pytest.mark.parametrize(
+    "host,local_host",
+    [("127.0.0.1", "127.0.0.1"), ("::1", "[::1]"), ("[::1]", "[::1]")],
+)
+def test_bootstrap_records_the_stamp_and_reports_display_urls(
+    box, monkeypatch, capsys, host, local_host
+):
     (box.home).mkdir()
     (box.home / "config.yaml").write_text(
-        "server:\n  base_url: https://tok.example.com\n"
+        f"server:\n  host: '{host}'\n  base_url: https://tok.example.com\n"
     )
     (box.root / "frontend" / "dist").mkdir(parents=True)
+    cli = box.root / "client" / "bin" / "tokenage"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("")
+    cli.chmod(0o755)
+    monkeypatch.setattr(ops, "_bin_dir", lambda: cli.parent)
     monkeypatch.setattr(ops, "_wait_for_port", lambda host, port, retries=10: True)
     monkeypatch.setattr(ops, "_content_type", lambda url: "text/html")
     monkeypatch.setattr(ops, "start", lambda args=None: 0)
     monkeypatch.setattr(ops.shutil, "which", lambda name: None)
 
-    assert ops.bootstrap() == 1  # the fake checkout has no client/bin/tokenage
+    assert ops.bootstrap() == 0
 
     out = capsys.readouterr().out
     assert ops._stamp_file().read_text().strip() == ops._requirements_hash()
-    assert "API running: https://tok.example.com:4001" in out
+    assert f"API running: http://{local_host}:4001" in out
+    assert f"Dashboard: http://{local_host}:4001" in out
+    assert "tokenage is LIVE → https://tok.example.com" in out
     assert "OTLP" not in out  # no separate collector port to check
     assert ctl(box, "restart", "tokenage-api")  # new frontend/dist is served
+
+
+def test_bootstrap_reports_invalid_base_url(box, monkeypatch, capsys):
+    box.home.mkdir()
+    (box.home / "config.yaml").write_text('server:\n  base_url: "https://[::1"\n')
+    monkeypatch.setattr(ops, "start", lambda: 0)
+    monkeypatch.setattr(ops.shutil, "which", lambda name: None)
+
+    with pytest.raises(SystemExit) as exc:
+        ops.bootstrap()
+    assert exc.value.code == 1
+    assert "server.base_url" in capsys.readouterr().out
+
+
+def test_bootstrap_reports_missing_cli_wrapper(box, monkeypatch, capsys):
+    box.home.mkdir()
+    (box.home / "config.yaml").write_text("server:\n  api_port: 4001\n")
+    bin_dir = box.home / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "tokenage").touch()
+    monkeypatch.setattr(ops, "_bin_dir", lambda: bin_dir)
+    monkeypatch.setattr(ops, "start", lambda: 0)
+    monkeypatch.setattr(ops, "_wait_for_port", lambda *args: True)
+    monkeypatch.setattr(ops.shutil, "which", lambda name: None)
+
+    assert ops.bootstrap() == 1
+    assert (
+        "CLI wrapper: client/bin/tokenage (not executable)" in capsys.readouterr().out
+    )
 
 
 @pytest.mark.parametrize(

@@ -27,30 +27,42 @@ def resolve_server_urls(config: dict) -> dict[str, str]:
     """Return full URLs for the api and its mounted OTLP collector.
 
     Uses ``server.base_url`` when set (e.g. ``http://my-nas``), otherwise
-    derives the host from ``server.host``.  The port comes from
-    ``server.api_port``; OTLP is served under ``/otlp`` on the same port.
+    derives the host and port from ``server.host`` and ``server.api_port``.
+    OTLP is served under ``/otlp`` on the same origin.
     """
     server = config.get("server", {})
     base_url = server.get("base_url")
     base = None
     if base_url:
         raw_base_url = str(base_url)
-        parsed = urlparse(
-            raw_base_url if "://" in raw_base_url else f"//{raw_base_url.rstrip('/')}"
-        )
+        try:
+            parsed = urlparse(
+                raw_base_url
+                if "://" in raw_base_url
+                else f"//{raw_base_url.rstrip('/')}"
+            )
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError(f"Invalid server.base_url: {exc}") from exc
         if parsed.hostname:
             host = parsed.hostname
             if ":" in host and not host.startswith("["):
                 host = f"[{host}]"
-            base = f"{parsed.scheme or 'http'}://{host}"
+            scheme = parsed.scheme or "http"
+            base = f"{scheme}://{host}"
+            if port is not None and (scheme, port) not in (
+                ("http", 80),
+                ("https", 443),
+            ):
+                base = f"{base}:{port}"
     if base is None:
         host = str(server.get("host", "127.0.0.1"))
         if host in ("0.0.0.0", "127.0.0.1", "::"):
             host = "localhost"
         elif ":" in host and not host.startswith("["):
             host = f"[{host}]"
-        base = f"http://{host}"
-    api_url = f"{base}:{int(server.get('api_port', 4001))}"
+        base = f"http://{host}:{int(server.get('api_port', 4001))}"
+    api_url = base
     return {"api_url": api_url, "otlp_url": f"{api_url}/otlp"}
 
 
@@ -64,6 +76,7 @@ def load_server_config() -> ServerConfig:
     except OSError:
         cfg = {}
 
+    resolve_server_urls(cfg)
     server = cfg.get("server", {})
     host = str(server.get("host", "127.0.0.1"))
     base_url = server.get("base_url")

@@ -505,12 +505,17 @@ def bootstrap(args: list[str] | None = None) -> int:
     step("Running post-start checks")
     path = _config_path()
     config = _load_config(path) if path.exists() else {}
-    urls = resolve_server_urls(config)
+    try:
+        urls = resolve_server_urls(config)
+    except ValueError as exc:
+        raise die(str(exc)) from exc
     services = get_configured_service_ports(config)
     host = services[0].host
     if host in ("0.0.0.0", "::", ""):
         host = "127.0.0.1"
     port_of = {p.service: p.port for p in services}
+    local_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    local = f"http://{local_host}:{port_of['API']}"
     failures = 0
 
     def check(passed: bool, good: str, broken: str) -> None:
@@ -534,8 +539,8 @@ def bootstrap(args: list[str] | None = None) -> int:
     )
     check(
         _wait_for_port(host, port_of["API"]),
-        f"API running: {urls['api_url']}",
-        f"API reachable: {urls['api_url']} (not responding)",
+        f"API running: {local}",
+        f"API reachable: {local} (not responding)",
     )
 
     # src/api.py mounts frontend/dist at import time, so a build is only served
@@ -543,11 +548,11 @@ def bootstrap(args: list[str] | None = None) -> int:
     if (ROOT / "frontend" / "dist").is_dir():
         note("Restarting the API to serve the new dashboard...")
         _ctl("restart", "tokenage-api")
-        html = _wait_for_html(f"http://{host}:{port_of['API']}/")
+        html = _wait_for_html(f"{local}/")
         check(
             html,
-            f"Dashboard: {urls['api_url']}",
-            f"Dashboard: {urls['api_url']} (frontend not served)",
+            f"Dashboard: {local}",
+            f"Dashboard: {local} (frontend not served)",
         )
     else:
         note(

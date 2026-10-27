@@ -1288,10 +1288,7 @@ def test_version_publishes_the_collector_for_clients(api_module, monkeypatch):
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://localhost:9/v1/logs")
     payload = TestClient(api_module.app).get("/version").json()
 
-    assert (
-        payload["otlp_logs_endpoint"]
-        == "https://tracker.example.test:4004/otlp/v1/logs"
-    )
+    assert payload["otlp_logs_endpoint"] == "https://tracker.example.test/otlp/v1/logs"
     assert "collector_bind" not in payload
 
 

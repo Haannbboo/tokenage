@@ -121,7 +121,7 @@ python3 - "$scratch/config.yaml" <<'PY'
 import sys
 from pathlib import Path
 path = Path(sys.argv[1])
-path.write_text(path.read_text().replace("  api_port: 4001", "  base_url: https://smoke.example.test\n  api_port: 443"))
+path.write_text(path.read_text().replace("  api_port: 4001", "  base_url: https://smoke.example.test\n  api_port: 4001"))
 PY
 mkdir "$scratch/nginx"
 cp docker/nginx/tokenage.conf.example "$scratch/nginx/tokenage.conf"
@@ -152,7 +152,7 @@ ingest_and_assert
 echo 'PASS: nginx + Redis + Postgres OTLP ingest and auth isolation'
 # Installer origin is operator-configured, never taken from request headers.
 curl --max-time 5 --fail --silent -H 'Host: other.example.test' "$endpoint/install.sh" |
-    python3 -c "import sys; assert 'TOKENAGE_INSTALL_SERVER=https://smoke.example.test:443\n' in sys.stdin.read()"
+    python3 -c "import sys; assert 'TOKENAGE_INSTALL_SERVER=https://smoke.example.test\n' in sys.stdin.read()"
 "${compose[@]}" exec -T tokenage python - <<'PY'
 import os
 from pathlib import Path

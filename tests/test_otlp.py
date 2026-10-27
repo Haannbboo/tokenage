@@ -40,6 +40,65 @@ def _capture_usage(target: dict):
     return lambda **fields: target.update({"usage": SimpleNamespace(**fields)})
 
 
+@pytest.mark.parametrize("source", ["claude", "opencode", "codex"])
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        (
+            {"timeUnixNano": "0", "observedTimeUnixNano": "1800000000000000000"},
+            1800000000000000,
+        ),
+        ({"observedTimeUnixNano": "1800000000000000000"}, 1800000000000000),
+        ({"timeUnixNano": "0", "observedTimeUnixNano": "0"}, None),
+        ({}, None),
+        ({"timeUnixNano": "1000000000", "observedTimeUnixNano": "2000000000"}, 1000000),
+    ],
+)
+def test_usage_timestamp_fallback(otlp_module, source, record, expected):
+    if source == "claude":
+        fields = otlp_module._extract_claude_fields(record, [], "", user_id="user")
+    elif source == "opencode":
+        fields = otlp_module._extract_opencode_fields(record, [], "", user_id="user")
+    else:
+        fields = otlp_module._extract_codex_fields(
+            record,
+            _attrs({"event.kind": "response.completed", "input_token_count": 1}),
+            "codex_cli_rs",
+            user_id="user",
+        )
+    # None delegates to record_usage's server clock.
+    assert fields["ts"] == expected
+
+
+def test_claude_missing_timestamp_uses_recorded_server_time(otlp_module, monkeypatch):
+    captured = {}
+
+    def record_usage(**fields):
+        captured.update(fields)
+        return SimpleNamespace(id="usage", session_id="session", ts=123000000)
+
+    monkeypatch.setattr(otlp_module, "record_usage", record_usage)
+    otlp_module._claude_tool_buffer["user:p"] = [
+        {"tool_name": "Bash", "tool_use_id": "tool", "ts": 0}
+    ]
+    ingest_write(
+        otlp_module._parse_log_record,
+        {
+            "attributes": _attrs(
+                {"event.name": "claude_code.api_request", "prompt.id": "p"}
+            )
+        },
+        "claude-code",
+        "session",
+        user_id="user",
+        device_id="device",
+    )
+
+    assert captured["ts"] is None
+    assert otlp_module._claude_last_usage["user:p"][2] == 123000
+    assert otlp_module._claude_tool_buffer["user:p"][0]["tool_use_id"] == "tool"
+
+
 def test_health_routes_return_service_status(otlp_module):
     client = TestClient(otlp_module.app)
 

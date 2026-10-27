@@ -113,6 +113,13 @@ def _optional_int(value) -> int | None:
         return None
 
 
+def _usage_ts_us(record: dict) -> int | None:
+    time_ns = record.get("timeUnixNano")
+    if time_ns is None or str(time_ns) == "0":
+        time_ns = record.get("observedTimeUnixNano")
+    return int(time_ns) // 1000 if time_ns is not None and int(time_ns) else None
+
+
 def _record_ts_ms(record: dict) -> int:
     """Milliseconds from a log record, falling back to observedTimeUnixNano.
 
@@ -375,8 +382,7 @@ def _extract_claude_fields(
     user_id: str,
 ) -> dict:
     """Extract normalized usage fields from a Claude OTLP record."""
-    time_ns = record.get("timeUnixNano", "0")
-    ts = int(time_ns) // 1000
+    ts = _usage_ts_us(record)
 
     input_tokens = _attr(attrs, "input_tokens")
     output_tokens = _attr(attrs, "output_tokens")
@@ -432,8 +438,7 @@ def _extract_opencode_fields(
     user_id: str,
 ) -> dict:
     """Extract normalized usage fields from an OpenCode or Kilo OTLP record."""
-    time_ns = record.get("timeUnixNano", "0")
-    ts = int(time_ns) // 1000
+    ts = _usage_ts_us(record)
 
     input_tokens = _attr(attrs, "input_token_count")
     output_tokens = _attr(attrs, "output_token_count")
@@ -621,13 +626,11 @@ def _extract_codex_fields(
     # time), which can land well after the real completion. Prefer the event's
     # own timestamp so ts agrees with the latency derived below.
     completed_ms = _codex_event_ts_ms(attrs)
+    ts: int | None
     if completed_ms is not None:
         ts = completed_ms * 1000  # ms -> us
     else:
-        time_ns = record.get("timeUnixNano", "0")
-        if time_ns == "0":
-            time_ns = record.get("observedTimeUnixNano", "0")
-        ts = int(time_ns) // 1000
+        ts = _usage_ts_us(record)
 
     conv_id = _attr(attrs, "conversation.id")
     usage_session_id = str(conv_id) if conv_id is not None else None
@@ -819,19 +822,22 @@ def _parse_log_record(
             if usage:
                 prompt_id = _attr(attrs, "prompt.id")
                 prompt_key = _scoped_id(prompt_id, user_id) if prompt_id else None
-                usage_ts_ms = int(fields["ts"]) // 1000
+                usage_ts_ms = (
+                    fields["ts"] if fields["ts"] is not None else usage.ts
+                ) // 1000
                 latency_ms = int(fields.get("latency_ms") or 0)
                 # Treat an unknown latency as the grace window so a tool whose
                 # decision lands just before the request completes is not
                 # mistaken for a result-less one.
                 window_ms = latency_ms if latency_ms > 0 else CLAUDE_TOOL_FLUSH_GRACE_MS
                 if prompt_key:
+                    # With no event time, retain unknown-time tools until their result.
                     _flush_claude_tools(
                         prompt_key,
                         usage.id,
                         usage.session_id,
                         user_id,
-                        usage_ts_ms - window_ms,
+                        (usage_ts_ms if fields["ts"] is not None else 0) - window_ms,
                         session=session,
                     )
                     _claude_last_usage[prompt_key] = (

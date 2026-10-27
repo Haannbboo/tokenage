@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import type { DailyUsage, PeriodGranularity } from '../types'
 import { fillGaps, formatCostFixed, formatModelName, formatNumber, value, resolveTimezone, wallClockMs, getTimezoneOffset } from '../utils'
 import { fillPeriodGaps } from '../periodGaps'
@@ -8,6 +8,7 @@ import { getModelColor, getModelTextColor } from '../model-badge'
 import { ChartTooltip, TooltipRow, TooltipDivider } from './ChartTooltip'
 import { trendBrandColor, vibrantColor } from './trendColors'
 import { sortTrendRows, trendTooltipX } from './trendTooltip'
+import { trendDotScale } from './trendScale'
 import { getLang, LANG_LOCALES, t } from '../i18n/index.ts'
 
 type ModelBucketRow = {
@@ -54,6 +55,16 @@ export function TrendChart({
   const chartId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const hoverBandId = `trend-hover-band-${chartId}`;
   const crosshairId = `trend-crosshair-${chartId}`;
+  // The plot stretches its viewBox to the panel, so the request dots need the
+  // panel width to be counter-scaled back into circles.
+  const [plotWidth, setPlotWidth] = useState(0);
+  const plotRef = useCallback((node: SVGSVGElement | null) => {
+    if (!node) return;
+    const observer = new ResizeObserver(() => setPlotWidth(node.getBoundingClientRect().width));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const dotScale = trendDotScale(plotWidth);
   const filled = useMemo(
     () => (periodCount === undefined
       ? fillPeriodGaps(data, granularity)
@@ -289,6 +300,7 @@ export function TrendChart({
             )}
 
             <svg
+              ref={plotRef}
               viewBox="0 0 1000 200"
               preserveAspectRatio="none"
               style={{ width: '100%', height: '220px', overflow: 'visible' }}
@@ -419,14 +431,17 @@ export function TrendChart({
                       const x = paddingX + (i + 0.5) / filled.length * chartWidth;
                       const y = 200 - (value(d.requests) / maxRequests) * 200;
                       return (
-                        <circle
-                          key={i}
-                          cx={x} cy={y} r={hoveredIdx === i ? "5" : "3"}
-                          fill="var(--chart-dot-fill)"
-                          stroke="var(--color-pink)"
-                          strokeWidth={hoveredIdx === i ? "3" : "2"}
-                          style={{ pointerEvents: 'none', transition: 'all 160ms ease', opacity: hoveredIdx === null || hoveredIdx === i ? 0.6 : 0.3 }}
-                        />
+                        // The x scale cancels the stretch of the viewBox, so the
+                        // dot stays a circle on any panel width.
+                        <g key={i} style={{ transform: `translate(${x}px, ${y}px) scale(${dotScale}, 1)`, transformOrigin: '0 0', pointerEvents: 'none' }}>
+                          <circle
+                            cx={0} cy={0} r={hoveredIdx === i ? "5" : "3"}
+                            fill="var(--chart-dot-fill)"
+                            stroke="var(--color-pink)"
+                            strokeWidth={hoveredIdx === i ? "3" : "2"}
+                            style={{ transition: 'all 160ms ease', opacity: hoveredIdx === null || hoveredIdx === i ? 0.6 : 0.3 }}
+                          />
+                        </g>
                       );
                     })}
                     {/* The hovered point stays marked even when the dots are off. */}
@@ -435,7 +450,8 @@ export function TrendChart({
                       const y = 200 - (value(filled[hoveredIdx].requests) / maxRequests) * 200;
                       return (
                         <g style={{
-                          transform: `translate(${x}px, ${y}px)`,
+                          transform: `translate(${x}px, ${y}px) scale(${dotScale}, 1)`,
+                          transformOrigin: '0 0',
                           transition: 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1)',
                           pointerEvents: 'none',
                         }}>

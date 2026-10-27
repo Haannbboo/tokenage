@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildSessionInsights, customBound, fillGaps, getSinceDate, netThroughput, resolveTimezone } from '../src/utils'
+import { buildSessionInsights, customBound, fillGaps, formatProviderName, getSinceDate, netThroughput, resolveTimezone } from '../src/utils'
 import { overrideBody, pricingSourceOrder } from '../src/hooks/usePricingData'
 import { buildTimelineData } from '../src/components/RequestTimeline'
 import type { DailyUsage, SessionSummary } from '../src/types'
@@ -72,6 +72,15 @@ describe('request timeline data', () => {
     expect(result.rows.filter(row => row.type === 'tool')).toHaveLength(1)
     expect(result.totalMs).toBe(220)
     expect(result.untimed).toEqual([])
+  })
+})
+
+
+describe('provider labels', () => {
+  it('shows MiniMax for any minimax provider and leaves the rest alone', () => {
+    expect(formatProviderName('minimax')).toBe('MiniMax')
+    expect(formatProviderName('minimaxi')).toBe('MiniMax')
+    expect(formatProviderName('openai')).toBe('openai')
   })
 })
 

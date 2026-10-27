@@ -14,8 +14,15 @@ def normalize_model_name(model_name: str) -> str:
 
 
 def normalize_provider_name(provider_name: str) -> str:
-    """Fold provider casing so names share one identity."""
-    return provider_name.strip().lower()
+    """Fold provider casing so names share one identity.
+
+    MiniMax names one provider however it is spelled ("MiniMax", "minimaxi",
+    "minimax-cn"), so they all share the "minimax" identity.
+    """
+    name = provider_name.strip().lower()
+    if "minimax" in name:
+        return "minimax"
+    return name
 
 
 def normalize_tool_name(tool_name: str) -> str:

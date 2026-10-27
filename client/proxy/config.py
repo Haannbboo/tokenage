@@ -29,7 +29,11 @@ AUTH_SCHEMES = {"bearer", "x-api-key"}
 
 
 def normalize_provider_name(name: str) -> str:
-    """Fold provider casing so names share one identity (matches the server)."""
+    """Fold provider casing so names share one identity.
+
+    Casing only: aliases stay distinct here because they route to different
+    upstreams; the server folds them (e.g. MiniMax spellings) when recording.
+    """
     return name.strip().lower()
 
 

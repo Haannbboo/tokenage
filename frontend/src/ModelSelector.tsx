@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { ActiveFilter, UsageSummary } from './types'
-import { formatModelName, getModelIcon, getProviderColor } from './utils'
+import { formatModelName, formatProviderName, getModelIcon, getProviderColor } from './utils'
 import { t } from './i18n/index.ts'
 
 export function ModelSelector({
@@ -59,7 +59,7 @@ export function ModelSelector({
                 fontWeight: 600,
                 border: `1px solid ${getProviderColor(activeFilter.provider, providerColors)}44`
               }}>
-                {activeFilter.provider}
+                {formatProviderName(activeFilter.provider)}
               </span>
               </>
             )
@@ -138,7 +138,7 @@ export function ModelSelector({
                     fontWeight: 600,
                     border: `1px solid ${getProviderColor(provider, providerColors)}44`
                   }}>
-                    {provider}
+                    {formatProviderName(provider)}
                   </span>
                   <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 'auto', fontSize: '11px' }}>
                     {models.length} {t('model')}

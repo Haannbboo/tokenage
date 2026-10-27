@@ -59,6 +59,7 @@ class FetchedSource:
 
 class PriceSource(Protocol):
     name: str
+    ttl_seconds: int
 
     def fetch(self) -> list[SourceEntry]: ...
 

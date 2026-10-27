@@ -144,7 +144,9 @@ def _parse_device_status_json(raw: str | None) -> dict | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    async with consumer_lifespan():
+    from .pricing.refresh import pricing_refresh_lifespan
+
+    async with consumer_lifespan(), pricing_refresh_lifespan():
         yield
 
 
@@ -890,31 +892,47 @@ def _pricing_entry(resolved_cost) -> dict:
 
 
 def _fetch_live_sources(config_snapshot):
-    """Fetch configured price sources unless auto_fetch is disabled."""
-    auto_fetch = config_snapshot.get("pricing", {}).get("auto_fetch", True)
-    if not auto_fetch:
-        return []
+    """Fetch configured sources with normal TTLs unless auto_fetch is disabled."""
     from src.pricing.sources.registry import fetch_sources
 
+    if not config_snapshot.get("pricing", {}).get("auto_fetch", True):
+        return []
     return fetch_sources(config_snapshot)
 
 
-async def _resolve_live_cost_maps():
-    """Live-resolved pricing (config overrides + freshest source data), shared
-    by /pricing/{model} and /usage/{id}/recalculate-cost so both price a model
-    identically instead of drifting from independently maintained copies.
+async def _resolve_live_cost_maps(force=False):
+    """Resolve local maps for pricing reads; manual repricing refreshes live maps.
 
     Returns ``(resolved, model_costs, model_cost_sources)``.
     """
-    from src.pricing.maps import resolve_all_costs
+    from src.pricing.maps import (
+        MAPS_LOCK,
+        MODEL_COST_SOURCES,
+        MODEL_COSTS,
+        resolve_all_costs,
+    )
+    from src.pricing.refresh import refresh_live_maps
 
     with _config_lock:
         config_snapshot = dict(CONFIG)
-    resolved = resolve_all_costs(
-        config_snapshot, await asyncio.to_thread(_fetch_live_sources, config_snapshot)
-    )
-    model_costs = {key: rc.cost for key, rc in resolved.items()}
-    model_cost_sources = {key: rc.source for key, rc in resolved.items()}
+    if force:
+        await asyncio.to_thread(
+            refresh_live_maps, config_snapshot, force=True, manual=True
+        )
+        with MAPS_LOCK:
+            model_costs = dict(MODEL_COSTS)
+            model_cost_sources = dict(MODEL_COST_SOURCES)
+        resolved = {
+            key: ResolvedCost(cost=cost, source=model_cost_sources[key])
+            for key, cost in model_costs.items()
+        }
+    else:
+        resolved = resolve_all_costs(
+            config_snapshot,
+            await asyncio.to_thread(_fetch_live_sources, config_snapshot),
+        )
+        model_costs = {key: rc.cost for key, rc in resolved.items()}
+        model_cost_sources = {key: rc.source for key, rc in resolved.items()}
     return resolved, model_costs, model_cost_sources
 
 
@@ -1079,7 +1097,9 @@ async def recalculate_usage_cost_route(request: Request, usage_id: str):
     overwriting with a zeroed fallback cost.
     """
     user_id = _request_user_id(request)
-    _resolved, model_costs, model_cost_sources = await _resolve_live_cost_maps()
+    _resolved, model_costs, model_cost_sources = await _resolve_live_cost_maps(
+        force=True
+    )
 
     result = recalculate_usage_cost(
         usage_id,
@@ -1122,7 +1142,9 @@ async def reprice_estimated_usage(
     history can take a while.
     """
     user_id = _request_user_id(request)
-    _resolved, model_costs, model_cost_sources = await _resolve_live_cost_maps()
+    _resolved, model_costs, model_cost_sources = await _resolve_live_cost_maps(
+        force=True
+    )
 
     return await asyncio.to_thread(
         reprice_estimated_rows,

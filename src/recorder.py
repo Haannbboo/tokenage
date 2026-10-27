@@ -109,7 +109,7 @@ def record_usage(
 
     # ponytail: one overrides query per recorded row; cache per user if it shows up.
     overrides = load_model_price_overrides(user_id=user_id, session=session)
-    resolved = resolve_pricing(model, usage_ts, overrides=overrides)
+    resolved = resolve_pricing(model, usage_ts, overrides=overrides, user_id=user_id)
     costs = calculate_costs(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,

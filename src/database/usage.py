@@ -433,6 +433,7 @@ def _reprice_usage_rows(
     model_cost_sources: dict[str, str] | None,
     overrides: dict[str, Any] | None,
     db_path: str | None,
+    snapshot_session: Session | None = None,
 ) -> list[_RowReprice]:
     """Recompute *usages*' costs against current pricing, rebind their price
     snapshots and delta-adjust the usage_hourly and sessions rollups, all on
@@ -448,9 +449,8 @@ def _reprice_usage_rows(
         get_session_record,
     )
 
-    # Price everything and bind snapshots before the first write: the
-    # snapshot insert uses its own connection, which on SQLite would block
-    # behind this session's write lock.
+    # Bind snapshots before rollup writes. SQLite bulk repricing holds a
+    # write lock already, so its snapshot inserts must share the transaction.
     examined: list[_RowReprice] = []
     snapshot_ids: dict[tuple[str, str, str, str], int | None] = {}
     for usage in usages:
@@ -487,6 +487,7 @@ def _reprice_usage_rows(
                     source=source,
                     cost=resolved.cost,
                     db_path=db_path,
+                    session=snapshot_session,
                 )
             except Exception:
                 snapshot_ids[key] = None
@@ -672,6 +673,7 @@ def fetch_estimated_usage_rows(
     since: str | None = None,
     until: str | None = None,
     db_path: str | None = None,
+    zero_cost_only: bool = False,
 ) -> list[str]:
     """Ids of the user's usage rows not bound to a price snapshot (estimated).
 
@@ -682,12 +684,29 @@ def fetch_estimated_usage_rows(
         user_id=user_id, provider=provider, since=since, until=until
     )
     filters.append(Usage.price_snapshot_id.is_(None))
+    if zero_cost_only:
+        filters.append(Usage.total_cost_usd == 0)
     if model:
         name = normalize_model_name(model)
         filters.append(Usage.model.in_({name, name.rsplit("/", maxsplit=1)[-1]}))
     query = select(Usage.id).where(and_(*filters)).order_by(Usage.ts.asc())
     with get_engine(db_path).connect() as connection:
         return [row[0] for row in connection.execute(query)]
+
+
+def users_with_unpriced_rows(*, since: str, db_path: str | None = None) -> list[str]:
+    """Users with zero-cost, unbound usage at or after the supplied cutoff."""
+    query = (
+        select(Usage.user_id)
+        .where(
+            Usage.price_snapshot_id.is_(None),
+            Usage.total_cost_usd == 0,
+            Usage.ts >= _iso_to_micros(since),
+        )
+        .distinct()
+    )
+    with get_engine(db_path).connect() as connection:
+        return list(connection.scalars(query))
 
 
 def reprice_estimated_rows(
@@ -700,6 +719,7 @@ def reprice_estimated_rows(
     model_costs: dict[str, Any] | None = None,
     model_cost_sources: dict[str, str] | None = None,
     db_path: str | None = None,
+    zero_cost_only: bool = False,
 ) -> dict[str, int]:
     """Rebind and recompute the user's estimated (unbound) rows to current
     pricing, honoring the user's own price overrides.
@@ -719,6 +739,7 @@ def reprice_estimated_rows(
         model=model,
         since=since,
         until=until,
+        zero_cost_only=zero_cost_only,
         db_path=db_path,
     )
     overrides = load_model_price_overrides(user_id=user_id, db_path=db_path)
@@ -727,8 +748,11 @@ def reprice_estimated_rows(
     for start in range(0, len(ids), _REPRICE_CHUNK):
         chunk = ids[start : start + _REPRICE_CHUNK]
         with Session(engine) as session:
-            # skip_locked: a concurrent reprice can't take the same row (a
-            # no-op on SQLite, same caveat as the rollup updates). Rows gone
+            # SQLite ignores FOR UPDATE: acquire its writer lock before the
+            # SELECT so another worker cannot load and apply the same deltas.
+            if engine.dialect.name == "sqlite":
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            # Postgres skips rows locked by a concurrent reprice. Rows gone
             # or already bound since the scan are counted as skipped.
             loaded = {
                 usage.id: usage
@@ -745,6 +769,7 @@ def reprice_estimated_rows(
             results = _reprice_usage_rows(
                 session,
                 [loaded[i] for i in chunk if i in loaded],
+                snapshot_session=session if engine.dialect.name == "sqlite" else None,
                 model_costs=model_costs,
                 model_cost_sources=model_cost_sources,
                 overrides=overrides,

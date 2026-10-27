@@ -38,6 +38,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ("api",)  # the OTLP collector is mounted in the API at /otlp
 PROGRAMS = tuple(f"tokenage-{s}" for s in SERVICES)
 PORT_KEYS = ("api_port",)
+_LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 # ── Output ──────────────────────────────────────────────────────────
@@ -470,7 +471,7 @@ def _wait_for_port(host: str, port: int, retries: int = 10) -> bool:
 
 def _content_type(url: str) -> str:
     try:
-        with urllib.request.urlopen(url, timeout=3) as response:
+        with _LOCAL_OPENER.open(url, timeout=3) as response:
             return response.headers.get("content-type", "")
     except (OSError, http.client.HTTPException):
         return ""

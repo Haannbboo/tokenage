@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import http.client
+import http.server
 import os
 import subprocess
+import threading
 import urllib.error
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -250,9 +252,32 @@ def test_bootstrap_dashboard_readiness(
     ],
 )
 def test_content_type_rejects_http_and_protocol_failures(monkeypatch, error):
-    monkeypatch.setattr(ops.urllib.request, "urlopen", Mock(side_effect=error))
+    monkeypatch.setattr(ops._LOCAL_OPENER, "open", Mock(side_effect=error))
 
     assert ops._content_type("http://127.0.0.1:4001/") == ""
+
+
+def test_content_type_bypasses_http_proxy(monkeypatch):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("no_proxy", "")
+    monkeypatch.setenv("NO_PROXY", "")
+    with http.server.HTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            assert ops._content_type(f"http://127.0.0.1:{server.server_port}/") == (
+                "text/html; charset=utf-8"
+            )
+        finally:
+            server.shutdown()
+            thread.join()
 
 
 def test_socket_fallback_sees_an_occupied_port(monkeypatch):

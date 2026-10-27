@@ -1,5 +1,5 @@
 # Loaded inside the stock nginx image's http block via conf.d/tokenage.conf.
-# Set server.base_url and server.api_port in config.yaml to the public origin.
+# Set server.base_url to the full public origin, including any non-default port; api_port is the listen port.
 upstream tokenage {
     zone tokenage 64k;
     least_conn;

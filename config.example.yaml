@@ -53,11 +53,10 @@ models:
       cacheRead: 0.084
 
 server:
-  # Base URL for the URLs handed to clients (dashboard, OTLP at <url>/otlp).
-  # When set, overrides 'host' for URL generation (e.g. http://my-nas).
-  # The port still comes from api_port below.
-  # Leave commented for local-only usage (defaults to http://localhost).
-  # base_url: http://my-nas
+  # Complete public origin for URLs handed to clients (OTLP at <url>/otlp).
+  # Include a port unless a proxy serves the default port 80/443.
+  # Leave commented for local-only usage (defaults to http://localhost:<api_port>).
+  # base_url: http://my-nas:4001
   host: 127.0.0.1       # bind address: 127.0.0.1 = local only, 0.0.0.0 = all interfaces
   api_port: 4001
   # API processes (default 2), each with an ingest consumer. Integer >= 1.

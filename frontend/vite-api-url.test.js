@@ -72,3 +72,19 @@ test('resolveApiUrl falls back to default localhost api port when config is miss
     'http://localhost:4001',
   )
 })
+
+for (const [baseUrl, expected] of [
+  ['https://example.test/', 'https://example.test'],
+  ['https://example.test:8443///', 'https://example.test:8443'],
+]) {
+  test(`resolveApiUrl uses configured base_url ${baseUrl}`, () => {
+    const root = mkdtempSync(join(tmpdir(), 'tokenage-vite-api-url-'))
+    const configPath = join(root, 'config.yaml')
+    writeFileSync(configPath, `server:\n  base_url: ${baseUrl}\n  api_port: 4011\n`)
+    try {
+      assert.equal(resolveApiUrl({ env: {}, trackerConfigPath: configPath }), expected)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+}

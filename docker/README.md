@@ -27,7 +27,7 @@ Set these options in `config.yaml` for the selected services:
 # Bundled Redis:
 # queue: {url: "redis://redis:6379/0", prefix: "tokenage:"}
 # Public origin behind nginx/TLS:
-# server: {base_url: "https://tokenage.example", api_port: 443}
+# server: {base_url: "https://tokenage.example"}
 ```
 
 Replace the existing `db: {}` and `server` entries instead of adding duplicate
@@ -67,10 +67,11 @@ encrypt Redis traffic; use a trusted private network or encrypted tunnel.
 First sign-in: `docker compose exec tokenage python -m src.cli login-link`
 (the container equivalent of `tokenage server login-link`). Open the printed link,
 replacing its origin with your dashboard origin if needed. Set `server.base_url`
-and `server.api_port` to the public origin for URLs handed to clients and
-`/install.sh` (for example `https://tokenage.example` and `443`). The installer's
-origin comes from config, so forwarded headers do not replace it. Docker's
-internal gunicorn bind stays on port 4001 regardless of this external port. Client installation through
+to the complete public origin, including a port only if it is non-default, for
+URLs handed to clients and `/install.sh`. `server.api_port` is the listen port
+for native installs. The installer's origin comes from config, so forwarded
+headers do not replace it. Container gunicorn always binds `0.0.0.0:4001`,
+regardless of `server.api_port`. Client installation through
 `/install.sh` requires HTTPS or localhost; put a TLS proxy or tunnel in front.
 
 Create `nginx/tokenage.conf` from the shipped example before starting the nginx

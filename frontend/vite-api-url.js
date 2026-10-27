@@ -10,7 +10,7 @@ function buildApiUrlFromConfig(config) {
   const server = config?.server ?? {}
   const apiPort = server.api_port ?? 4001
   if (server.base_url) {
-    return `${server.base_url.replace(/\/+$/, '')}:${apiPort}`
+    return server.base_url.replace(/\/+$/, '')
   }
   const host = server.host || 'localhost'
   return `http://${host}:${apiPort}`

@@ -46,4 +46,4 @@ plugins/shared/src/*.js
 /docker/config.yaml
 /docker/nginx.conf
 /docker/nginx/*
-!/docker/nginx/.gitkeep
+!/docker/nginx/tokenage.conf.example

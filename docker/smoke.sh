@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Isolated functional checks; never reads an operator's config or database.
 set -euo pipefail
+# One metadata-only Claude OTLP usage record.
+SMOKE_RECORD='{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"1800000000000000000","attributes":[{"key":"event.name","value":{"stringValue":"claude_code.api_request"}},{"key":"model","value":{"stringValue":"docker-smoke-model"}},{"key":"input_tokens","value":{"intValue":"10"}},{"key":"output_tokens","value":{"intValue":"5"}},{"key":"status_code","value":{"intValue":"200"}}]}]}]}]}'
 cd "$(dirname "$0")/.."
 repo=$PWD
 scratch=$(mktemp -d)
@@ -63,7 +65,7 @@ ingest_and_assert() {
     tail -n 1 "$scratch/token" > "$scratch/secret"
     printf 'x-tokenage-token: %s\n' "$(cat "$scratch/secret")" > "$scratch/headers"
     curl --max-time 10 --fail --silent --output /dev/null -H @"$scratch/headers" -H 'Content-Type: application/json' \
-        --data-binary @"$repo/docker/smoke-record.json" "$endpoint/otlp/v1/logs"
+        --data-binary "$SMOKE_RECORD" "$endpoint/otlp/v1/logs"
     "${compose[@]}" exec -T tokenage python - <<'PY'
 import time
 from sqlalchemy import text
@@ -122,7 +124,7 @@ path = Path(sys.argv[1])
 path.write_text(path.read_text().replace("  api_port: 4001", "  base_url: https://smoke.example.test\n  api_port: 443"))
 PY
 mkdir "$scratch/nginx"
-cp docker/nginx.conf.example "$scratch/nginx/tokenage.conf"
+cp docker/nginx/tokenage.conf.example "$scratch/nginx/tokenage.conf"
 # Static second address models an independently hosted node. Start sequentially
 # below so the two entrypoints cannot race schema migrations.
 chmod 644 "$scratch/nginx/tokenage.conf"
@@ -190,7 +192,7 @@ printf 'x-tokenage-token: %s\n' "$(tail -n 1 "$scratch/token")" > "$scratch/head
 "${compose[@]}" stop tokenage
 for _ in $(seq 6); do
     curl --max-time 10 --fail --silent --output /dev/null -H @"$scratch/headers" -H 'Content-Type: application/json' \
-        --data-binary @"$repo/docker/smoke-record.json" "$endpoint/otlp/v1/logs"
+        --data-binary "$SMOKE_RECORD" "$endpoint/otlp/v1/logs"
 done
 "${compose[@]}" exec -T second python - <<'PYASSERT'
 import time

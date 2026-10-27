@@ -15,7 +15,7 @@ and mode 640). Config is never rewritten. Compose 2.24.4 or newer is required.
 | Bundled Postgres | `docker compose --profile postgres up -d` | uncomment bundled `db.url` |
 | Bundled Redis | add `--profile redis` | uncomment `queue.url` and `queue.prefix` |
 | Existing Redis | no extra profile | set `queue.url` to its address |
-| nginx | add `--profile nginx` | copy `nginx.conf.example` to `nginx/tokenage.conf` |
+| nginx | add `--profile nginx` | copy `nginx/tokenage.conf.example` to `nginx/tokenage.conf` |
 
 Set these options in `config.yaml` for the selected services:
 

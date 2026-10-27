@@ -52,7 +52,7 @@ jobs:
                 BUMP_SERVER=true
                 BUMP_CLIENT=true
                 ;;
-              server/*|src/*|frontend/*|config.example.yaml|Dockerfile|VERSION)
+              server/*|src/*|frontend/*|config.example.yaml|Dockerfile|.dockerignore|docker/*|VERSION)
                 BUMP_SERVER=true
                 ;;
             esac

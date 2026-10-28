@@ -762,6 +762,7 @@ def reprice_estimated_rows(
                         Usage.id.in_(chunk),
                         Usage.user_id == user_id,
                         Usage.price_snapshot_id.is_(None),
+                        *([Usage.total_cost_usd == 0] if zero_cost_only else []),
                     )
                     .with_for_update(skip_locked=True)
                 )

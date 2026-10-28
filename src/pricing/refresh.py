@@ -45,6 +45,9 @@ def refresh_live_maps(config, *, force=False, manual=False):
                 _last_manual_download_attempt if manual else _last_download_attempt
             )
             if last_attempt is not None and now - last_attempt < FORCE_INTERVAL:
+                if not _cache_state(config)[1]:
+                    refresh_pricing_maps(config, fetch_sources(config))
+                    return True
                 return False
             # Reserve before I/O so failures also back off.
             if manual:
@@ -84,7 +87,7 @@ class PricingRefresh:
 
     def tick(self):
         from src.config.app import CONFIG
-        from src.database import reprice_estimated_rows
+        from src.database import load_model_price_overrides, reprice_estimated_rows
         from src.database.usage import users_with_unpriced_rows
 
         now = time.monotonic()
@@ -98,8 +101,25 @@ class PricingRefresh:
                 for pair, first_seen in MISS_TIMES.items()
                 if now - first_seen < GIVE_UP_SECONDS
             }
-        with MAPS_LOCK:
-            unresolved = any(resolve_cost_match(pair[1]) is None for pair in pairs)
+        overrides_by_user = {}
+
+        def resolved(pair):
+            user_id, model = pair
+            if user_id not in overrides_by_user:
+                try:
+                    overrides_by_user[user_id] = load_model_price_overrides(
+                        user_id=user_id
+                    )
+                except Exception as exc:
+                    overrides_by_user[user_id] = {}
+                    log.warning("Pricing overrides load failed: %s", type(exc).__name__)
+            overrides = overrides_by_user[user_id]
+            if resolve_cost_match(model, overrides, dict.fromkeys(overrides, "user")):
+                return True
+            with MAPS_LOCK:
+                return resolve_cost_match(model) is not None
+
+        unresolved = any(not resolved(pair) for pair in pairs)
         refreshed = False
         if due:
             refreshed = refresh_live_maps(CONFIG)
@@ -145,9 +165,8 @@ class PricingRefresh:
         # Repair resolved misses each tick, including after a manual refresh.
         # Keep failed repairs for retry, but bound all entries to the window.
         for pair in pairs:
-            with MAPS_LOCK:
-                if resolve_cost_match(pair[1]) is None:
-                    continue
+            if not resolved(pair):
+                continue
             try:
                 summary = reprice_estimated_rows(
                     user_id=pair[0], model=pair[1], zero_cost_only=True

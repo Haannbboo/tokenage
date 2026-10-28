@@ -208,7 +208,7 @@ def test_manual_force_has_separate_floor_from_tick(refresh_env):
     record(e, "other")
     worker.tick()
     assert e.refresh.refresh_live_maps(e.config, force=True, manual=True)
-    assert not e.refresh.refresh_live_maps(e.config, force=True, manual=True)
+    assert e.refresh.refresh_live_maps(e.config, force=True, manual=True)
     assert sum(e.state.calls) == 2
     e.clock.mono = 900
     worker.tick()
@@ -355,7 +355,7 @@ def test_forced_fetch_and_sibling_rewrite_do_not_arm_backlog(refresh_env, monkey
     e.state.generation += 1  # Another process rewrote the cache.
     e.costs.MISS_TIMES.clear()
     worker.tick()
-    assert e.state.calls == [True, False]
+    assert e.state.calls == [True, False, False]
     assert not worker.pending_backlog
 
 
@@ -495,6 +495,64 @@ def test_already_resolved_pair_repairs_without_download(refresh_env):
     assert totals(e)[1:] == (5, 5, 5)
 
 
+def test_throttled_force_rebuilds_from_fresh_cache(refresh_env, monkeypatch):
+    e = refresh_env
+    from src.pricing.sources import litellm, registry
+    from src.pricing.sources.base import cache_path, save_cache_json
+
+    save_cache_json("litellm", {"cached-model": {"input_cost_per_token": 0.000002}})
+    os.utime(cache_path("litellm"), (e.clock.wall, e.clock.wall))
+    monkeypatch.setattr(e.refresh, "_cache_state", e.original_cache_state)
+    monkeypatch.setattr(e.refresh, "fetch_sources", registry.fetch_sources)
+    monkeypatch.setattr(litellm, "_fetch_litellm_json", lambda: pytest.fail("download"))
+    e.refresh._last_download_attempt = e.clock.mono
+
+    assert e.refresh.refresh_live_maps(e.config, force=True)
+    assert e.costs.resolve_model_cost("cached-model").input == 2
+
+
+def test_user_override_repairs_miss_without_forced_download(refresh_env, monkeypatch):
+    e = refresh_env
+    worker = e.refresh.PricingRefresh()
+    worker.tick()
+    record(e)
+    record(e, "private-model")
+    e.db.upsert_model_price(user_id="u0", model="vendor/new-model", input=2, output=3)
+    e.db.upsert_model_price(user_id="u0", model="private-model", input=2, output=3)
+    original = e.db.load_model_price_overrides
+    calls = []
+
+    def load(**kwargs):
+        calls.append(kwargs["user_id"])
+        return original(**kwargs)
+
+    monkeypatch.setattr(e.db, "load_model_price_overrides", load)
+    worker.tick()
+    assert calls == ["u0"]
+    assert not e.state.calls
+    assert not e.costs.MISS_TIMES
+    assert totals(e)[1:] == (5, 10, 10)
+
+
+def test_override_load_failure_does_not_break_tick(refresh_env, monkeypatch, caplog):
+    e = refresh_env
+    worker = e.refresh.PricingRefresh()
+    worker.tick()
+    record(e)
+    calls = []
+
+    def fail(**_):
+        calls.append(1)
+        raise RuntimeError("private detail")
+
+    monkeypatch.setattr(e.db, "load_model_price_overrides", fail)
+    worker.tick()
+    assert calls == [1]
+    assert e.state.calls == [True]
+    assert "Pricing overrides load failed: RuntimeError" in caplog.text
+    assert "private detail" not in caplog.text
+
+
 def test_concurrent_sqlite_reprice_once(refresh_env, monkeypatch):
     e = refresh_env
     from src.database import usage
@@ -541,6 +599,31 @@ def test_concurrent_sqlite_reprice_once(refresh_env, monkeypatch):
     assert len(connections) == 2
     assert totals(e)[1:] == (5, 5, 5)
     assert sum(r["repriced"] for r in results) == 1
+
+
+def test_zero_cost_reprice_rechecks_cost_after_scan(refresh_env, monkeypatch):
+    e = refresh_env
+    from src.database import usage
+    from src.database.models import Usage
+    from src.pricing.maps import refresh_pricing_maps
+
+    row = record(e)
+    refresh_pricing_maps(
+        {"models": {"new-model": {"cost": {"input": 2, "output": 3}}}}, []
+    )
+    original_scan = usage.fetch_estimated_usage_rows
+
+    def scan(**kwargs):
+        ids = original_scan(**kwargs)
+        with Session(e.db.get_engine()) as session:
+            session.get(Usage, row.id).total_cost_usd = 7
+            session.commit()
+        return ids
+
+    monkeypatch.setattr(usage, "fetch_estimated_usage_rows", scan)
+    result = e.db.reprice_estimated_rows(user_id="u0", zero_cost_only=True)
+    assert result == {"candidates": 1, "repriced": 0, "skipped": 1}
+    assert totals(e)[0:2] == (None, 7)
 
 
 def test_persistently_failed_user_does_not_block_backlog(refresh_env, monkeypatch):

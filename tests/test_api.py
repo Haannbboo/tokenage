@@ -14,7 +14,7 @@ def test_usage_daily_endpoint_exists(api_module):
 
 
 def test_reprice_estimated_usage_endpoint_passes_filters(api_module, monkeypatch):
-    async def fake_live_cost_maps():
+    async def fake_live_cost_maps(force=False):
         return {}, {}, {}
 
     captured = {}
@@ -1448,3 +1448,43 @@ def test_version_reports_clone_commit(api_module, monkeypatch):
     monkeypatch.delenv("TOKENAGE_GIT_COMMIT", raising=False)
     monkeypatch.setattr(api_module, "get_commit", lambda: "clone-head")
     assert TestClient(api_module.app).get("/version").json()["commit"] == "clone-head"
+
+
+@pytest.mark.parametrize("path", ["/pricing", "/pricing/read-model"])
+def test_pricing_get_preserves_runtime_maps(api_module, monkeypatch, path):
+    from src.pricing.maps import MODEL_COST_SOURCES, MODEL_COSTS, refresh_pricing_maps
+    from src.pricing.models import ModelCost
+    from src.pricing.sources import registry
+    from src.pricing.sources.base import FetchedSource, SourceEntry
+
+    refresh_pricing_maps(
+        {"models": {"runtime-model": {"cost": {"input": 1, "output": 2}}}}, []
+    )
+    before = dict(MODEL_COSTS), dict(MODEL_COST_SOURCES)
+    monkeypatch.setattr(
+        api_module, "CONFIG", {"models": {}, "pricing": {"auto_fetch": True}}
+    )
+    calls = []
+
+    def fetch(config, *, force=False):
+        calls.append(force)
+        return [
+            FetchedSource(
+                "litellm",
+                0,
+                (
+                    SourceEntry(
+                        "read-model", ModelCost(input=3, output=4, cache_read=0)
+                    ),
+                ),
+            )
+        ]
+
+    monkeypatch.setattr(registry, "fetch_sources", fetch)
+    monkeypatch.setattr(api_module, "_request_user_id", lambda _: "u0")
+    monkeypatch.setattr(api_module, "load_model_price_overrides", lambda **_: {})
+    response = TestClient(api_module.app).get(path)
+    assert response.status_code == 200
+    assert "read-model" in response.text
+    assert calls == [False]
+    assert (MODEL_COSTS, MODEL_COST_SOURCES) == before

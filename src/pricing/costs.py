@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -16,6 +18,9 @@ from .models import (
     build_segment_index,
     resolve_effective_cost,
 )
+
+MISS_TIMES: dict[tuple[str, str], float] = {}
+MISSES_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,7 @@ def resolve_pricing(
     model_costs: dict[str, ModelCost] | None = None,
     model_cost_sources: dict[str, str] | None = None,
     overrides: dict[str, ModelCost] | None = None,
+    user_id: str | None = None,
 ) -> ResolvedPricing:
     """Resolve a model to a time-resolved flat cost.
 
@@ -105,6 +111,12 @@ def resolve_pricing(
         with MAPS_LOCK:
             match = resolve_cost_match(model, model_costs, model_cost_sources)
     if match is None:
+        from src.config.app import CONFIG
+
+        if user_id is not None and CONFIG.get("pricing", {}).get("auto_fetch", True):
+            with MISSES_LOCK:
+                pair = (user_id, model)
+                MISS_TIMES.setdefault(pair, time.monotonic())
         return ResolvedPricing(
             match=None,
             cost=ModelCost(input=0.0, output=0.0, cache_read=0.0),

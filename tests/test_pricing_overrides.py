@@ -216,7 +216,7 @@ def test_recalculate_usage_cost_honors_override(fresh_db, users, shared_prices):
 def client(api_module, users, monkeypatch):
     import src.config.app
 
-    async def live_maps():
+    async def live_maps(force=False):
         from src.pricing.models import ResolvedCost
 
         resolved = {k: ResolvedCost(cost=c, source="server") for k, c in SHARED.items()}

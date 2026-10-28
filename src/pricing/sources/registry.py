@@ -61,10 +61,14 @@ def build_sources(config: dict[str, Any]) -> list[PriceSource]:
     return sources
 
 
-def fetch_sources(config: dict[str, Any]) -> list[FetchedSource]:
+def fetch_sources(
+    config: dict[str, Any], *, force: bool = False
+) -> list[FetchedSource]:
     """Fetch every enabled source, isolated: one failure never blocks another."""
     fetched: list[FetchedSource] = []
     for priority, source in enumerate(build_sources(config)):
+        if force:
+            source.ttl_seconds = 0
         try:
             entries = tuple(source.fetch())
         except Exception:

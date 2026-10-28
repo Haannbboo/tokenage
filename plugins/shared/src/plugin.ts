@@ -3,6 +3,8 @@ import { makePromptState, MAX_TRACKED_MESSAGES } from "./prompt.js"
 import { claim, release } from "./dedupe.js"
 import { buildOtlpPayload, buildToolEventPayload, emitOtlp } from "./otlp.js"
 
+declare const process: { env: Record<string, string | undefined> }
+
 // No default collector: an entry without an `endpoint` is not configured and
 // the plugin stays inert rather than posting to a guessed address.
 function getEndpoint(options?: Record<string, any>): string | undefined {
@@ -14,9 +16,25 @@ export function resolveOptions(options?: Record<string, any>): {
   headers: Record<string, string> | undefined
 } {
   const token = typeof options?.token === "string" ? options.token : undefined
+  const headers = new Map<string, string>()
+  // Use tokenage-specific headers to avoid forwarding credentials for other OTLP backends.
+  for (const entry of (process.env.TOKENAGE_OTLP_HEADERS ?? "").split(",")) {
+    const separator = entry.indexOf("=")
+    if (separator < 0) continue
+    const key = entry.slice(0, separator).trim().toLowerCase()
+    if (key === "content-type" || key === "x-tokenage-token") continue
+    try {
+      const value = decodeURIComponent(entry.slice(separator + 1).trim())
+      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || /[\r\n\0]/.test(value)) throw new Error()
+      headers.set(key, value)
+    } catch {
+      console.warn(`Skipping invalid OTLP header: ${JSON.stringify(key)}`)
+    }
+  }
+  if (token) headers.set("x-tokenage-token", token)
   return {
     endpoint: getEndpoint(options),
-    headers: token ? { "x-tokenage-token": token } : undefined,
+    headers: headers.size ? Object.fromEntries(headers) : undefined,
   }
 }
 

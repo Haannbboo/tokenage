@@ -52,6 +52,9 @@ jobs:
       - name: Build plugins
         run: npm run build --prefix plugins/opencode && npm run build --prefix plugins/kilo
 
+      - name: Test plugin headers
+        run: node --test plugins/shared/test/plugin.test.mjs
+
       - name: Install backend dependencies
         run: python -m pip install uv && uv pip install --system -r src/pyproject.toml --extra dev
 

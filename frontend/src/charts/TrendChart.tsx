@@ -4,9 +4,8 @@ import { fillGaps, formatCost, formatModelName, formatNumber, value, resolveTime
 import { fillPeriodGaps } from '../periodGaps'
 import { describePeriod, periodLabelText } from '../periodLabels'
 import { useApp } from '../contexts/AppContext'
-import { getModelColor, getModelTextColor } from '../model-badge'
 import { ChartTooltip, TooltipRow, TooltipDivider } from './ChartTooltip'
-import { trendBrandColor, vibrantColor } from './trendColors'
+import { trendModelColors } from './trendColors'
 import { sortTrendRows, trendTooltipX } from './trendTooltip'
 import { trendDotScale } from './trendScale'
 import { getLang, LANG_LOCALES, t } from '../i18n/index.ts'
@@ -183,17 +182,10 @@ export function TrendChart({
   const legendModels = modelTotals.slice(0, MODEL_LEGEND_MAX);
   const hasOtherModels = modelTotals.length > MODEL_LEGEND_MAX;
   const legendModelNames = new Set(legendModels.map(m => m.model));
-  const modelColors = useMemo(() => {
-    const map = new Map<string, string>();
-    const seen = new Map<string, number>();
-    for (const { model } of modelTotals.slice(0, MODEL_LEGEND_MAX)) {
-      const base = vibrantColor(trendBrandColor(model, getModelColor(model, theme)));
-      const n = seen.get(base) ?? 0;
-      seen.set(base, n + 1);
-      map.set(model, n === 0 ? base : vibrantColor(getModelTextColor(model, theme)));
-    }
-    return map;
-  }, [modelTotals, theme]);
+  const modelColors = useMemo(
+    () => trendModelColors(modelTotals.slice(0, MODEL_LEGEND_MAX).map(m => m.model), theme),
+    [modelTotals, theme],
+  );
   // Segments in legend order so a colour keeps its place from bar to bar;
   // everything past the legend is pooled into "Other" on top.
   const bucketSegments = (period: string) => {

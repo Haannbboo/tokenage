@@ -1,4 +1,5 @@
 export const zh: Record<string, string> = {
+  'No more logs': '没有更多日志',
   // Navigation
   'Dashboard': '仪表盘',
   'Request Logs': '请求日志',

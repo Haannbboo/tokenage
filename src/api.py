@@ -272,6 +272,7 @@ async def get_usage(
     request: Request,
     limit: int = Query(100, ge=0, le=USAGE_QUERY_LIMIT_MAX),
     offset: int = Query(0, ge=0),
+    before: str | None = None,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
@@ -281,6 +282,21 @@ async def get_usage(
     since: str | None = None,
     until: str | None = None,
 ):
+    cursor = None
+    if before is not None:
+        # Keep timestamps in the signed BIGINT range used by both databases.
+        match = re.fullmatch(r"(-?[0-9]+):([^:\s]+)", before)
+        if match is None:
+            raise HTTPException(status_code=400, detail="Invalid usage cursor")
+        try:
+            ts = int(match[1])
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="Invalid usage cursor"
+            ) from None
+        if not -(2**63) <= ts < 2**63:
+            raise HTTPException(status_code=400, detail="Invalid usage cursor")
+        cursor = (ts, match[2])
     user_id = _request_user_id(request)
     return await asyncio.to_thread(
         lambda: enrich_rows(
@@ -288,6 +304,7 @@ async def get_usage(
                 user_id=user_id,
                 limit=limit,
                 offset=offset,
+                before=cursor,
                 provider=provider,
                 model=model,
                 client_source=client_source,

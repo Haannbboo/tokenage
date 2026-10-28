@@ -1,4 +1,5 @@
-import { Fragment, useState, useEffect, useRef, useMemo, type CSSProperties } from 'react'
+import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type CSSProperties } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useApp } from '../contexts/AppContext'
 import { useDashboardData } from '../hooks/useDashboardData'
 import { useLogsData } from '../hooks/useLogsData'
@@ -60,10 +61,9 @@ export function LogsPage() {
 
   // Logs data hook
   const {
-    usageRows, setUsageRows, totalLogs, totalPages,
-    limit, setLimit, page, setPage, jumpPage, setJumpPage, resetPage,
+    usageRows, setUsageRows, hasMore, loadMore, loadMoreFailed, scrollReset,
     logsLoading, expandedRow, setExpandedRow,
-    colWidths, resizedColumns, handleResizeStart,
+    colWidths, isResizing, handleResizeStart,
   } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, deviceFilter: activeDevice, dateRange })
 
   // Sessions data for the session filter dropdown
@@ -85,6 +85,46 @@ export function LogsPage() {
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
   const [tableWidth, setTableWidth] = useState(0)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const rowVirtualizer = useVirtualizer({
+    count: usageRows.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => 52,
+    getItemKey: useCallback((index: number) => usageRows[index].id, [usageRows]),
+    overscan: 8,
+    paddingStart: 40,
+  })
+  const virtualRows = rowVirtualizer.getVirtualItems()
+  const anchorRef = useRef<{ id: string; offset: number } | null>(null)
+  const previousList = useRef({ head: '', scrollReset: -1 })
+  const rememberAnchor = () => {
+    const scrollTop = tableContainerRef.current?.scrollTop ?? 0
+    const item = rowVirtualizer.getVirtualItemForOffset(scrollTop)
+    anchorRef.current = item ? { id: String(item.key), offset: item.start - scrollTop } : null
+  }
+  useLayoutEffect(() => {
+    const head = usageRows[0]?.id ?? ''
+    if (previousList.current.scrollReset !== scrollReset) {
+      rowVirtualizer.scrollToOffset(0)
+    } else if (previousList.current.head !== head && anchorRef.current) {
+      const anchor = anchorRef.current
+      const index = usageRows.findIndex(row => row.id === anchor.id)
+      const offset = index < 0 ? undefined : rowVirtualizer.getOffsetForIndex(index, 'start')
+      if (offset) rowVirtualizer.scrollToOffset(offset[0] - anchor.offset)
+    }
+    previousList.current = { head, scrollReset }
+    rememberAnchor()
+  })
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    const root = tableContainerRef.current
+    if (!sentinel || !root || !hasMore || logsLoading || loadMoreFailed) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) void loadMore()
+    }, { root, rootMargin: '300px' })
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMore, logsLoading, loadMore, loadMoreFailed])
 
   // Tool calls for expanded row
   const [expandedToolCalls, setExpandedToolCalls] = useState<TimelineTool[] | null>(null)
@@ -148,6 +188,9 @@ export function LogsPage() {
 
   const effectiveVisibleColumns = useMemo(() => {
     if (tableWidth === 0) return visibleColumns
+    // Dropping a column mid-drag moves the handle away from the cursor, so
+    // keep the set stable while a column is being resized.
+    if (isResizing) return visibleColumns
 
     const hidePriority: RequestLogColumnId[] = [
       'speed', 'session', 'device', 'source', 'cost', 'status',
@@ -169,41 +212,12 @@ export function LogsPage() {
     }
 
     return visibleColumns.filter(c => !toRemove.has(c.id))
-  }, [visibleColumns, colWidths, tableWidth])
+  }, [visibleColumns, colWidths, tableWidth, isResizing])
 
-  const getHeaderStyle = (columnId: RequestLogColumnId): CSSProperties => {
-    if (resizedColumns.has(columnId)) {
-      return { width: colWidths[columnId], position: 'relative' }
-    }
-    switch (columnId) {
-      case 'time':
-        return { width: colWidths.time, position: 'relative' }
-      case 'model':
-        return { width: colWidths.model, position: 'relative' }
-      case 'provider':
-        return { width: colWidths.provider, position: 'relative' }
-      case 'source':
-        return { width: colWidths.source, position: 'relative' }
-      case 'device':
-        return { width: colWidths.device, position: 'relative' }
-      case 'session':
-        return { width: colWidths.session, position: 'relative' }
-      case 'input':
-        return { minWidth: colWidths.input, position: 'relative' }
-      case 'output':
-        return { minWidth: colWidths.output, position: 'relative' }
-      case 'cost':
-        return { minWidth: colWidths.cost, position: 'relative' }
-      case 'speed':
-        return { position: 'relative' }
-      case 'status':
-        return { width: colWidths.status, position: 'relative' }
-      case 'tool':
-        return { width: '12%', position: 'relative' }
-      default:
-        return { position: 'relative' }
-    }
-  }
+  const getHeaderStyle = (columnId: RequestLogColumnId): CSSProperties => ({
+    width: colWidths[columnId],
+    position: 'relative',
+  })
 
   const renderLoadingCell = (columnId: RequestLogColumnId) => {
     switch (columnId) {
@@ -331,7 +345,7 @@ export function LogsPage() {
                     className={`request-log-session-filter${hoveredSession === sessionId ? ' session-hover-active' : ''}`}
                     title={sessionId}
                     aria-label={`${t('Filter logs by session')}: ${sessionId}`}
-                    onClick={(e) => { e.stopPropagation(); setSessionFilter(sessionId); resetPage() }}
+                    onClick={(e) => { e.stopPropagation(); setSessionFilter(sessionId) }}
                   >
                     {shortSessionId(sessionId)}
                   </button>
@@ -634,7 +648,7 @@ export function LogsPage() {
             activeFilter={activeFilter}
             summary={summary}
             providerColors={providerColors}
-            onChange={(f) => { setActiveFilter(f); resetPage(); }}
+            onChange={(f) => { setActiveFilter(f); }}
           />
           </div>
 
@@ -643,7 +657,7 @@ export function LogsPage() {
           <select
             className="input-plain"
             value={activeSource || ''}
-            onChange={(e) => { setActiveSource(e.target.value || null); resetPage(); }}
+            onChange={(e) => { setActiveSource(e.target.value || null); }}
           >
             <option value="">{t('All Sources')}</option>
             {sources.map(source => (
@@ -657,14 +671,14 @@ export function LogsPage() {
           <SessionSelector
             sessions={sessions}
             sessionFilter={sessionFilter}
-            onChange={(id) => { setSessionFilter(id); resetPage(); }}
+            onChange={(id) => { setSessionFilter(id); }}
             sourceColors={providerColors}
           />
         </div>
 
         <div className="filter-group">
           <div className="filter-label">{t('Device')}</div>
-          <DeviceSelect value={activeDevice} onChange={(id) => { setActiveDevice(id); resetPage(); }} />
+          <DeviceSelect value={activeDevice} onChange={(id) => { setActiveDevice(id); }} />
         </div>
 
         <div className="filter-group">
@@ -672,7 +686,7 @@ export function LogsPage() {
           <select
             className="input-plain"
             value={toolFilter || ''}
-            onChange={(e) => { setToolFilter(e.target.value || null); resetPage(); }}
+            onChange={(e) => { setToolFilter(e.target.value || null); }}
           >
             <option value="">{t('All Tools')}</option>
             {availableTools.map(name => (
@@ -718,7 +732,6 @@ export function LogsPage() {
               setSessionFilter(null)
               setToolFilter(null)
               setDateRange('24h')
-              setPage(1)
             }}
            >
              {t('Reset')}
@@ -733,7 +746,7 @@ export function LogsPage() {
             <button
               className="btn-ghost"
               aria-label={t('Clear session filter')}
-              onClick={() => { setSessionFilter(null); resetPage() }}
+              onClick={() => { setSessionFilter(null) }}
               style={{ padding: '2px 6px', fontSize: '11px' }}
             >
               &times;
@@ -743,8 +756,8 @@ export function LogsPage() {
       )}
 
       <div className="panel">
-          <div ref={tableContainerRef} className="panel-body" style={{ padding: 0 }}>
-            <table className="table" data-request-log-column-count={effectiveVisibleColumns.length}>
+          <div ref={tableContainerRef} onScroll={rememberAnchor} className="panel-body" style={{ padding: 0, maxHeight: '70vh', overflow: 'auto', overflowAnchor: 'none' }}>
+            <table className="table" style={{ tableLayout: 'fixed' }} data-request-log-column-count={effectiveVisibleColumns.length}>
             <thead>
               <tr>
                 {effectiveVisibleColumns.map((column) => (
@@ -759,7 +772,7 @@ export function LogsPage() {
               </tr>
             </thead>
             <tbody>
-              {logsLoading ? (
+              {logsLoading && usageRows.length === 0 ? (
                 Array.from({ length: 5 }, (_, i) => (
                   <tr key={`skeleton-${i}`}>
                     {effectiveVisibleColumns.map((column) => (
@@ -767,8 +780,15 @@ export function LogsPage() {
                     ))}
                   </tr>
                 ))
-              ) : usageRows.map(row => (
-                <Fragment key={row.id}>
+              ) : null}
+              {virtualRows.length > 0 && (
+                <tr aria-hidden="true"><td colSpan={effectiveVisibleColumns.length} style={{ height: virtualRows[0].start - 40, padding: 0, border: 0 }} /></tr>
+              )}
+            </tbody>
+              {virtualRows.map(virtualRow => {
+                const row = usageRows[virtualRow.index]
+                return (
+                <tbody key={row.id} data-index={virtualRow.index} ref={rowVirtualizer.measureElement}>
                   <tr
                     className={`expandable-row${expandedRow === row.id ? ' expanded' : ''}`}
                     onMouseEnter={() => setHoveredSession(row.session_id ?? null)}
@@ -864,8 +884,13 @@ export function LogsPage() {
                       </td>
                     </tr>
                   )}
-                </Fragment>
-              ))}
+                </tbody>
+                )
+              })}
+            <tbody>
+              {virtualRows.length > 0 && (
+                <tr aria-hidden="true"><td colSpan={effectiveVisibleColumns.length} style={{ height: rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end, padding: 0, border: 0 }} /></tr>
+              )}
               {usageRows.length === 0 && !logsLoading && (
                 <tr>
                   <td colSpan={effectiveVisibleColumns.length} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
@@ -875,132 +900,11 @@ export function LogsPage() {
               )}
             </tbody>
           </table>
-        </div>
-
-        <div style={{
-          padding: '16px 24px',
-          borderTop: '1px solid var(--border-color)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          background: 'var(--surface-hover)'
-        }}>
-          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            {t('Showing')} <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{Math.min(totalLogs, (page - 1) * limit + 1)}-{Math.min(totalLogs, page * limit)}</span> {t('of')} <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{totalLogs}</span> {t('logs')}
-          </div>
-
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <button
-              disabled={page === 1}
-              onClick={() => setPage(p => Math.max(1, p - 1))}
-              className="pagination-btn"
-              style={{
-                cursor: page === 1 ? 'not-allowed' : 'pointer',
-                opacity: page === 1 ? 0.5 : 1
-              }}
-            >
-              &#x25c0; {t('Prev')}
-            </button>
-
-            <div style={{ display: 'flex', gap: '4px' }}>
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                let pageNum = i + 1;
-                if (totalPages > 5 && page > 3) {
-                  pageNum = page - 3 + i + 1;
-                  if (pageNum > totalPages) pageNum = totalPages - (4 - i);
-                }
-                return (
-                  <button
-                    key={pageNum}
-                    onClick={() => setPage(pageNum)}
-                    style={{
-                      width: '32px',
-                      height: '32px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      fontWeight: 700,
-                      background: page === pageNum ? 'var(--color-blue)' : 'var(--input-bg)',
-                      color: page === pageNum ? '#fff' : 'var(--text-primary)',
-                      border: '1px solid var(--border-color)',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {pageNum}
-                  </button>
-                );
-              })}
-            </div>
-
-            <button
-              disabled={page === totalPages || totalPages === 0}
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-              className="pagination-btn"
-              style={{
-                cursor: (page === totalPages || totalPages === 0) ? 'not-allowed' : 'pointer',
-                opacity: (page === totalPages || totalPages === 0) ? 0.5 : 1
-              }}
-            >
-              {t('Next')} &#x25b6;
-            </button>
-
-            <div style={{ marginLeft: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{t('Jump:')}</span>
-              <input
-                type="text"
-                value={jumpPage}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val === '' || /^\d+$/.test(val)) {
-                    setJumpPage(val);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const p = parseInt(jumpPage);
-                    if (!isNaN(p) && p >= 1 && p <= totalPages) {
-                      setPage(p);
-                      setJumpPage('');
-                    }
-                  }
-                }}
-                placeholder={String(page)}
-                style={{
-                  width: '40px',
-                  height: '28px',
-                  padding: '0 4px',
-                  borderRadius: '4px',
-                  border: '1px solid var(--border-color)',
-                  fontSize: '12px',
-                  textAlign: 'center',
-                  outline: 'none'
-                }}
-              />
-            </div>
-
-            <div style={{ marginLeft: '12px', height: '16px', width: '1px', background: 'var(--border-color)' }} />
-
-            <select
-              value={limit}
-              onChange={(e) => { setLimit(Number(e.target.value)); resetPage(); }}                      style={{
-                border: 'none',
-                background: 'transparent',
-                fontWeight: 700,
-                fontSize: '13px',
-                color: 'var(--text-primary)',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              <option value={10}>10 {t('/ page')}</option>
-              <option value={25}>25 {t('/ page')}</option>
-              <option value={50}>50 {t('/ page')}</option>
-              <option value={100}>100 {t('/ page')}</option>
-            </select>
+          <div ref={sentinelRef} data-testid="logs-sentinel" role="status" style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>
+            {logsLoading ? t('Loading...') : loadMoreFailed ? <button className="btn-ghost" onClick={() => void loadMore()}>{t('Retry')}</button> : !hasMore ? t('No more logs') : null}
           </div>
         </div>
+
       </div>
     </div>
   )

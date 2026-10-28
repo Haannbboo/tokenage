@@ -36,7 +36,7 @@ export const REQUEST_LOG_COLUMNS: RequestLogColumn[] = [
   { id: 'status', label: 'Status' },
 ]
 
-export const DEFAULT_REQUEST_LOG_COLUMNS = REQUEST_LOG_COLUMNS.map(({ id }) => id)
+export const DEFAULT_REQUEST_LOG_COLUMNS = REQUEST_LOG_COLUMNS.map(({ id }) => id).filter((id) => id !== 'device')
 
 function normalizeRequestLogColumnIds(columnIds: unknown): RequestLogColumnId[] {
   if (!Array.isArray(columnIds)) return DEFAULT_REQUEST_LOG_COLUMNS

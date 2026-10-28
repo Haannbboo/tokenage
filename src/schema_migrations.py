@@ -148,7 +148,8 @@ def migrate_database(db_path: str | None = None) -> list[str]:
         for (_, table), indexes in insp.get_multi_indexes().items()
     }
 
-    # create_all skips indexes of tables that already exist.
+    # create_all skips indexes of tables that already exist, including
+    # ix_usage_user_ts_id for Request Logs keyset pagination.
     for table in metadata.sorted_tables:
         for index in table.indexes:
             if index.name not in existing.get(table.name, ()):

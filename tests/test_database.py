@@ -1086,7 +1086,9 @@ def test_reprice_batches_match_per_row_recalculation(fresh_db, monkeypatch):
     for other in ("chunked", "one-chunk"):
         o_usage, o_daily, o_sessions = states[other]
         assert o_usage == usage
-        assert o_daily == pytest.approx(daily)
+        assert o_daily.keys() == daily.keys()
+        for key in daily:
+            assert o_daily[key] == pytest.approx(daily[key])
         # Cost maps are applied row by row in order, so they match exactly.
         assert {k: v[1:] for k, v in o_sessions.items()} == {
             k: v[1:] for k, v in sessions.items()

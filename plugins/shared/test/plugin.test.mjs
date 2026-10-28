@@ -39,6 +39,16 @@ test("invalid headers are skipped with warnings that do not include values", () 
   assert.ok(warnings.every((warning) => !warning.includes("secret")))
 })
 
+test("header values contain only characters fetch can send", () => {
+  process.env[name] = "accent=caf%C3%A9,latin=%C3%BF,tab=before%09after,unicode=secret%E2%9C%93,control=secret%01,delete=secret%7F,other=keep"
+  assert.deepEqual(resolveOptions().headers, { accent: "café", latin: "ÿ", tab: "before\tafter", other: "keep" })
+  assert.deepEqual(warnings, [
+    'Skipping invalid OTLP header: "unicode"',
+    'Skipping invalid OTLP header: "control"',
+    'Skipping invalid OTLP header: "delete"',
+  ])
+})
+
 test("environment cannot set plugin-controlled headers", () => {
   process.env[name] = "Content-Type=text/plain,X-TOKENAGE-TOKEN=env,x-route=keep"
   assert.deepEqual(resolveOptions().headers, { "x-route": "keep" })

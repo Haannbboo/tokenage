@@ -25,7 +25,7 @@ export function resolveOptions(options?: Record<string, any>): {
     if (key === "content-type" || key === "x-tokenage-token") continue
     try {
       const value = decodeURIComponent(entry.slice(separator + 1).trim())
-      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || /[\r\n\0]/.test(value)) throw new Error()
+      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || /[^\t\x20-\x7e\x80-\xff]/.test(value)) throw new Error()
       headers.set(key, value)
     } catch {
       console.warn(`Skipping invalid OTLP header: ${JSON.stringify(key)}`)

@@ -293,9 +293,10 @@ def mint_device_tokens(
     *,
     client_version: str | None = None,
     client_commit: str | None = None,
+    keep_ingest_token: str | None = None,
     db_path: str | None = None,
 ) -> tuple[str, str, Device]:
-    """Create or rotate a machine's CLI and ingestion credentials atomically."""
+    """Rotate CLI credentials, keeping a valid machine ingest token if supplied."""
     installation_hash = hash_token(installation_key)
     engine = get_engine(db_path)
     for attempt in range(2):
@@ -316,6 +317,25 @@ def mint_device_tokens(
                     # retry below is what keeps two first logins from racing.
                     .with_for_update()
                 ).scalar_one_or_none()
+                kept_ingest = None
+                if (
+                    device is not None
+                    and device.revoked_at is None
+                    and keep_ingest_token
+                ):
+                    kept_ingest = session.execute(
+                        select(AuthToken)
+                        .where(
+                            AuthToken.token_hash == hash_token(keep_ingest_token),
+                            AuthToken.kind == "ingest",
+                            AuthToken.user_id == user_id,
+                            AuthToken.device_id == device.id,
+                            AuthToken.revoked_at.is_(None),
+                        )
+                        .with_for_update()
+                    ).scalar_one_or_none()
+                    if kept_ingest is not None:
+                        ingest_token = keep_ingest_token
                 if device is None:
                     # A supplied device_id is never proof of ownership. The
                     # installation secret, scoped to the user, is the key.
@@ -347,7 +367,9 @@ def mint_device_tokens(
                     .where(
                         AuthToken.user_id == user_id,
                         AuthToken.device_id == device.id,
-                        AuthToken.kind.in_(("cli", "ingest")),
+                        AuthToken.kind.in_(
+                            ("cli",) if kept_ingest is not None else ("cli", "ingest")
+                        ),
                         AuthToken.revoked_at.is_(None),
                     )
                     .values(revoked_at=now)
@@ -366,6 +388,7 @@ def mint_device_tokens(
                             ("cli", cli_token),
                             ("ingest", ingest_token),
                         )
+                        if kind == "cli" or kept_ingest is None
                     ]
                 )
                 session.commit()

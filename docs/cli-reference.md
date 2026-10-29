@@ -41,7 +41,7 @@ as a wrapper option.
 
 | Command | Component | Effect |
 |---|---|---|
-| `tokenage login [--server URL] [--device-name NAME] [--no-browser]` | client | Register this machine and sign in; wires detected agents. Persists an installation key (survives logout) so re-login rotates the machine's tokens instead of duplicating it. Stores the server's `otlp_logs_endpoint`. |
+| `tokenage login [--server URL] [--device-name NAME] [--no-browser]` | client | Register this machine and sign in; wires detected agents. Persists an installation key (survives logout) so re-login keeps a still-valid ingest token (running agents keep reporting) and replaces the CLI token instead of duplicating the machine. Revoking the machine in the dashboard and logging in again issues a fresh ingest token. Stores the server's `otlp_logs_endpoint`. |
 | `tokenage logout [--keep-agents]` | client | Delete this machine's credentials, then un-wire the agents. |
 | `tokenage setup [--disable]` | client | Point detected agents at a collector, or take tokenage's telemetry keys back off. |
 | `tokenage status [--json]` | client | Report this client: version, sign-in (server URL), detected agents and where they point, and the local proxy URL or failure when the service runs one. `--json` is the device status report the client service sends to the server, plus `account`. Exits 1 when a detected agent points at the wrong collector. The service view is `tokenage server status`. |

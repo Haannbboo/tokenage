@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from src.config.app import CONFIG
 from src.config.server_config import resolve_server_urls
@@ -454,8 +454,21 @@ class CliExchangeRequest(BaseModel):
     code: str | None = Field(default=None, max_length=256)
     code_verifier: str | None = Field(default=None, max_length=256)
     installation_key: str | None = Field(default=None, max_length=128)
+    ingest_token: str | None = Field(default=None, max_length=256, repr=False)
     client_version: str | None = Field(default=None, max_length=64)
     client_commit: str | None = Field(default=None, max_length=40)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _validate_without_echoing_secrets(cls, data, handler):
+        try:
+            return handler(data)
+        except ValidationError:
+            # Pydantic includes rejected input in type/length errors, including
+            # secrets on malformed requests. Match the handler's static 422s.
+            raise HTTPException(
+                status_code=422, detail="invalid exchange request"
+            ) from None
 
 
 def _sanitize_device_name(raw: str | None) -> str:
@@ -664,6 +677,7 @@ def auth_cli_exchange(body: CliExchangeRequest):
         device_name,
         client_version=body.client_version,
         client_commit=body.client_commit,
+        keep_ingest_token=body.ingest_token,
     )
     urls = resolve_server_urls(CONFIG)
     return {

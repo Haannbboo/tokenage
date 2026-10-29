@@ -114,20 +114,19 @@ def test_login_replaces_tokens_and_keeps_the_installation_key(monkeypatch, capsy
     first, second = fake.exchanges
     assert first["code"] == "ABCD"
     # Both logins register the same machine and report its client build.
-    assert (
-        set(first)
-        == set(second)
-        == {
-            "code",
-            "code_verifier",
-            "installation_key",
-            "client_version",
-            "client_commit",
-        }
-    )
+    assert set(first) == {
+        "code",
+        "code_verifier",
+        "installation_key",
+        "client_version",
+        "client_commit",
+    }
+    assert set(second) == set(first) | {"ingest_token"}
+    assert second["ingest_token"] == "ingest-1"
     assert first["installation_key"] == second["installation_key"]
     credentials = json.loads(auth.credentials_path().read_text(encoding="utf-8"))
     assert credentials["cli_token"] == "cli-2"
+    assert credentials["ingest_token"] == "ingest-2"
     assert stat.S_IMODE(auth.credentials_path().stat().st_mode) == 0o600
     output = capsys.readouterr()
     assert "cli-" not in output.out + output.err

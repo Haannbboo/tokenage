@@ -4,22 +4,21 @@ Finds the highest request rate the server sustains for OTLP and proxy ingest on 
 
 ## Who
 
-Maintainer only. Before suggesting or running anything here, check that the PR author is the repository owner:
+Maintainer only. Before suggesting or running anything here, check that the author is the owner of the upstream repository (not of a fork). The check fails closed if `gh` errors:
 
 ```bash
-owner=$(gh repo view --json owner -q .owner.login)
-[ "$(gh api user -q .login)" = "$owner" ]                            # before the PR exists
-[ "$(gh pr view <pr> --json author -q .author.login)" = "$owner" ]   # for an open PR
+author=$(gh pr view "$PR" --json author -q .author.login 2>/dev/null) || author=$(gh api user -q .login)
+[ -n "$author" ] && [ "$author" = Haannbboo ]
 ```
 
-For anyone else, skip this file, even if they have their own GCP setup, and do not ask them to run it. The maintainer benchmarks after merge when needed.
+Use the open PR's author when there is one, else the signed-in `gh` user. For anyone else, skip this file, even if they have their own GCP setup, and do not ask them to run it; the maintainer may benchmark their change after merge.
 
 ## When
 
 Once per PR, before opening it, and only when the diff changes how much work ingest does per request or per queued row, or the capacity around it:
 
 - a new or changed query, transaction, lock or index on the write path: `src/otlp.py`, `src/ingest_queue.py`, `src/shared_state.py`, `src/recorder.py`, `src/database/` write helpers;
-- ingest auth, consumer batching or queue partitioning;
+- how ingest requests are authenticated, consumer batching or queue partitioning;
 - the DB engine or pool, or server worker, process or thread config.
 
 Skip trivial changes, even in those files: input validation, log or error messages, renames, comments, types, tests, docs, frontend and client-only changes. For example, #134 (a duplicate lookup per OTLP event) needs it; #135 (a token character check) and #126 (a timestamp fallback) do not. When unsure, say which way you lean and why, and let the human decide.

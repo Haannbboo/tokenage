@@ -7,8 +7,8 @@ const CARD_BG: Record<Theme, string> = { light: '#ffffff', dark: '#1e293b' }
 /** The lightness a series colour aims for, per theme. */
 const TARGET_LIGHTNESS: Record<Theme, number> = { light: 0.50, dark: 0.60 }
 
-/** The saturation a brand with a hue of its own gets. */
-const VIVID_SATURATION = 0.95
+/** How much a brand's badge saturation is boosted, so a muted badge stays muted next to a vivid one. */
+const SATURATION_BOOST = 1.3
 
 /** The saturation a grey brand keeps of its badge hue. */
 const GREY_SATURATION = 0.15
@@ -77,9 +77,9 @@ function baseColor(model: string, theme: Theme): Hsl {
   if (chroma < NO_CHROMA) return { h: 0, s: 0, l }
   // A badge with little chroma reads as grey: keep its hue, not its colour.
   if (chroma < GREY_CHROMA) return { h, s: Math.min(s, GREY_SATURATION), l }
-  // A brand with a hue of its own keeps the hue and gets a vivid saturation,
+  // A brand with a hue of its own keeps the hue and a boosted badge saturation,
   // so a pale yellow turns gold rather than olive.
-  return { h, s: VIVID_SATURATION, l }
+  return { h, s: Math.min(1, s * SATURATION_BOOST), l }
 }
 
 /** Moves the lightness away from the card until the colour can be read on it. */

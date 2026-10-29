@@ -365,7 +365,7 @@ const ICON_STYLE = { width: 14, height: 14, display: 'block', objectFit: 'contai
 export function modelFamily(model: string): { id: string; label: string } {
   const m = model.toLowerCase()
   if (m.startsWith('tencent/') || m.startsWith('hy3')) return { id: 'hunyuan', label: 'Hunyuan' }
-  if (m.includes('gpt') || m.includes('codex')) return { id: 'openai', label: 'GPT/OpenAI' }
+  if (m.includes('gpt') || m.includes('codex')) return { id: 'openai', label: 'GPT' }
   if (m.includes('claude')) return { id: 'claude', label: 'Claude' }
   if (m.includes('gemini') || m.includes('google') || m.includes('gemma')) return { id: 'gemini', label: 'Gemini' }
   if (m.includes('minimax') || m.includes('mimimax')) return { id: 'minimax', label: 'MiniMax' }

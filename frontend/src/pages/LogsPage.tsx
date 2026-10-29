@@ -398,11 +398,6 @@ export function LogsPage() {
               <div style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>
                 {formatNumber(row.prompt_tokens)}
                 <span style={{ fontSize: '10px', fontWeight: 400, marginLeft: '4px', color: 'var(--text-secondary)' }}>{t('tokens')}</span>
-                {value(row.prompt_length) > 0 && (
-                  <span style={{ fontSize: '10px', fontWeight: 400, marginLeft: '6px', color: 'var(--text-muted)' }}>
-                    {t('(Prompt:')} {formatNumber(row.prompt_length)}{t(' chars)')}
-                  </span>
-                )}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
                 {value(row.cached_tokens) > 0 && (

@@ -22,7 +22,7 @@ export const DEFAULT_COL_WIDTHS: Record<RequestLogColumnId, number> = {
   source: 88,
   device: 95,
   session: 100,
-  input: 245,
+  input: 300,
   output: 190,
   cost: 75,
   tool: 145,

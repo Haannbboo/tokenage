@@ -141,8 +141,6 @@ export const zh: Record<string, string> = {
 
   // Table body
   'tokens': 'tokens',
-  '(Prompt:': '（提示词：',
-  ' chars)': ' 字符）',
   'Cache read': '缓存读取',
   'Cache write': '缓存写入',
   'Reasoning': '推理',

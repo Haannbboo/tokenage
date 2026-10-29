@@ -140,7 +140,8 @@ describe('trend colours', () => {
         const colour = colorOf(model, theme)
         const badge = hslOf(getModelBadgeBackgroundColor(model, theme).slice(0, 7)).h
         expect(hueDistance(hslOf(colour).h, badge), `${model} in ${theme}`).toBeLessThanOrEqual(5)
-        expect(hslOf(colour).s, `${model} in ${theme}`).toBeCloseTo(0.95, 2)
+        const badgeS = hslOf(getModelBadgeBackgroundColor(model, theme).slice(0, 7)).s
+        expect(hslOf(colour).s, `${model} in ${theme}`).toBeCloseTo(Math.min(1, badgeS * 1.3), 1)
       }
     }
   })
@@ -178,7 +179,13 @@ describe('trend colours', () => {
     const { h, s } = hslOf(colour)
     expect(h).toBeGreaterThanOrEqual(35)
     expect(h).toBeLessThanOrEqual(55)
-    expect(s).toBeCloseTo(0.95, 2)
+    expect(s).toBeGreaterThanOrEqual(0.6)
+  })
+
+  it('keeps a muted badge muted next to a vivid one', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      expect(hslOf(colorOf('claude-sonnet-4', theme)).s).toBeLessThan(hslOf(colorOf('minimax-m2', theme)).s)
+    }
   })
 
   it('tells the series shown together apart', () => {

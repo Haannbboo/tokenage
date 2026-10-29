@@ -454,7 +454,9 @@ class CliExchangeRequest(BaseModel):
     code: str | None = Field(default=None, max_length=256)
     code_verifier: str | None = Field(default=None, max_length=256)
     installation_key: str | None = Field(default=None, max_length=128)
-    ingest_token: str | None = Field(default=None, max_length=256, repr=False)
+    ingest_token: str | None = Field(
+        default=None, max_length=256, pattern=r"^[\x20-\x7E]*$", repr=False
+    )
     client_version: str | None = Field(default=None, max_length=64)
     client_commit: str | None = Field(default=None, max_length=40)
 

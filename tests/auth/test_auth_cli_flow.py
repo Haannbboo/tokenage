@@ -6,6 +6,7 @@ test_auth_web.py; the one-time code + PKCE exchange run for real.
 
 import base64
 import hashlib
+import json
 import re
 import secrets
 from urllib.parse import parse_qs, urlparse
@@ -522,6 +523,44 @@ def test_exchange_validation_never_echoes_ingest_token(
     response = client.post("/auth/cli/exchange", json=body)
     assert response.status_code == expected_status
     assert "secret-ingest" not in response.text
+
+
+@pytest.mark.parametrize(
+    "ingest_token", ["\ud800", "\u00e9", "token\n", "\x00", "\x7f"]
+)
+def test_invalid_ingest_token_422_preserves_cli_code(
+    api_module, monkeypatch, fresh_db, ingest_token
+):
+    _enable_auth(monkeypatch)
+    client = TestClient(api_module.app)
+    _web_login(api_module, monkeypatch, client)
+    first = _approve_and_exchange(client, "laptop", installation_key="a" * 64)
+    assert first.status_code == 200
+    verifier, challenge = _pkce_pair()
+    approved = client.post(
+        "/auth/cli/start",
+        data={"code_challenge": challenge, "device_name": "laptop"},
+    )
+    code = _code_from_page(approved.text)
+    body = {
+        "code": code,
+        "code_verifier": verifier,
+        "installation_key": "a" * 64,
+        "ingest_token": ingest_token,
+    }
+    # Escape the surrogate in JSON so the request reaches server validation.
+    rejected = client.post(
+        "/auth/cli/exchange",
+        content=json.dumps(body),
+        headers={"content-type": "application/json"},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json() == {"detail": "invalid exchange request"}
+
+    body["ingest_token"] = first.json()["ingest_token"]
+    retried = client.post("/auth/cli/exchange", json=body)
+    assert retried.status_code == 200
+    assert retried.json()["ingest_token"] == first.json()["ingest_token"]
 
 
 def test_installed_machine_relogin_rotates_both_tokens_and_revoke_stops_ingest(

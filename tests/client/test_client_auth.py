@@ -282,6 +282,81 @@ def test_login_registers_this_installation_across_logins_and_logout(
     assert not paths.credentials_path().exists()
 
 
+@pytest.mark.parametrize(
+    ("stored_server", "stored_token", "send_token"),
+    [
+        ("https://srv.example", "previous-ingest-token", True),
+        ("https://other.example", "previous-ingest-token", False),
+        ("https://srv.example", None, False),
+        ("https://srv.example", "", False),
+    ],
+)
+def test_relogin_only_sends_ingest_token_to_its_server(
+    monkeypatch, capsys, stored_server, stored_token, send_token
+):
+    wired = []
+    monkeypatch.setattr(
+        setup, "wire_agents", lambda **kwargs: wired.append(kwargs) or []
+    )
+    auth.save_credentials({"server_url": stored_server, "ingest_token": stored_token})
+    code, fake, _ = _run_login(monkeypatch, inputs=["code"])
+    assert code == 0
+    body = [call[2] for call in fake.calls if call[0] == "POST"][0]
+    assert ("ingest_token" in body) == send_token
+    if send_token:
+        assert body["ingest_token"] == stored_token
+    # Old servers can ignore the hint and return a rotated token as before.
+    assert auth.load_credentials()["ingest_token"] == EXCHANGE_PAYLOAD["ingest_token"]
+    assert wired[0]["token"] == EXCHANGE_PAYLOAD["ingest_token"]
+    output = capsys.readouterr()
+    assert "previous-ingest-token" not in output.out + output.err
+
+
+@pytest.mark.parametrize(
+    "stored_token",
+    ["t" * 300, "t\u00e9", "t\n", "t\x7f"],
+    ids=["overlong", "non-ascii", "newline", "delete"],
+)
+def test_relogin_drops_an_ingest_token_the_server_would_reject(
+    monkeypatch, capsys, stored_token
+):
+    """An invalid stored token must not make every login fail with a 422."""
+    auth.save_credentials(
+        {"server_url": "https://srv.example", "ingest_token": stored_token}
+    )
+    code, fake, _ = _run_login(monkeypatch, inputs=["code"])
+    assert code == 0
+    body = [call[2] for call in fake.calls if call[0] == "POST"][0]
+    assert "ingest_token" not in body
+    assert auth.load_credentials()["ingest_token"] == EXCHANGE_PAYLOAD["ingest_token"]
+    output = capsys.readouterr()
+    assert stored_token not in output.out + output.err
+
+
+def test_relogin_with_kept_ingest_token_leaves_agent_settings_unchanged(monkeypatch):
+    code, _, _ = _run_login(monkeypatch, inputs=["first-code"], agents=["claude"])
+    assert code == 0
+    settings = Path.home() / ".claude" / "settings.json"
+    original = settings.read_text()
+
+    code, fake, _ = _run_login(monkeypatch, inputs=["second-code"], agents=["claude"])
+    assert code == 0
+    body = [call[2] for call in fake.calls if call[0] == "POST"][0]
+    assert body["ingest_token"] == EXCHANGE_PAYLOAD["ingest_token"]
+    assert settings.read_text() == original
+
+
+def test_explicit_login_can_replace_corrupt_previous_credentials(monkeypatch):
+    path = paths.credentials_path()
+    path.parent.mkdir(parents=True)
+    path.write_text("{invalid-json")
+    code, fake, _ = _run_login(monkeypatch, inputs=["code"])
+    assert code == 0
+    body = [call[2] for call in fake.calls if call[0] == "POST"][0]
+    assert "ingest_token" not in body
+    assert auth.load_credentials()["ingest_token"] == EXCHANGE_PAYLOAD["ingest_token"]
+
+
 def test_login_regenerates_a_corrupt_installation_key(monkeypatch):
     key_path = paths.installation_key_path()
     key_path.parent.mkdir(parents=True, exist_ok=True)

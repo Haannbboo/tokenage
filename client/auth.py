@@ -86,7 +86,7 @@ def _write_private_text(path: Path, text: str) -> None:
 
 
 def installation_key() -> str:
-    """This machine's stable secret. Re-login rotates tokens; the key stays.
+    """This machine's stable secret, preserved across re-logins.
 
     A missing, malformed, or non-UTF-8 file is regenerated, so a broken file can
     never wedge login — it only costs the machine its device history. Any other
@@ -273,6 +273,19 @@ def login(
         "code_verifier": verifier,
         "installation_key": key,
     }
+    try:
+        previous = load_credentials() or {}
+    except ValueError:
+        # A fresh login can replace corrupt credentials; there is no token to keep.
+        previous = {}
+    if previous.get("server_url") == server:
+        ingest_token = previous.get("ingest_token")
+        # Match src/auth/routes.py CliExchangeRequest.ingest_token validation
+        # so a corrupt saved token cannot make every login fail with a 422.
+        if isinstance(ingest_token, str) and re.fullmatch(
+            r"[\x20-\x7E]{1,256}", ingest_token
+        ):
+            body["ingest_token"] = ingest_token
     # The server validates both fields strictly; a malformed one would fail the
     # exchange permanently, so an unrecognized value is simply not sent.
     version = client_version()

@@ -6,10 +6,12 @@ test_auth_web.py; the one-time code + PKCE exchange run for real.
 
 import base64
 import hashlib
+import json
 import re
 import secrets
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
@@ -376,6 +378,189 @@ def test_malformed_client_fields_422_and_leave_the_code_unusable(
 
 
 # -------------------------------------------------------- revoke-and-remint
+
+
+def test_relogin_keeps_running_agents_ingest_token(api_module, monkeypatch, fresh_db):
+    from src.auth.tokens import resolve_token
+
+    _enable_auth(monkeypatch)
+    client = TestClient(api_module.app)
+    _web_login(api_module, monkeypatch, client)
+    first = _approve_and_exchange(client, "laptop", installation_key="a" * 64)
+    assert first.status_code == 200
+    first_tokens = first.json()
+    # A running agent retains the header it read at startup.
+    agent = TestClient(
+        api_module.app,
+        headers={"x-tokenage-token": first_tokens["ingest_token"]},
+    )
+    assert agent.post("/otlp/v1/logs", json={}).status_code == 200
+
+    second = _approve_and_exchange(
+        client,
+        "renamed-laptop",
+        installation_key="a" * 64,
+        ingest_token=first_tokens["ingest_token"],
+    )
+    assert second.status_code == 200
+    second_tokens = second.json()
+    assert second_tokens["device_id"] == first_tokens["device_id"]
+    assert second_tokens["ingest_token"] == first_tokens["ingest_token"]
+    assert second_tokens["cli_token"] != first_tokens["cli_token"]
+    assert resolve_token(first_tokens["cli_token"]) is None
+    assert resolve_token(second_tokens["cli_token"]) is not None
+    assert agent.post("/otlp/v1/logs", json={}).status_code == 200
+    # Keeping a token creates no duplicate ingest row and still allows revocation.
+    assert sum(kind == "ingest" for kind, *_ in _token_rows(fresh_db)) == 1
+    assert (
+        client.post(f"/auth/devices/{first_tokens['device_id']}/revoke").status_code
+        == 204
+    )
+    assert agent.post("/otlp/v1/logs", json={}).status_code == 401
+
+
+@pytest.mark.parametrize("revoked", ["token", "device"])
+def test_relogin_does_not_keep_revoked_ingest_credentials(
+    api_module, monkeypatch, fresh_db, revoked
+):
+    from src.auth.tokens import hash_token, resolve_token
+
+    _enable_auth(monkeypatch)
+    client = TestClient(api_module.app)
+    _web_login(api_module, monkeypatch, client)
+    first = _approve_and_exchange(client, "laptop", installation_key="a" * 64).json()
+    engine = fresh_db.database_module.get_engine(fresh_db.db_path)
+    with engine.begin() as conn:
+        if revoked == "token":
+            conn.execute(
+                text("UPDATE auth_tokens SET revoked_at = 1 WHERE token_hash = :hash"),
+                {"hash": hash_token(first["ingest_token"])},
+            )
+        else:
+            # Leave the token active to prove the device check happens before
+            # login clears its revocation, independently of token revocation.
+            conn.execute(
+                text("UPDATE devices SET revoked_at = 1 WHERE id = :id"),
+                {"id": first["device_id"]},
+            )
+    second = _approve_and_exchange(
+        client,
+        "laptop",
+        installation_key="a" * 64,
+        ingest_token=first["ingest_token"],
+    )
+    assert second.status_code == 200
+    assert second.json()["device_id"] == first["device_id"]
+    assert second.json()["ingest_token"] != first["ingest_token"]
+    assert resolve_token(first["ingest_token"]) is None
+    assert resolve_token(first["cli_token"]) is None
+    assert resolve_token(second.json()["cli_token"]) is not None
+    assert resolve_token(second.json()["ingest_token"]) is not None
+
+
+@pytest.mark.parametrize(
+    "candidate", ["other_device", "other_user", "other_cli", "cli", "unknown"]
+)
+def test_relogin_rejects_foreign_or_wrong_kind_ingest_token(
+    api_module, monkeypatch, fresh_db, candidate
+):
+    from src.auth.tokens import mint_token, resolve_token
+
+    _enable_auth(monkeypatch)
+    client = TestClient(api_module.app)
+    _web_login(api_module, monkeypatch, client)
+    first = _approve_and_exchange(client, "laptop", installation_key="a" * 64).json()
+    if candidate in ("other_device", "other_cli"):
+        other = _approve_and_exchange(client, "other", installation_key="b" * 64).json()
+        supplied = other["cli_token" if candidate == "other_cli" else "ingest_token"]
+    elif candidate == "other_user":
+        supplied, _ = mint_token("b@example.com", kind="ingest")
+    elif candidate == "cli":
+        supplied = first["cli_token"]
+    else:
+        supplied = "unknown-token"
+
+    second = _approve_and_exchange(
+        client, "laptop", installation_key="a" * 64, ingest_token=supplied
+    )
+    assert second.status_code == 200
+    assert second.json()["ingest_token"] not in (supplied, first["ingest_token"])
+    assert resolve_token(first["cli_token"]) is None
+    assert resolve_token(first["ingest_token"]) is None
+    assert resolve_token(second.json()["cli_token"]) is not None
+    assert resolve_token(second.json()["ingest_token"]) is not None
+    if candidate in ("other_device", "other_user", "other_cli"):
+        assert resolve_token(supplied) is not None
+        if candidate in ("other_device", "other_cli"):
+            assert resolve_token(other["cli_token"]) is not None
+            assert resolve_token(other["ingest_token"]) is not None
+
+
+@pytest.mark.parametrize(
+    ("invalid_fields", "expected_status"),
+    [
+        ({"ingest_token": "secret-ingest-" * 100}, 422),
+        ({"ingest_token": {"token": "secret-ingest"}}, 422),
+        ({"ingest_token": ["secret-ingest"]}, 422),
+        ({"client_version": "invalid"}, 422),
+        ({"installation_key": None}, 422),
+        ({"code": "x" * 257}, 422),
+        ({"code_verifier": None}, 400),
+    ],
+)
+def test_exchange_validation_never_echoes_ingest_token(
+    api_module, monkeypatch, fresh_db, invalid_fields, expected_status
+):
+    _enable_auth(monkeypatch)
+    client = TestClient(api_module.app)
+    body = {
+        "code": "code",
+        "code_verifier": "verifier",
+        "installation_key": "a" * 64,
+        "ingest_token": "secret-ingest",
+        **invalid_fields,
+    }
+    response = client.post("/auth/cli/exchange", json=body)
+    assert response.status_code == expected_status
+    assert "secret-ingest" not in response.text
+
+
+@pytest.mark.parametrize(
+    "ingest_token", ["\ud800", "\u00e9", "token\n", "\x00", "\x7f"]
+)
+def test_invalid_ingest_token_422_preserves_cli_code(
+    api_module, monkeypatch, fresh_db, ingest_token
+):
+    _enable_auth(monkeypatch)
+    client = TestClient(api_module.app)
+    _web_login(api_module, monkeypatch, client)
+    first = _approve_and_exchange(client, "laptop", installation_key="a" * 64)
+    assert first.status_code == 200
+    verifier, challenge = _pkce_pair()
+    approved = client.post(
+        "/auth/cli/start",
+        data={"code_challenge": challenge, "device_name": "laptop"},
+    )
+    code = _code_from_page(approved.text)
+    body = {
+        "code": code,
+        "code_verifier": verifier,
+        "installation_key": "a" * 64,
+        "ingest_token": ingest_token,
+    }
+    # Escape the surrogate in JSON so the request reaches server validation.
+    rejected = client.post(
+        "/auth/cli/exchange",
+        content=json.dumps(body),
+        headers={"content-type": "application/json"},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json() == {"detail": "invalid exchange request"}
+
+    body["ingest_token"] = first.json()["ingest_token"]
+    retried = client.post("/auth/cli/exchange", json=body)
+    assert retried.status_code == 200
+    assert retried.json()["ingest_token"] == first.json()["ingest_token"]
 
 
 def test_installed_machine_relogin_rotates_both_tokens_and_revoke_stops_ingest(

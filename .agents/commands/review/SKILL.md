@@ -42,6 +42,11 @@ Assess change size:
 
 Read `references/reviewer-lenses.md` for lens definitions.
 
+Always add one **security** reviewer, whatever the size: same tool and path as the
+lens reviewers, prompt `security.md` in this directory plus the scope and intent, report
+`$REVIEW_DIR/security.md`. Its High and Medium findings are must-fix unless the lead
+judgment shows they are false positives.
+
 ## Step 3 — Detect Tool and Spawn Reviewers
 
 Both paths below write reports to one directory inside the worktree. Create it first;
@@ -113,7 +118,7 @@ review_pids+=("$!")
 
 Use the same timeout and PID handling for each reviewer.
 
-Name each output file after the lens: `skeptic.md`, `architect.md`, `minimalist.md`.
+Name each output file after the lens: `skeptic.md`, `architect.md`, `minimalist.md`, `security.md`.
 
 Wait for every retained PID before reading any output:
 

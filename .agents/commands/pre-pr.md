@@ -16,6 +16,7 @@ Run this before pushing/opening a PR.
 - [ ] No API keys, tokens, cookies, auth headers, connection strings, or secrets.
 - [ ] No raw private prompts/responses/request bodies logged by default.
 - [ ] Error paths do not dump sensitive payloads.
+- [ ] Security review (`.agents/commands/review/security.md`) ran on the final diff with no open High/Medium findings. Run it again before merge if the branch changed since.
 - [ ] Local files such as `AGENTS.local.md`, `CLAUDE.local.md`, `.claude/*.local.md`, `.agents/private/` are not committed.
 
 ## tokenage risks

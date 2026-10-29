@@ -91,6 +91,7 @@ def record_usage(
         total_tokens=total_tokens,
         cache_creation_tokens=cache_creation_tokens,
         reasoning_tokens=reasoning_tokens,
+        latency_ms=latency_ms,
         status=status,
         ts=usage_ts,
         session_id=session_id,

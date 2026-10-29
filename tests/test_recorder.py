@@ -884,14 +884,15 @@ def test_record_usage_keeps_proxy_row_for_unrecognized_client_source(test_db):
     "source", ["claude-code", "codex", "opencode", "kilo", "gemini", "future-agent"]
 )
 @pytest.mark.parametrize("offset", [0, 1_000_000, 2_000_000, -2_000_000])
-def test_record_usage_drops_repeated_otlp(test_db, source, offset):
+@pytest.mark.parametrize("latency_ms", [999, None])
+def test_record_usage_drops_repeated_otlp(test_db, source, offset, latency_ms):
     from sqlalchemy import select
     from sqlalchemy.orm import Session
 
     from src.database import get_engine
     from src.database.models import SessionRecord, ToolCall, UsageHourly
 
-    first = _record_otlp_usage(test_db, client_source=source)
+    first = _record_otlp_usage(test_db, client_source=source, latency_ms=latency_ms)
     second = _record_otlp_usage(
         test_db,
         client_source=source,
@@ -899,7 +900,7 @@ def test_record_usage_drops_repeated_otlp(test_db, source, offset):
         provider="different-provider",
         cache_creation_tokens=0,
         reasoning_tokens=0,
-        latency_ms=999,
+        latency_ms=latency_ms,
         tool_calls=[("must-not-attach", "bash")],
     )
     assert first is not None
@@ -945,6 +946,23 @@ def test_record_usage_keeps_distinct_otlp(test_db, overrides):
     assert first is not None
     assert second is not None
     assert first.id != second.id
+
+
+@pytest.mark.parametrize(
+    "first_latency,second_latency",
+    [(760, 751), (532, 549), (711, 769), (None, 751), (760, None)],
+)
+def test_record_usage_keeps_parallel_otlp_with_different_latency(
+    test_db, first_latency, second_latency
+):
+    first = _record_otlp_usage(test_db, latency_ms=first_latency)
+    second = _record_otlp_usage(
+        test_db, ts=1779148800000000 + 42_000, latency_ms=second_latency
+    )
+    assert first is not None
+    assert second is not None
+    assert first.id != second.id
+    assert len(fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")) == 2
 
 
 def test_record_usage_keeps_otlp_without_session(test_db):

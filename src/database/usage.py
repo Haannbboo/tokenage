@@ -74,8 +74,9 @@ def _iso_to_millis(value: str) -> int:
 # uniqueness constraint on a real shared key, which doesn't exist yet.
 DEDUP_WINDOW_MICROS = 15_000_000
 
-# ponytail: cap same-path OTLP matching at 2 seconds; agents can issue distinct
-# requests with identical token counts in one session beyond this ceiling.
+# ponytail: cap same-path OTLP matching at 2 seconds and require equal latency;
+# parallel requests can have identical token counts but different latencies,
+# while duplicate copies read the same message and share its latency.
 OTLP_DEDUP_WINDOW_MICROS = 2_000_000
 
 # `provider` is not a reliable match field: OTLP's opencode/kilo parser
@@ -115,6 +116,7 @@ def merge_duplicate_usage(
     total_tokens: int | None,
     cache_creation_tokens: int | None,
     reasoning_tokens: int | None,
+    latency_ms: int | None,
     status: int | None,
     ts: int,
     session_id: str | None,
@@ -163,6 +165,7 @@ def merge_duplicate_usage(
                 *shape_filters,
                 func.coalesce(Usage.reasoning_tokens, 0)
                 == func.coalesce(reasoning_tokens, 0),
+                Usage.latency_ms.is_not_distinct_from(latency_ms),
                 Usage.status == status,
                 Usage.endpoint == "otlp",
                 Usage.client_source == client_source,

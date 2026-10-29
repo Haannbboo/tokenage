@@ -1,54 +1,175 @@
-import { getModelColor } from '../model-badge'
+import { getModelBadgeBackgroundColor } from '../model-badge'
 import type { Theme } from '../theme'
 
-export function trendBrandColor(model: string, fallback: string): string {
-  const m = model.toLowerCase()
-  if (m.includes('opus')) return '#9a5b3c'
-  if (m.includes('sonnet')) return '#c98a63'
-  if (m.includes('minimax')) return '#ef4444'
-  return fallback
+/** The card the chart is drawn on, per theme. */
+const CARD_BG: Record<Theme, string> = { light: '#ffffff', dark: '#1e293b' }
+
+/** The lightness a series colour aims for, per theme. */
+const TARGET_LIGHTNESS: Record<Theme, number> = { light: 0.50, dark: 0.60 }
+
+/** The saturation a brand with a hue of its own gets. */
+const VIVID_SATURATION = 0.95
+
+/** The saturation a grey brand keeps of its badge hue. */
+const GREY_SATURATION = 0.15
+
+/** Below this chroma a badge has no hue of its own: it is plain grey. */
+const NO_CHROMA = 0.05
+
+/** Below this chroma a badge reads as grey rather than as a brand colour. */
+const GREY_CHROMA = 0.16
+
+/** The lowest contrast a series may have against its card. */
+const MIN_CONTRAST = 2
+
+/** How close two colours may get before the later one steps aside. */
+const MIN_DELTA_E = 20
+
+/** How far one step moves the lightness. */
+const LIGHTNESS_STEP = 0.04
+
+/** How many steps to try before settling for the closest fit. */
+const MAX_STEPS = 14
+
+type Hsl = { h: number; s: number; l: number }
+
+function rgbOf(hex: string): number[] {
+  const n = parseInt(hex.slice(1), 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }
 
-export function vibrantColor(hex: string, boost = 1.4, lift = 1.06): string {
-  const n = parseInt(hex.slice(1), 16)
-  const r = (n >> 16) & 255
-  const g = (n >> 8) & 255
-  const b = n & 255
-  const gray = 0.299 * r + 0.587 * g + 0.114 * b
-  const mix = (c: number) => Math.round(Math.max(0, Math.min(255, (gray + (c - gray) * boost) * lift)))
-  return `#${((mix(r) << 16) | (mix(g) << 8) | mix(b)).toString(16).padStart(6, '0')}`
+/** A colour as hue, saturation and lightness. */
+function toHsl(hex: string): Hsl {
+  const [r, g, b] = rgbOf(hex).map(c => c / 255)
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  const l = (max + min) / 2
+  if (!d) return { h: 0, s: 0, l }
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  const raw = max === r ? 60 * (((g - b) / d) % 6) : max === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4)
+  return { h: (raw + 360) % 360, s, l }
+}
+
+/** A hue, saturation and lightness back as a colour. */
+function toHex({ h, s, l }: Hsl): string {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
+  const part = (v: number) => Math.max(0, Math.min(255, Math.round((v + m) * 255)))
+  return `#${((part(r) << 16) | (part(g) << 8) | part(b)).toString(16).padStart(6, '0')}`
+}
+
+/** How much colour a badge has, from 0 (plain grey) to 1 (pure hue). */
+function chromaOf(hex: string): number {
+  const [r, g, b] = rgbOf(hex)
+  return (Math.max(r, g, b) - Math.min(r, g, b)) / 255
+}
+
+/** The colour of a model: its badge background (alpha dropped), pulled into one shape. */
+function baseColor(model: string, theme: Theme): Hsl {
+  const badge = getModelBadgeBackgroundColor(model, theme).slice(0, 7)
+  const { h, s } = toHsl(badge)
+  const chroma = chromaOf(badge)
+  const l = TARGET_LIGHTNESS[theme]
+  // A badge without any chroma has no hue to keep: it is plain grey.
+  if (chroma < NO_CHROMA) return { h: 0, s: 0, l }
+  // A badge with little chroma reads as grey: keep its hue, not its colour.
+  if (chroma < GREY_CHROMA) return { h, s: Math.min(s, GREY_SATURATION), l }
+  // A brand with a hue of its own keeps the hue and gets a vivid saturation,
+  // so a pale yellow turns gold rather than olive.
+  return { h, s: VIVID_SATURATION, l }
+}
+
+/** Moves the lightness away from the card until the colour can be read on it. */
+function readable(base: Hsl, theme: Theme): Hsl {
+  const card = CARD_BG[theme]
+  const away = theme === 'light' ? -LIGHTNESS_STEP : LIGHTNESS_STEP
+  let l = base.l
+  while (l > 0.02 && l < 0.98 && contrastRatio(toHex({ ...base, l }), card) < MIN_CONTRAST) l += away
+  return { ...base, l }
+}
+
+/** The colour of a model with no brand of its own. */
+export const TREND_NEUTRAL: Record<Theme, string> = {
+  light: toHex({ h: 0, s: 0, l: TARGET_LIGHTNESS.light }),
+  dark: toHex({ h: 0, s: 0, l: TARGET_LIGHTNESS.dark }),
 }
 
 /**
- * A distinguishable variant of the same colour, for models that share a base
- * (two MiniMax spellings, two Claude tiers). Stays in the base hue so a brand
- * still reads as one brand, and moves away from the background: lighter on a
- * dark theme, darker on a light one.
+ * Colours for the series drawn in the chart, in legend order (biggest first).
+ * A series is one model, or one family of models, and gets the colour of the
+ * model it stands for. One that is too close to a series already drawn steps
+ * aside in lightness, away from the card first.
  */
-export function variantColor(hex: string, step: number, theme: 'light' | 'dark' = 'light'): string {
-  const n = parseInt(hex.slice(1), 16)
-  const r = (n >> 16) & 255
-  const g = (n >> 8) & 255
-  const b = n & 255
-  const amount = 0.65 * (1 - Math.exp(-Math.max(0, step) * 0.45))
-  const mix = (c: number) =>
-    Math.round(theme === 'dark' ? c + (255 - c) * amount : c * (1 - amount))
-  return `#${((mix(r) << 16) | (mix(g) << 8) | mix(b)).toString(16).padStart(6, '0')}`
+export function trendSeriesColors(series: { key: string; model: string }[], theme: Theme): Map<string, string> {
+  const bases = series.map(s => readable(baseColor(s.model, theme), theme))
+  const chosen: string[] = []
+  for (const base of bases) chosen.push(distinct(base, chosen, theme))
+  return new Map(series.map((s, i) => [s.key, chosen[i]]))
 }
 
 /**
- * Colour per model. Models that resolve to the same base (two spellings of
- * MiniMax, two Claude tiers) get shades of that one hue so the brand reads as
- * a single brand, instead of the unrelated badge palette.
+ * The colour of one series: its own colour, unless that is too close to a
+ * colour already on the chart. Then it steps in lightness, away from the
+ * card first, until it is distinct.
  */
-export function trendModelColors(models: string[], theme: Theme): Map<string, string> {
-  const map = new Map<string, string>()
-  const seen = new Map<string, number>()
-  for (const model of models) {
-    const base = vibrantColor(trendBrandColor(model, getModelColor(model, theme)))
-    const n = seen.get(base) ?? 0
-    seen.set(base, n + 1)
-    map.set(model, n === 0 ? base : variantColor(base, n, theme))
+function distinct(base: Hsl, taken: string[], theme: Theme): string {
+  const card = CARD_BG[theme]
+  const away = theme === 'light' ? -1 : 1
+  const closest = (color: string) => (taken.length ? Math.min(...taken.map(t => deltaE(t, color))) : Infinity)
+  let best = toHex(base)
+  let bestDistance = closest(best)
+  if (bestDistance >= MIN_DELTA_E) return best
+  for (const direction of [away, -away]) {
+    for (let step = 1; step <= MAX_STEPS; step++) {
+      const l = base.l + direction * step * LIGHTNESS_STEP
+      if (l < 0.02 || l > 0.98) continue
+      const color = toHex({ ...base, l })
+      if (contrastRatio(color, card) < MIN_CONTRAST) continue
+      const distance = closest(color)
+      if (distance >= MIN_DELTA_E) return color
+      if (distance > bestDistance) {
+        bestDistance = distance
+        best = color
+      }
+    }
   }
-  return map
+  return best
+}
+
+function linearRgb(hex: string): number[] {
+  return rgbOf(hex).map(c => {
+    const s = c / 255
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  })
+}
+
+/** WCAG relative luminance of a colour. */
+export function luminance(hex: string): number {
+  const [r, g, b] = linearRgb(hex)
+  return 0.2126729 * r + 0.7151522 * g + 0.072175 * b
+}
+
+/** WCAG contrast ratio between two colours. */
+export function contrastRatio(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+/** CIE76 colour difference between two colours. */
+export function deltaE(a: string, b: string): number {
+  const lab = (hex: string) => {
+    const [r, g, b] = linearRgb(hex)
+    const y = 0.2126729 * r + 0.7151522 * g + 0.072175 * b
+    const f = (n: number) => (n > 0.008856451679 ? Math.cbrt(n) : n / 0.12841855 + 4 / 29)
+    const x = f((0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047)
+    const z = f((0.0193339 * r + 0.119192 * g + 0.9503041 * b) / 1.08883)
+    const fy = f(y)
+    return [116 * fy - 16, 500 * (x - fy), 200 * (fy - z)]
+  }
+  const [l1, a1, b1] = lab(a)
+  const [l2, a2, b2] = lab(b)
+  return Math.hypot(l1 - l2, a1 - a2, b1 - b2)
 }

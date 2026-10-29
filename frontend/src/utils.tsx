@@ -362,33 +362,63 @@ export function formatProviderName(provider: string): string {
 
 const ICON_STYLE = { width: 14, height: 14, display: 'block', objectFit: 'contain' as const }
 
-export function getModelIcon(model: string, theme: Theme = getTheme()) {
+export function modelFamily(model: string): { id: string; label: string } {
   const m = model.toLowerCase()
-  const style = ICON_STYLE
-  const dark = theme === 'dark'
-  if (m.startsWith('tencent/') || m.startsWith('hy3')) return <img src="/models/hunyuan-color.svg" alt="" style={style} />
-  if (m.includes('gpt') || m.includes('codex')) return <img src={dark ? '/models/openai-light.svg' : '/models/openai.svg'} alt="" style={style} />
-  if (m.includes('claude')) return <img src="/models/claude-ai-icon.svg" alt="" style={style} />
-  if (m.includes('gemini') || m.includes('google') || m.includes('gemma')) return <img src="/models/google-gemini-icon.svg" alt="" style={style} />
-  if (m.includes('minimax') || m.includes('mimimax')) return <img src="/models/minimax-color.svg" alt="" style={style} />
-  if (m.includes('mimo') || m.includes('xiaomi')) return <img src="/models/xiaomi.svg" alt="" style={style} />
-  if (m.includes('inclusionai') || m.includes('ling')) return <img src="/models/inclusionai.png" alt="" style={style} />
-  if (m.includes('poolside')) return <img src="/models/poolside.svg" alt="" style={style} />
-  if (m.includes('deepseek')) return <img src="/models/deepseek.svg" alt="" style={style} />
-  if (m.includes('doubao') || m.includes('seed')) return <img src="/models/doubao.svg" alt="" style={style} />
-  if (m.includes('openrouter')) return <img src={dark ? '/models/openrouter-dark.svg' : '/models/openrouter.svg'} alt="" style={style} />
-  if (m.startsWith('z-ai/') || m.includes('glm')) return <img src="/models/z-ai.svg" alt="" style={style} />
-  if (m.includes('stepfun') || m.includes('step-')) return <img src="/models/stepfun-color.svg" alt="" style={style} />
-  if (m.startsWith('nvidia/') || m.includes('nemotron')) return <img src="/models/nvidia.svg" alt="" style={style} />
-  if (m.includes('qwen')) return <img src="/models/qwen-color.svg" alt="" style={style} />
-  if (m.startsWith('cohere/')) return <img src="/models/cohere.svg" alt="" style={style} />
-  if (m.includes('dots')) return <img src="/models/dots-studio.png" alt="" style={style} />
-  if (m.startsWith('stealth') || m.endsWith('-alpha')) return <img src="/models/stealth.svg" alt="" style={style} />
-  if (m.includes('muse') || m.includes('meta/')) return <img src="/models/meta.svg" alt="" style={style} />
-  if (m.startsWith('x-ai/') || m.includes('grok')) return <img src={dark ? '/models/grok-dark.svg' : '/models/grok.svg'} alt="" style={style} />
-  if (m.includes('longcat')) return <img src="/models/longcat-color.svg" alt="" style={style} />
-  if (m.replace(/[-_\s]/g, '').includes('commandcode')) return <img src={dark ? '/models/commandcode-dark.svg' : '/models/commandcode.svg'} alt="" style={style} />
-  return null
+  if (m.startsWith('tencent/') || m.startsWith('hy3')) return { id: 'hunyuan', label: 'Hunyuan' }
+  if (m.includes('gpt') || m.includes('codex')) return { id: 'openai', label: 'GPT/OpenAI' }
+  if (m.includes('claude')) return { id: 'claude', label: 'Claude' }
+  if (m.includes('gemini') || m.includes('google') || m.includes('gemma')) return { id: 'gemini', label: 'Gemini' }
+  if (m.includes('minimax') || m.includes('mimimax')) return { id: 'minimax', label: 'MiniMax' }
+  if (m.includes('mimo') || m.includes('xiaomi')) return { id: 'xiaomi', label: 'Xiaomi MiMo' }
+  if (m.includes('inclusionai') || m.includes('ling')) return { id: 'inclusionai', label: 'InclusionAI' }
+  if (m.includes('poolside')) return { id: 'poolside', label: 'Poolside' }
+  if (m.includes('deepseek')) return { id: 'deepseek', label: 'DeepSeek' }
+  if (m.includes('doubao') || m.includes('seed')) return { id: 'doubao', label: 'Doubao' }
+  if (m.includes('openrouter')) return { id: 'openrouter', label: 'OpenRouter' }
+  if (m.startsWith('z-ai/') || m.includes('glm')) return { id: 'glm', label: 'GLM/Z.ai' }
+  if (m.includes('stepfun') || m.includes('step-')) return { id: 'stepfun', label: 'StepFun' }
+  if (m.startsWith('nvidia/') || m.includes('nemotron')) return { id: 'nvidia', label: 'NVIDIA' }
+  if (m.includes('qwen')) return { id: 'qwen', label: 'Qwen' }
+  if (m.startsWith('cohere/')) return { id: 'cohere', label: 'Cohere' }
+  if (m.includes('dots')) return { id: 'dots', label: 'Dots' }
+  if (m.startsWith('stealth') || m.endsWith('-alpha')) return { id: 'stealth', label: 'Stealth' }
+  if (m.includes('muse') || m.includes('meta/')) return { id: 'meta', label: 'Meta' }
+  if (m.startsWith('x-ai/') || m.includes('grok')) return { id: 'grok', label: 'Grok' }
+  if (m.includes('longcat')) return { id: 'longcat', label: 'LongCat' }
+  if (m.replace(/[-_\s]/g, '').includes('commandcode')) return { id: 'commandcode', label: 'Command Code' }
+  return { id: 'other', label: 'Other' }
+}
+
+const MODEL_FAMILY_ICONS: Record<string, string> = {
+  hunyuan: '/models/hunyuan-color.svg',
+  openai: '/models/openai.svg',
+  claude: '/models/claude-ai-icon.svg',
+  gemini: '/models/google-gemini-icon.svg',
+  minimax: '/models/minimax-color.svg',
+  xiaomi: '/models/xiaomi.svg',
+  inclusionai: '/models/inclusionai.png',
+  poolside: '/models/poolside.svg',
+  deepseek: '/models/deepseek.svg',
+  doubao: '/models/doubao.svg',
+  openrouter: '/models/openrouter.svg',
+  glm: '/models/z-ai.svg',
+  stepfun: '/models/stepfun-color.svg',
+  nvidia: '/models/nvidia.svg',
+  qwen: '/models/qwen-color.svg',
+  cohere: '/models/cohere.svg',
+  dots: '/models/dots-studio.png',
+  stealth: '/models/stealth.svg',
+  meta: '/models/meta.svg',
+  grok: '/models/grok.svg',
+  longcat: '/models/longcat-color.svg',
+  commandcode: '/models/commandcode.svg',
+}
+
+export function getModelIcon(model: string, theme: Theme = getTheme()) {
+  const id = modelFamily(model).id
+  const darkIcons: Record<string, string> = { openai: '/models/openai-light.svg', openrouter: '/models/openrouter-dark.svg', grok: '/models/grok-dark.svg', commandcode: '/models/commandcode-dark.svg' }
+  const src = (theme === 'dark' && darkIcons[id]) || MODEL_FAMILY_ICONS[id]
+  return src ? <img src={src} alt="" style={ICON_STYLE} /> : null
 }
 
 type BadgeTheme = { light: string; dark: string }

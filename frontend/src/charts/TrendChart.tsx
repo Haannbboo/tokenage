@@ -1,11 +1,11 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import type { DailyUsage, PeriodGranularity } from '../types'
-import { fillGaps, formatCost, formatModelName, formatNumber, value, resolveTimezone, wallClockMs, getTimezoneOffset } from '../utils'
+import { fillGaps, formatCost, formatModelName, formatNumber, value, resolveTimezone, wallClockMs, getTimezoneOffset, modelFamily, getModelIcon } from '../utils'
 import { fillPeriodGaps } from '../periodGaps'
 import { describePeriod, periodLabelText } from '../periodLabels'
 import { useApp } from '../contexts/AppContext'
 import { ChartTooltip, TooltipRow, TooltipDivider } from './ChartTooltip'
-import { trendModelColors } from './trendColors'
+import { TREND_NEUTRAL, trendSeriesColors } from './trendColors'
 import { sortTrendRows, trendTooltipX } from './trendTooltip'
 import { trendDotScale } from './trendScale'
 import { getLang, LANG_LOCALES, t } from '../i18n/index.ts'
@@ -18,8 +18,8 @@ type ModelBucketRow = {
   requests: number | null
 }
 
-/** How many models get their own colour; the rest are lumped into "Other". */
-const MODEL_LEGEND_MAX = 5
+/** Above this many models, group the chart by family. */
+const MODEL_LEGEND_MAX = 8
 /** Stable default: the model fetch keys on the filter object's identity. */
 const NO_FILTERS = {}
 
@@ -48,6 +48,7 @@ export function TrendChart({
   const { timezone, theme } = useApp()
   const tz = resolveTimezone(timezone)
   const [metric, setMetric] = useState<'tokens' | 'cost'>('tokens');
+  const [showRequests, setShowRequests] = useState(true);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const chartAreaRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -153,7 +154,9 @@ export function TrendChart({
 
   const modelBuckets = useMemo(() => {
     const map = new Map<string, Map<string, { tokens: number; cost: number; requests: number }>>();
+    const visiblePeriods = new Set(filled.map(row => row.period));
     for (const row of modelRows) {
+      if (!visiblePeriods.has(row.period)) continue;
       const bucket = map.get(row.period) ?? new Map();
       const stat = bucket.get(row.dimension) ?? { tokens: 0, cost: 0, requests: 0 };
       stat.tokens += value(row.total_tokens);
@@ -163,49 +166,48 @@ export function TrendChart({
       map.set(row.period, bucket);
     }
     return map;
-  }, [modelRows]);
+  }, [modelRows, filled]);
 
   // Biggest first by tokens, so the legend order and colours stay put when
   // switching between the token and cost views.
   const modelTotals = useMemo(() => {
-    const totals = new Map<string, { tokens: number; cost: number }>();
-    for (const row of modelRows) {
-      const stat = totals.get(row.dimension) ?? { tokens: 0, cost: 0 };
-      stat.tokens += value(row.total_tokens);
-      stat.cost += value(row.total_cost_usd);
-      totals.set(row.dimension, stat);
+    const totals = new Map<string, number>();
+    for (const bucket of modelBuckets.values()) {
+      for (const [model, stat] of bucket) totals.set(model, (totals.get(model) ?? 0) + stat.tokens);
     }
-    return [...totals.entries()]
-      .sort((a, b) => b[1].tokens - a[1].tokens)
-      .map(([model, stat]) => ({ model, ...stat }));
-  }, [modelRows]);
-  const legendModels = modelTotals.slice(0, MODEL_LEGEND_MAX);
-  const hasOtherModels = modelTotals.length > MODEL_LEGEND_MAX;
-  const legendModelNames = new Set(legendModels.map(m => m.model));
+    return [...totals.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [modelBuckets]);
+  const familyMode = modelTotals.length > MODEL_LEGEND_MAX;
+  const legendModels = useMemo(() => {
+    const entries = new Map<string, { model: string; label: string; iconModel: string; tokens: number }>();
+    for (const [model, tokens] of modelTotals) {
+      const family = modelFamily(model);
+      const key = familyMode ? family.id : model;
+      const entry = entries.get(key) ?? { model: key, label: familyMode ? family.label : formatModelName(model), iconModel: model, tokens: 0 };
+      entry.tokens += tokens;
+      entries.set(key, entry);
+    }
+    return [...entries.values()].sort((a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model));
+  }, [modelTotals, familyMode]);
+  // One colour per series: a model in model mode, a family in family mode.
+  // The biggest series keeps its brand colour; the others step aside when
+  // their brand colour is too close to a colour already on the chart.
   const modelColors = useMemo(
-    () => trendModelColors(modelTotals.slice(0, MODEL_LEGEND_MAX).map(m => m.model), theme),
-    [modelTotals, theme],
+    () => trendSeriesColors(legendModels.map(m => ({ key: m.model, model: m.iconModel })), theme),
+    [legendModels, theme],
   );
-  // Segments in legend order so a colour keeps its place from bar to bar;
-  // everything past the legend is pooled into "Other" on top.
+  // Keep the same segment order in every bucket, regardless of metric.
   const bucketSegments = (period: string) => {
     const bucket = modelBuckets.get(period);
     if (!bucket) return [];
-    const segments = legendModels.flatMap(m => {
-      const stat = bucket.get(m.model);
-      return stat && (stat.tokens > 0 || stat.cost > 0) ? [{ model: m.model, ...stat }] : [];
+    return legendModels.flatMap(entry => {
+      const models = [...bucket.entries()].filter(([model]) => familyMode ? modelFamily(model).id === entry.model : model === entry.model)
+        .map(([model, stat]) => ({ model, ...stat }));
+      const stat = models.reduce((sum, m) => ({ tokens: sum.tokens + m.tokens, cost: sum.cost + m.cost, requests: sum.requests + m.requests }), { tokens: 0, cost: 0, requests: 0 });
+      return stat.tokens > 0 || stat.cost > 0 ? [{ model: entry.model, label: entry.label, models, ...stat }] : [];
     });
-    const other = { model: '', tokens: 0, cost: 0, requests: 0 };
-    for (const [model, stat] of bucket) {
-      if (legendModelNames.has(model)) continue;
-      other.tokens += stat.tokens;
-      other.cost += stat.cost;
-      other.requests += stat.requests;
-    }
-    if (other.tokens > 0 || other.cost > 0) segments.push(other);
-    return segments;
   };
-  const modelColor = (model: string) => modelColors.get(model) ?? 'var(--text-muted)';
+  const modelColor = (model: string) => modelColors.get(model) ?? TREND_NEUTRAL[theme];
   const nowWallMs = wallClockMs(new Date(), tz);
   const hoveredPeriod = hoveredData ? describePeriod(hoveredData.period, granularity, nowWallMs, LANG_LOCALES[getLang()]) : null;
   const hoveredPeriodLabel = periodLabelText(hoveredPeriod);
@@ -214,15 +216,28 @@ export function TrendChart({
     <div className="widget" style={{ minHeight: '400px', width: '100%', position: 'relative' }}>
       <div className="widget-header" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
         <span>📈 {title}</span>
-        <div className="tab-toggle">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <button
-            className={`tab-toggle-btn ${metric === 'tokens' ? 'active' : ''}`}
-            onClick={() => setMetric('tokens')}
-          >{t('Tokens')}</button>
-          <button
-            className={`tab-toggle-btn ${metric === 'cost' ? 'active' : ''}`}
-            onClick={() => setMetric('cost')}
-          >{t('Cost')}</button>
+            type="button"
+            aria-pressed={showRequests}
+            aria-label={t(showRequests ? 'Hide requests' : 'Show requests')}
+            title={t(showRequests ? 'Hide requests' : 'Show requests')}
+            onClick={() => setShowRequests(visible => !visible)}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: 0, border: 0, background: 'none', cursor: 'pointer', opacity: showRequests ? 1 : 0.4 }}
+          >
+            <div style={{ width: '12px', height: '3px', background: 'var(--color-pink)', borderRadius: '2px' }} />
+            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', textDecoration: showRequests ? 'none' : 'line-through' }}>{t('Requests')}</span>
+          </button>
+          <div className="tab-toggle">
+            <button
+              className={`tab-toggle-btn ${metric === 'tokens' ? 'active' : ''}`}
+              onClick={() => setMetric('tokens')}
+            >{t('Tokens')}</button>
+            <button
+              className={`tab-toggle-btn ${metric === 'cost' ? 'active' : ''}`}
+              onClick={() => setMetric('cost')}
+            >{t('Cost')}</button>
+          </div>
         </div>
       </div>
       <div ref={chartAreaRef} style={{
@@ -268,15 +283,22 @@ export function TrendChart({
                     return (
                       <Fragment key={m.model || 'other'}>
                         <span style={{
-                          color: m.model ? modelColor(m.model) : 'var(--text-muted)',
+                          color: modelColor(m.model),
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
                         }}>
-                          {m.model ? formatModelName(m.model) : t('Other')}
+                          {familyMode ? t(m.label) : m.label}
                         </span>
                         <span style={{ fontWeight: 600, textAlign: 'right' }}>{primary}</span>
                         <span style={{ color: 'var(--text-muted)', textAlign: 'right' }}>{secondary}</span>
+                        {familyMode && sortTrendRows(m.models, metric).map(model => (
+                          <Fragment key={model.model}>
+                            <span style={{ paddingLeft: '12px', color: 'var(--text-muted)' }}>{formatModelName(model.model)}</span>
+                            <span style={{ textAlign: 'right' }}>{metric === 'cost' ? formatCostFixed(model.cost, 3) : formatNumber(model.tokens)}</span>
+                            <span style={{ color: 'var(--text-muted)', textAlign: 'right' }}>{metric === 'cost' ? formatNumber(model.tokens) : formatCostFixed(model.cost, 3)}</span>
+                          </Fragment>
+                        ))}
                       </Fragment>
                     );
                   })}
@@ -292,9 +314,9 @@ export function TrendChart({
                     {metric === 'cost' ? formatNumber(value(hoveredData.total_tokens)) : formatCost(hoveredData.total_cost_usd)}
                   </span>
                 </TooltipRow>
-                <TooltipRow label={t('Requests:')} labelColor="var(--color-pink)">
+                {showRequests && <TooltipRow label={t('Requests:')} labelColor="var(--color-pink)">
                   <span style={{ fontWeight: 600, color: 'var(--color-pink)' }}>{formatNumber(hoveredData.requests)}</span>
-                </TooltipRow>
+                </TooltipRow>}
               </ChartTooltip>
             )}
 
@@ -395,7 +417,7 @@ export function TrendChart({
                           <path
                             key={m.model || 'other'}
                             d={roundedRect(x, y, barW, h, isTop ? radius : 0, isBottom ? radius : 0)}
-                            fill={m.model ? modelColor(m.model) : 'var(--text-muted)'}
+                            fill={modelColor(m.model)}
                             opacity={0.9}
                             stroke="var(--chart-dot-fill)"
                             strokeWidth={1}
@@ -408,7 +430,7 @@ export function TrendChart({
               })()}
 
               {/* Requests line */}
-              {(() => {
+              {showRequests && (() => {
                 const points = filled.map((d, i) => {
                   const x = paddingX + (i + 0.5) / filled.length * chartWidth;
                   const y = 200 - (value(d.requests) / maxRequests) * 200;
@@ -424,7 +446,7 @@ export function TrendChart({
                       strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.6 : 0.3, transition: 'opacity 160ms ease' }}
+                      style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.45 : 0.22, transition: 'opacity 160ms ease' }}
                     />
                     {showDots && filled.map((d, i) => {
                       const x = paddingX + (i + 0.5) / filled.length * chartWidth;
@@ -438,7 +460,7 @@ export function TrendChart({
                             fill="var(--chart-dot-fill)"
                             stroke="var(--color-pink)"
                             strokeWidth={hoveredIdx === i ? "3" : "2"}
-                            style={{ transition: 'all 160ms ease', opacity: hoveredIdx === null || hoveredIdx === i ? 0.6 : 0.3 }}
+                            style={{ transition: 'all 160ms ease', opacity: hoveredIdx === null || hoveredIdx === i ? 0.45 : 0.22 }}
                           />
                         </g>
                       );
@@ -528,19 +550,10 @@ export function TrendChart({
               {legendModels.map(m => (
                 <div key={m.model} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <div style={{ width: '12px', height: '12px', background: modelColor(m.model), borderRadius: '2px' }} />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{formatModelName(m.model)}</span>
+                  {familyMode && getModelIcon(m.iconModel, theme)}
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{familyMode ? t(m.label) : m.label}</span>
                 </div>
               ))}
-              {hasOtherModels && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <div style={{ width: '12px', height: '12px', background: 'var(--text-muted)', borderRadius: '2px' }} />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Other')}</span>
-                </div>
-              )}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <div style={{ width: '12px', height: '3px', background: 'var(--color-pink)', borderRadius: '2px' }} />
-                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{t('Requests')}</span>
-              </div>
             </div>
           </>
         )}

@@ -27,6 +27,8 @@ export const zh: Record<string, string> = {
   // Dashboard widgets
   'Token Usage': 'Token 用量',
   'Requests': '请求数',
+  'Hide requests': '隐藏请求数',
+  'Show requests': '显示请求数',
   'Estimated Cost': '预估费用',
   'Performance': '性能',
   'Success Rate:': '成功率：',
@@ -83,6 +85,11 @@ export const zh: Record<string, string> = {
   'No data available': '暂无数据',
   'No activity': '无活动',
   'No requests': '无请求',
+
+  // Model families
+  'Hunyuan': '混元',
+  'Xiaomi MiMo': '小米 MiMo',
+  'Doubao': '豆包',
 
   // TrendChart tooltips
   'Input:': '输入：',

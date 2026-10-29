@@ -938,7 +938,7 @@ def _usage_filters(
     *,
     user_id: str,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     session_id: str | None = None,
     tool_name: str | None = None,
@@ -950,7 +950,14 @@ def _usage_filters(
     if provider:
         filters.append(Usage.provider == normalize_provider_name(provider))
     if model:
-        filters.append(Usage.model == normalize_model_name(model))
+        filters.append(
+            Usage.model.in_(
+                [
+                    normalize_model_name(m)
+                    for m in ([model] if isinstance(model, str) else model)
+                ]
+            )
+        )
     if client_source:
         filters.append(Usage.client_source == client_source)
     if device_id:
@@ -1030,7 +1037,7 @@ def _hourly_filters(
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
 ) -> list[Any]:
@@ -1056,7 +1063,7 @@ def _field_filters(
     table: Any,
     *,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
 ) -> list[Any]:
@@ -1065,7 +1072,14 @@ def _field_filters(
     if provider:
         filters.append(table.provider == normalize_provider_name(provider))
     if model:
-        filters.append(table.model == normalize_model_name(model))
+        filters.append(
+            table.model.in_(
+                [
+                    normalize_model_name(m)
+                    for m in ([model] if isinstance(model, str) else model)
+                ]
+            )
+        )
     if client_source:
         filters.append(table.client_source == client_source)
     if device_id:
@@ -1130,7 +1144,7 @@ def _rollup(
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
     order_by: Any = None,
@@ -1180,7 +1194,7 @@ def _raw_filters(
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
 ) -> list[Any]:
@@ -1214,7 +1228,7 @@ def _raw_rollup(
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
     order_by: Any = None,
@@ -1282,7 +1296,7 @@ def fetch_recent_usage(
     offset: int = 0,
     before: tuple[int, str] | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
     session_id: str | None = None,
@@ -1453,7 +1467,7 @@ def count_usage(
     *,
     user_id: str,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
     session_id: str | None = None,
@@ -1513,7 +1527,7 @@ def summarize_usage_window(
     device_id: str | None = None,
     session_id: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     include_rows: bool = False,
     db_path: str | None = None,
 ) -> dict[str, Any]:
@@ -1687,7 +1701,7 @@ def summarize_tool_calls(
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
     db_path: str | None = None,
@@ -1732,7 +1746,7 @@ def summarize_usage_by_source(
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
     db_path: str | None = None,
@@ -1761,7 +1775,7 @@ def summarize_usage_by_provider(
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
     db_path: str | None = None,
@@ -1788,7 +1802,7 @@ def summarize_usage_by_model(
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
     db_path: str | None = None,
@@ -1855,7 +1869,7 @@ def aggregate_usage_by_period(
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
     granularity: str = "day",
@@ -1897,7 +1911,7 @@ def aggregate_daily_by_dimension(
     since: str | None = None,
     until: str | None = None,
     provider: str | None = None,
-    model: str | None = None,
+    model: str | list[str] | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
     granularity: str = "day",

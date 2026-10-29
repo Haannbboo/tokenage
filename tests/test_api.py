@@ -1530,3 +1530,34 @@ def test_pricing_get_preserves_runtime_maps(api_module, monkeypatch, path):
     assert "read-model" in response.text
     assert calls == [False]
     assert (MODEL_COSTS, MODEL_COST_SOURCES) == before
+
+
+@pytest.mark.parametrize(
+    ("path", "function"),
+    [
+        ("/usage", "fetch_recent_usage"),
+        ("/usage/count", "count_usage"),
+        ("/usage/summary", "summarize_usage_by_model"),
+        ("/usage/by-source", "summarize_usage_by_source"),
+        ("/usage/by-tool", "summarize_tool_calls"),
+        ("/usage/by-provider", "summarize_usage_by_provider"),
+        ("/usage/daily", "aggregate_usage_by_period"),
+        ("/usage/daily-by-dimension", "aggregate_daily_by_dimension"),
+        ("/usage/run-summary", "summarize_usage_window"),
+    ],
+)
+def test_read_routes_accept_multiple_models(api_module, monkeypatch, path, function):
+    captured = []
+
+    def fake(**kwargs):
+        captured.append(kwargs["model"])
+        return 0 if function == "count_usage" else []
+
+    monkeypatch.setattr(api_module, function, fake)
+    monkeypatch.setattr(api_module, "enrich_rows", lambda rows: rows)
+    client = TestClient(api_module.app)
+    assert (
+        client.get(path, params=[("model", "one"), ("model", "two")]).status_code == 200
+    )
+    assert client.get(path, params={"model": "one"}).status_code == 200
+    assert captured == [["one", "two"], "one"]

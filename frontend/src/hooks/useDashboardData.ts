@@ -1,3 +1,4 @@
+import { appendModels } from '../modelFilter'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { DailyUsage, DateRangeOption, UsageSummary } from '../types'
 import { getSinceDate, rangeGranularity } from '../dateRange.ts'
@@ -17,6 +18,7 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
   const dateRange = dateRangeOverride ?? appDateRange
   const tz = resolveTimezone(timezone)
 
+  const [selectorSummary, setSelectorSummary] = useState<UsageSummary[]>([])
   const [summary, setSummary] = useState<UsageSummary[]>([])
   const [dailyUsage, setDailyUsage] = useState<DailyUsage[]>([])
   const [heatmapData, setHeatmapData] = useState<DailyUsage[]>([])
@@ -48,15 +50,16 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
   }, [summary]);
 
   const dashboardFilterParams = useMemo(() => ({
-    provider: activeFilter?.provider,
-    model: activeFilter?.model,
+    model: activeFilter?.models,
     client_source: activeSource,
     device_id: activeDevice,
     since: getSinceDate(dateRange),
   }), [activeFilter, activeSource, activeDevice, dateRange, refreshTrigger])
 
   const applyFilterParams = useCallback((url: URL) => {
-    for (const [key, value] of Object.entries(dashboardFilterParams)) {
+    const { model, ...filters } = dashboardFilterParams
+    appendModels(url.searchParams, model)
+    for (const [key, value] of Object.entries(filters)) {
       if (value) url.searchParams.set(key, value)
     }
     return url
@@ -86,8 +89,7 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
         heatmapUrl.searchParams.set('granularity', 'day')
         heatmapUrl.searchParams.set('tz_offset', getTimezoneOffset(tz))
         if (activeFilter) {
-          if (activeFilter.provider) heatmapUrl.searchParams.set('provider', activeFilter.provider)
-          if (activeFilter.model) heatmapUrl.searchParams.set('model', activeFilter.model)
+          appendModels(heatmapUrl.searchParams, activeFilter.models)
         }
         if (activeSource) heatmapUrl.searchParams.set('client_source', activeSource)
         if (activeDevice) heatmapUrl.searchParams.set('device_id', activeDevice)
@@ -108,6 +110,7 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
         if (!isCurrentRequest()) return
 
         setSummary(summaryData)
+        if (!activeFilter) setSelectorSummary(summaryData)
         if (dailyData) setDailyUsage(dailyData)
         if (heatmapRaw) setHeatmapData(heatmapRaw)
         if (totalCountData) setTotalTrackedEvents(totalCountData.total)
@@ -126,6 +129,22 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
     void fetchDashboard()
     return () => controller.abort()
   }, [activeFilter, activeSource, activeDevice, dateRange, refreshTrigger, applyFilterParams, setError, tz, includeDaily, includeHeatmap, includeCount])
+
+  // Fetch the selector options without the model filter.
+  useEffect(() => {
+    if (!activeFilter) return
+    const controller = new AbortController()
+    const url = new URL('/usage/summary', window.location.origin)
+    const since = getSinceDate(dateRange)
+    if (since) url.searchParams.set('since', since)
+    if (activeSource) url.searchParams.set('client_source', activeSource)
+    if (activeDevice) url.searchParams.set('device_id', activeDevice)
+    fetch(url.toString(), { signal: controller.signal })
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(data => { if (!controller.signal.aborted) setSelectorSummary(data) })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [dateRange, activeSource, activeDevice, refreshTrigger, !!activeFilter])
 
   // Sources fetch
   useEffect(() => {
@@ -167,7 +186,7 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
   }, [summary])
 
   return {
-    summary, dailyUsage, heatmapData, totalTrackedEvents, sources,
+    summary, selectorSummary, dailyUsage, heatmapData, totalTrackedEvents, sources,
     dashboardInitialLoading, dashboardRefreshing,
     providerColors, dashboardFilterParams, totals,
   }

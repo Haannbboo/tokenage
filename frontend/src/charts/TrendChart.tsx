@@ -1,3 +1,4 @@
+import { appendModels } from '../modelFilter'
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import type { DailyUsage, PeriodGranularity } from '../types'
 import { fillGaps, formatCost, formatModelName, formatNumber, value, resolveTimezone, wallClockMs, getTimezoneOffset, modelFamily, getModelIcon } from '../utils'
@@ -39,7 +40,7 @@ export function TrendChart({
   showDots?: boolean,
   filterParams?: {
     provider?: string
-    model?: string | null
+    model?: string[] | null
     client_source?: string | null
     device_id?: string | null
     since?: string | null
@@ -126,7 +127,7 @@ export function TrendChart({
         url.searchParams.set('dimension', 'model');
         url.searchParams.set('granularity', granularity);
         if (filterParams.provider) url.searchParams.set('provider', filterParams.provider);
-        if (filterParams.model) url.searchParams.set('model', filterParams.model);
+        appendModels(url.searchParams, filterParams.model);
         if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source);
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id);
         if (filterParams.since) url.searchParams.set('since', filterParams.since);
@@ -295,8 +296,8 @@ export function TrendChart({
                         {familyMode && sortTrendRows(m.models, metric).map(model => (
                           <Fragment key={model.model}>
                             <span style={{ paddingLeft: '12px', color: 'var(--text-muted)' }}>{formatModelName(model.model)}</span>
-                            <span style={{ textAlign: 'right' }}>{metric === 'cost' ? formatCostFixed(model.cost, 3) : formatNumber(model.tokens)}</span>
-                            <span style={{ color: 'var(--text-muted)', textAlign: 'right' }}>{metric === 'cost' ? formatNumber(model.tokens) : formatCostFixed(model.cost, 3)}</span>
+                            <span style={{ textAlign: 'right' }}>{metric === 'cost' ? formatCost(model.cost) : formatNumber(model.tokens)}</span>
+                            <span style={{ color: 'var(--text-muted)', textAlign: 'right' }}>{metric === 'cost' ? formatNumber(model.tokens) : formatCost(model.cost)}</span>
                           </Fragment>
                         ))}
                       </Fragment>

@@ -47,7 +47,7 @@ export function LogsPage() {
 
   // Filter options cover the full log history, independent of the dashboard range.
   const {
-    summary, sources, providerColors,
+    selectorSummary, sources, providerColors,
   } = useDashboardData({ dateRange: 'all', includeDaily: false, includeHeatmap: false, includeCount: false })
 
   // Session filter state (local to logs view)
@@ -676,7 +676,7 @@ export function LogsPage() {
           <div className="filter-label">{t('Model')}</div>
           <ModelSelector
             activeFilter={activeFilter}
-            summary={summary}
+            summary={selectorSummary}
             providerColors={providerColors}
             onChange={(f) => { setActiveFilter(f); }}
           />

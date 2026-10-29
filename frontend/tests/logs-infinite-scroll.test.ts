@@ -11,7 +11,7 @@ import { LogsPage } from '../src/pages/LogsPage'
 
 const app = vi.hoisted(() => ({
   refreshTrigger: 0, setError: vi.fn(), showToast: vi.fn(), requestUsageRefresh: vi.fn(),
-  activeFilter: null, activeSource: null as string | null, activeDevice: null,
+  activeFilter: null as { models: string[] } | null, activeSource: null as string | null, activeDevice: null,
   dateRange: 'all', timezone: 'UTC', setActiveFilter: vi.fn(), setActiveSource: vi.fn(),
   setActiveDevice: vi.fn(), setDateRange: vi.fn(),
 }))
@@ -450,4 +450,30 @@ describe('Request Logs table', () => {
     await waitFor(() => expect(window.scrollY).toBe(124))
   })
 
+})
+
+it('sends every selected model to the logs endpoint', async () => {
+  const { fetchMock } = mockHistory([])
+  const activeFilter = { models: ['first', 'second'] }
+  renderHook(() => useLogsData({ ...opts, activeFilter }))
+  await waitFor(() => expect(usageCalls(fetchMock).length).toBeGreaterThan(0))
+  expect(usageCalls(fetchMock)[0].searchParams.getAll('model')).toEqual(['first', 'second'])
+})
+
+
+it('sends every selected model to dashboard and heatmap requests', async () => {
+  app.activeFilter = { models: ['first', 'second'] }
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), window.location.origin)
+    return response(url.pathname === '/usage/count' ? { total: 0 } : [])
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    renderHook(() => useDashboardData())
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(5))
+    const requests = fetchMock.mock.calls.map(([input]) => new URL(String(input), window.location.origin))
+    const filtered = requests.filter(url => url.searchParams.has('model'))
+    expect(filtered.map(url => url.pathname).sort()).toEqual(['/usage/daily', '/usage/daily', '/usage/summary'])
+    expect(filtered.every(url => url.searchParams.getAll('model').join(',') === 'first,second')).toBe(true)
+  } finally { app.activeFilter = null }
 })

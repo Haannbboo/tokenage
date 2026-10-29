@@ -2176,3 +2176,57 @@ def test_logs_without_ingestable_records_skip_publish(
     monkeypatch.setattr(otlp_module, "publish", unavailable)
     response = _authed_client(otlp_module, fresh_db).post("/v1/logs", json=body)
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("service", "event", "extractor"),
+    [
+        ("claude-code", "claude_code.api_request", "_extract_claude_fields"),
+        ("codex_cli_rs", "codex.sse_event", "_extract_codex_fields"),
+        ("opencode", "opencode.message_completed", "_extract_opencode_fields"),
+    ],
+)
+def test_dropped_usage_skips_tool_follow_up(
+    otlp_module, monkeypatch, service, event, extractor
+):
+    from unittest.mock import Mock
+
+    fields = {
+        "provider": "test",
+        "model": "test-model",
+        "endpoint": "otlp",
+        "ts": 1800000000000000,
+        "session_id": "session",
+        "user_id": "test-user",
+    }
+    if service != "claude-code":
+        fields["_tool_info"] = [
+            {"tool_use_id": "tool", "tool_name": "bash", "ts": 1800000000000}
+        ]
+    monkeypatch.setattr(otlp_module, extractor, lambda *args, **kwargs: fields.copy())
+    record = Mock(return_value=None)
+    attach = Mock()
+    flush = Mock()
+    monkeypatch.setattr(otlp_module, "record_usage", record)
+    monkeypatch.setattr(otlp_module, "record_tool_call", attach)
+    monkeypatch.setattr(otlp_module, "_flush_claude_tools", flush)
+    ingest_write(
+        otlp_module._parse_log_record,
+        {
+            "attributes": _attrs(
+                {
+                    "event.name": event,
+                    "prompt.id": "p",
+                    "event.kind": "response.completed",
+                }
+            )
+        },
+        service,
+        "session",
+        user_id="test-user",
+        device_id="test-device",
+    )
+    record.assert_called_once()
+    attach.assert_not_called()
+    flush.assert_not_called()
+    assert "test-user:p" not in otlp_module._claude_last_usage

@@ -2,10 +2,29 @@
 
 Finds the highest request rate the server sustains for OTLP and proxy ingest on fixed small hardware, branch vs `main`. Ingest only: the dashboard/read API is out of scope.
 
+## Who
+
+Maintainer only. Before suggesting or running anything here, check that the PR author is the repository owner:
+
+```bash
+owner=$(gh repo view --json owner -q .owner.login)
+[ "$(gh api user -q .login)" = "$owner" ]                            # before the PR exists
+[ "$(gh pr view <pr> --json author -q .author.login)" = "$owner" ]   # for an open PR
+```
+
+For anyone else, skip this file, even if they have their own GCP setup, and do not ask them to run it. The maintainer benchmarks after merge when needed.
+
 ## When
 
-- Once per PR, before opening it, when the diff touches the ingest path: `src/otlp.py`, `src/ingest_queue.py`, `src/shared_state.py`, `src/recorder.py`, `src/database/` write helpers, the DB engine, or server worker/process config.
-- Never per commit, never for frontend/client-only/docs changes.
+Once per PR, before opening it, and only when the diff changes how much work ingest does per request or per queued row, or the capacity around it:
+
+- a new or changed query, transaction, lock or index on the write path: `src/otlp.py`, `src/ingest_queue.py`, `src/shared_state.py`, `src/recorder.py`, `src/database/` write helpers;
+- ingest auth, consumer batching or queue partitioning;
+- the DB engine or pool, or server worker, process or thread config.
+
+Skip trivial changes, even in those files: input validation, log or error messages, renames, comments, types, tests, docs, frontend and client-only changes. For example, #134 (a duplicate lookup per OTLP event) needs it; #135 (a token character check) and #126 (a timestamp fallback) do not. When unsure, say which way you lean and why, and let the human decide.
+
+- Never per commit.
 - Run load and stress tests only on GCP VMs, never on the dev machine. Local runs are limited to unit tests and short single-process profiles.
 - **Suggest it; do not run it.** It creates billable GCP VMs. Tell the human what you'd run and roughly how long (~1 h), and start only after explicit approval. Delete everything afterwards.
 
@@ -18,7 +37,7 @@ Finds the highest request rate the server sustains for OTLP and proxy ingest on 
 
 ## Setup
 
-GCP project `llm-tracker-host`, zone `us-west1-b`, label `purpose=tokenage-bench`, Debian 12:
+The maintainer's GCP project and zone (from private local instructions), label `purpose=tokenage-bench`, Debian 12:
 
 | VM | Type | Role |
 |---|---|---|

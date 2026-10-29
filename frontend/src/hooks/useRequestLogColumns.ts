@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type SetStateAction } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 const REQUEST_LOG_COLUMN_KEY = 'tokenage-request-log-columns'
 
@@ -38,8 +38,8 @@ export const REQUEST_LOG_COLUMNS: RequestLogColumn[] = [
 
 export const DEFAULT_REQUEST_LOG_COLUMNS = REQUEST_LOG_COLUMNS.map(({ id }) => id).filter((id) => id !== 'device')
 
-function normalizeRequestLogColumnIds(columnIds: unknown): RequestLogColumnId[] {
-  if (!Array.isArray(columnIds)) return DEFAULT_REQUEST_LOG_COLUMNS
+function normalizeRequestLogColumnIds(columnIds: unknown, fallback = DEFAULT_REQUEST_LOG_COLUMNS): RequestLogColumnId[] {
+  if (!Array.isArray(columnIds)) return fallback
 
   const requestedColumnIds = new Set(columnIds)
   // Iterate the registry so saved preferences cannot reorder table columns.
@@ -47,40 +47,66 @@ function normalizeRequestLogColumnIds(columnIds: unknown): RequestLogColumnId[] 
     .filter(({ id }) => requestedColumnIds.has(id))
     .map(({ id }) => id)
 
-  return normalizedColumnIds.length > 0 ? normalizedColumnIds : DEFAULT_REQUEST_LOG_COLUMNS
+  return normalizedColumnIds.length > 0 ? normalizedColumnIds : fallback
 }
 
-function readStoredRequestLogColumns(): RequestLogColumnId[] {
+type RequestLogColumnPreferences = {
+  visibleColumnIds: RequestLogColumnId[]
+  pinnedColumnIds: RequestLogColumnId[]
+}
+
+const DEFAULT_COLUMN_PREFERENCES: RequestLogColumnPreferences = {
+  visibleColumnIds: DEFAULT_REQUEST_LOG_COLUMNS,
+  pinnedColumnIds: [],
+}
+
+function readStoredRequestLogColumns(): RequestLogColumnPreferences {
   try {
     const raw = localStorage.getItem(REQUEST_LOG_COLUMN_KEY)
-    if (!raw) return DEFAULT_REQUEST_LOG_COLUMNS
+    if (!raw) return DEFAULT_COLUMN_PREFERENCES
 
     const parsed = JSON.parse(raw)
-    return normalizeRequestLogColumnIds(parsed)
+    // Older preferences stored just the enabled column IDs.
+    const visibleColumnIds = normalizeRequestLogColumnIds(Array.isArray(parsed) ? parsed : parsed?.visibleColumnIds)
+    const pinnedColumnIds = normalizeRequestLogColumnIds(parsed?.pinnedColumnIds, [])
+      .filter(id => visibleColumnIds.includes(id))
+    return { visibleColumnIds, pinnedColumnIds }
   } catch {
-    return DEFAULT_REQUEST_LOG_COLUMNS
+    return DEFAULT_COLUMN_PREFERENCES
   }
 }
 
 export function useRequestLogColumns() {
-  const [visibleColumnIds, setRawVisibleColumnIds] = useState<RequestLogColumnId[]>(() => readStoredRequestLogColumns())
+  const [preferences, setPreferences] = useState(readStoredRequestLogColumns)
+  const { visibleColumnIds, pinnedColumnIds } = preferences
 
-  const setVisibleColumnIds = useCallback((nextColumnIds: SetStateAction<RequestLogColumnId[]>) => {
-    setRawVisibleColumnIds((current) =>
-      normalizeRequestLogColumnIds(typeof nextColumnIds === 'function' ? nextColumnIds(current) : nextColumnIds),
-    )
+  const setColumnVisible = useCallback((columnId: RequestLogColumnId, visible: boolean) => {
+    setPreferences(current => {
+      const visibleColumnIds = normalizeRequestLogColumnIds(visible
+        ? [...current.visibleColumnIds, columnId]
+        : current.visibleColumnIds.filter(id => id !== columnId))
+      const pinnedColumnIds = normalizeRequestLogColumnIds(visible
+        ? [...current.pinnedColumnIds, columnId]
+        : current.pinnedColumnIds.filter(id => id !== columnId), [])
+      return { visibleColumnIds, pinnedColumnIds }
+    })
   }, [])
 
   useEffect(() => {
     try {
-      localStorage.setItem(REQUEST_LOG_COLUMN_KEY, JSON.stringify(visibleColumnIds))
+      localStorage.setItem(REQUEST_LOG_COLUMN_KEY, JSON.stringify(preferences))
     } catch {
       // Ignore persistence failures.
     }
-  }, [visibleColumnIds])
+  }, [preferences])
 
   const resetColumns = useCallback(() => {
-    setRawVisibleColumnIds(normalizeRequestLogColumnIds(DEFAULT_REQUEST_LOG_COLUMNS))
+    setPreferences(DEFAULT_COLUMN_PREFERENCES)
+  }, [])
+
+  const showAllColumns = useCallback(() => {
+    const columnIds = REQUEST_LOG_COLUMNS.map(({ id }) => id)
+    setPreferences({ visibleColumnIds: columnIds, pinnedColumnIds: columnIds })
   }, [])
 
   const visibleColumns = useMemo(
@@ -91,8 +117,10 @@ export function useRequestLogColumns() {
   return {
     columns: REQUEST_LOG_COLUMNS,
     visibleColumnIds,
-    setVisibleColumnIds,
+    pinnedColumnIds,
+    setColumnVisible,
     visibleColumns,
     resetColumns,
+    showAllColumns,
   }
 }

@@ -124,6 +124,7 @@ export const zh: Record<string, string> = {
   'Columns': '列',
   'Reset columns': '重置列',
   'All columns': '全部列',
+  'hidden: narrow window': '已隐藏：窗口较窄',
 
   // Table headers
   'Time': '时间',

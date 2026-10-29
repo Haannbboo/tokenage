@@ -4,6 +4,9 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@t
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UsageRow } from '../src/types'
 import { useLogsData } from '../src/hooks/useLogsData'
+import { useDashboardData } from '../src/hooks/useDashboardData'
+import { useRequestLogColumns } from '../src/hooks/useRequestLogColumns'
+import { SessionSelector } from '../src/components/SessionSelector'
 import { LogsPage } from '../src/pages/LogsPage'
 
 const app = vi.hoisted(() => ({
@@ -13,13 +16,11 @@ const app = vi.hoisted(() => ({
   setActiveDevice: vi.fn(), setDateRange: vi.fn(),
 }))
 vi.mock('../src/contexts/AppContext', () => ({ useApp: () => app }))
-vi.mock('../src/hooks/useDashboardData', () => ({ useDashboardData: () => ({ summary: [], sources: [], providerColors: {} }) }))
-vi.mock('../src/hooks/useSessionSelectorData', () => ({ useSessionSelectorData: () => ({ sessions: [] }) }))
 vi.mock('../src/components/DeviceSelect', () => ({ DeviceSelect: () => null }))
 
 const opts = {
   activeFilter: null, activeSource: null as string | null, sessionFilter: null,
-  toolFilter: null, deviceFilter: null, dateRange: 'all' as const,
+  toolFilter: null, deviceFilter: null,
 }
 const response = <T,>(data: T) => ({ ok: true, json: async () => data }) as Response
 const row = (n: number): UsageRow => ({
@@ -36,6 +37,7 @@ function mockHistory(initial = rows(1000, 300)) {
   let history = initial
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), window.location.origin)
+    if (url.pathname === '/sessions') return response({ sessions: [] })
     if (url.pathname !== '/usage') return response([])
     const before = url.searchParams.get('before')
     const [ts, id] = before?.split(':') ?? []
@@ -46,6 +48,14 @@ function mockHistory(initial = rows(1000, 300)) {
 }
 
 const intersections = new Set<{ callback: IntersectionObserverCallback; target: Element }>()
+let scrollY = 0
+let tableHeaderHeight = 40
+const scrollWindowTo = (top: number) => {
+  act(() => {
+    scrollY = top
+    window.dispatchEvent(new Event('scroll'))
+  })
+}
 async function intersectSentinel() {
   await act(async () => {
     for (const { callback, target } of [...intersections]) {
@@ -54,10 +64,38 @@ async function intersectSentinel() {
   })
 }
 
+function mockTableWidth(initialWidth: number) {
+  const observers = new Map<Element, ResizeObserverCallback>()
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(target: Element) {
+      if (!target.classList.contains('panel-body')) return
+      observers.set(target, this.callback)
+      queueMicrotask(() => {
+        if (observers.has(target)) this.callback([{ target, contentRect: { width: initialWidth } } as ResizeObserverEntry], {} as ResizeObserver)
+      })
+    }
+    disconnect() { observers.clear() }
+  })
+  return (width: number) => act(() => {
+    for (const [target, callback] of observers) {
+      callback([{ target, contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver)
+    }
+  })
+}
+
+const columnHeaders = () => screen.getAllByRole('columnheader').map(header => header.textContent)
+const columnCheckbox = (label: string) => screen.getByRole('checkbox', {
+  name: name => name.startsWith(label),
+}) as HTMLInputElement
+
 beforeEach(() => {
   app.refreshTrigger = 0
   app.activeSource = null
+  app.dateRange = 'all'
   app.setError.mockClear()
+  app.setDateRange.mockClear()
+  tableHeaderHeight = 40
   localStorage.clear()
   sessionStorage.clear()
   intersections.clear()
@@ -68,18 +106,35 @@ beforeEach(() => {
     disconnect() { if (this.registration) intersections.delete(this.registration) }
   })
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  // The page scrolls, so the window is the scroll element: give it a
+  // geometry and a working scrollTo instead of an inner scroll container.
+  scrollY = 0
+  Object.defineProperty(window, 'scrollY', { configurable: true, get: () => scrollY })
+  Object.defineProperty(window, 'scrollTo', { configurable: true, value: (options: ScrollToOptions) => {
+    scrollY = options.top ?? 0
+    window.dispatchEvent(new Event('scroll'))
+  } })
+  // Sticky offsets the page reads from the document element.
+  document.documentElement.style.setProperty('--navbar-top', '12px')
+  document.documentElement.style.setProperty('--navbar-height', '56px')
+  document.documentElement.style.setProperty('--sticky-gap', '8px')
   // Give the real virtualizer a viewport and row geometry; do not mock its range calculation.
-  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.tagName === 'TBODY' ? (this.querySelector('.expanded-row') ? 252 : 52) : 520 })
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    if (this.classList.contains('filter-bar')) return 100
+    if (this.tagName === 'THEAD') return tableHeaderHeight
+    return this.tagName === 'TBODY' ? (this.querySelector('.expanded-row') ? 252 : 52) : 520
+  })
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(100000)
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(520)
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1600)
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-    return { width: 1600, height: this.tagName === 'TBODY' ? (this.querySelector('.expanded-row') ? 252 : 52) : 520, top: 0, left: 0, right: 1600, bottom: 520, x: 0, y: 0, toJSON() {} }
+    const rect = (height: number, top: number) => ({ width: 1600, height, top, left: 0, right: 1600, bottom: top + height, x: 0, y: top, toJSON() {} })
+    // The filter bar sticks under the navbar; the table starts below it.
+    if (this.classList.contains('filter-bar')) return rect(100, 0)
+    if (this.tagName === 'TABLE') return rect(520, 300 - scrollY)
+    if (this.tagName === 'TBODY') return rect(this.querySelector('.expanded-row') ? 252 : 52, 0)
+    return rect(520, 0)
   })
-  Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: function (this: HTMLElement, options: ScrollToOptions) {
-    this.scrollTop = options.top ?? 0
-    this.dispatchEvent(new Event('scroll'))
-  } })
 })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -119,18 +174,19 @@ describe('Request Logs data', () => {
     expect(last.searchParams.has('before')).toBe(false)
   })
 
-  it('resets accumulated history when the date range changes', async () => {
+  it('keeps accumulated history unbounded when the global date range changes', async () => {
     const api = mockHistory()
-    const { result, rerender } = renderHook((props: Parameters<typeof useLogsData>[0]) => useLogsData(props), { initialProps: opts })
+    const { result, rerender } = renderHook(() => useLogsData(opts))
     await waitFor(() => expect(result.current.usageRows.length).toBe(100))
     await act(async () => { await result.current.loadMore() })
     expect(result.current.usageRows.length).toBe(200)
     const reset = result.current.scrollReset
-    rerender({ ...opts, dateRange: '24h' })
-    await waitFor(() => expect(result.current.usageRows.length).toBe(100))
-    expect(result.current.scrollReset).toBeGreaterThan(reset)
-    expect(usageCalls(api.fetchMock).at(-1)!.searchParams.has('since')).toBe(true)
-    expect(usageCalls(api.fetchMock).at(-1)!.searchParams.has('before')).toBe(false)
+    app.dateRange = '24h'
+    rerender()
+    expect(result.current.usageRows.length).toBe(200)
+    expect(result.current.scrollReset).toBe(reset)
+    expect(usageCalls(api.fetchMock).length).toBe(2)
+    expect(usageCalls(api.fetchMock).every(url => !url.searchParams.has('since'))).toBe(true)
   })
 
   it('refresh prepends a 250-row gap in three requests and preserves loaded rows and cost patches', async () => {
@@ -200,6 +256,174 @@ describe('Request Logs data', () => {
 })
 
 describe('Request Logs table', () => {
+  it('keeps the session dropdown searchable and selectable', () => {
+    const onChange = vi.fn()
+    render(createElement(SessionSelector, {
+      sessions: ['alpha', 'beta'].map(session_id => ({ session_id, client_source: 'codex', request_count: 1, started: row(1).ts })),
+      sessionFilter: null, onChange, sourceColors: {},
+    }))
+    const input = screen.getByRole('textbox', { name: 'Search session ID…' })
+    fireEvent.focus(input)
+    expect(screen.getByRole('button', { name: /beta/ })).toBeTruthy()
+    fireEvent.change(input, { target: { value: 'alpha' } })
+    expect(screen.queryByRole('button', { name: /beta/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /alpha/ }))
+    expect(onChange).toHaveBeenCalledWith('alpha')
+    expect(screen.queryByRole('button', { name: 'All Sessions' })).toBeNull()
+  })
+
+  it('keeps all log filters independent of the dashboard date range', async () => {
+    app.dateRange = '24h'
+    const api = mockHistory()
+    const view = render(createElement(LogsPage))
+    await waitFor(() => expect(document.querySelector('tbody[data-index]')).toBeTruthy())
+    expect(screen.queryByText('Date Range')).toBeNull()
+    const filterCalls = () => api.fetchMock.mock.calls
+      .map(([input]) => new URL(String(input), window.location.origin))
+      .filter(url => ['/usage', '/sessions', '/usage/tools', '/usage/summary', '/usage/sources'].includes(url.pathname))
+    expect(new Set(filterCalls().map(url => url.pathname)).size).toBe(5)
+    expect(filterCalls().every(url => !url.searchParams.has('since'))).toBe(true)
+    const count = filterCalls().length
+    app.dateRange = '7d'
+    view.rerender(createElement(LogsPage))
+    expect(filterCalls().length).toBe(count)
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
+    expect(app.setDateRange).not.toHaveBeenCalled()
+  })
+
+  it('keeps the default dashboard summary and sources scoped to the global date range', async () => {
+    app.dateRange = '24h'
+    const api = mockHistory([])
+    const { result, rerender } = renderHook(() => useDashboardData({ includeDaily: false, includeHeatmap: false, includeCount: false }))
+    await waitFor(() => expect(result.current.dashboardInitialLoading).toBe(false))
+    const filterCalls = () => api.fetchMock.mock.calls
+      .map(([input]) => new URL(String(input), window.location.origin))
+      .filter(url => ['/usage/summary', '/usage/sources'].includes(url.pathname))
+    expect(filterCalls()).toHaveLength(2)
+    expect(filterCalls().every(url => url.searchParams.has('since'))).toBe(true)
+    const since = filterCalls()[0].searchParams.get('since')!
+    app.dateRange = '7d'
+    rerender()
+    await waitFor(() => expect(filterCalls()).toHaveLength(4))
+    expect(filterCalls().slice(2).every(url => url.searchParams.get('since')! < since)).toBe(true)
+  })
+
+  it('hides Device for new preferences and preserves an explicitly saved Device column', () => {
+    const defaults = renderHook(() => useRequestLogColumns())
+    expect(defaults.result.current.visibleColumnIds).not.toContain('device')
+    defaults.unmount()
+    localStorage.setItem('tokenage-request-log-columns', JSON.stringify(['time', 'device']))
+    const saved = renderHook(() => useRequestLogColumns())
+    expect(saved.result.current.visibleColumnIds).toEqual(['time', 'device'])
+    expect(saved.result.current.pinnedColumnIds).toEqual([])
+  })
+
+  it('loads column preferences without pins and discards pins for disabled or unknown columns', () => {
+    const key = 'tokenage-request-log-columns'
+    localStorage.setItem(key, JSON.stringify({ visibleColumnIds: ['time', 'device'] }))
+    const saved = renderHook(() => useRequestLogColumns())
+    expect(saved.result.current.visibleColumnIds).toEqual(['time', 'device'])
+    expect(saved.result.current.pinnedColumnIds).toEqual([])
+    saved.unmount()
+    localStorage.setItem(key, JSON.stringify({ visibleColumnIds: ['time', 'device'], pinnedColumnIds: ['device', 'speed', 'unknown'] }))
+    const pinned = renderHook(() => useRequestLogColumns())
+    expect(pinned.result.current.pinnedColumnIds).toEqual(['device'])
+    act(() => pinned.result.current.showAllColumns())
+    expect(pinned.result.current.pinnedColumnIds).toEqual(pinned.result.current.visibleColumnIds)
+    act(() => pinned.result.current.resetColumns())
+    expect(pinned.result.current.pinnedColumnIds).toEqual([])
+    expect(pinned.result.current.visibleColumnIds).not.toContain('device')
+  })
+
+  it('checks only rendered columns and restores auto-hidden columns when the window widens', async () => {
+    mockHistory([])
+    const resize = mockTableWidth(350)
+    localStorage.setItem('tokenage-request-log-columns', JSON.stringify(['time', 'model', 'session', 'speed']))
+    render(createElement(LogsPage))
+    await screen.findByText('No requests found for the selected filters.')
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
+    expect(columnHeaders()).toEqual(['Time', 'Model', 'Session'])
+    for (const checkbox of screen.getAllByRole('checkbox')) {
+      const label = checkbox.closest('label')!.querySelector('span')!.textContent
+      expect((checkbox as HTMLInputElement).checked).toBe(columnHeaders().includes(label))
+    }
+    expect(columnCheckbox('Speed').closest('label')!.textContent).toContain('hidden: narrow window')
+    expect(columnCheckbox('Device').closest('label')!.textContent).not.toContain('hidden: narrow window')
+    resize(450)
+    expect(columnHeaders()).toEqual(['Time', 'Model', 'Session', 'Speed'])
+    expect(columnCheckbox('Speed').checked).toBe(true)
+    expect(screen.queryByText('hidden: narrow window')).toBeNull()
+  })
+
+  it('pins a checked auto-hidden column, drops the next priority instead, persists and unpins on uncheck', async () => {
+    mockHistory([])
+    mockTableWidth(350)
+    const key = 'tokenage-request-log-columns'
+    localStorage.setItem(key, JSON.stringify(['time', 'model', 'session', 'speed']))
+    const view = render(createElement(LogsPage))
+    await screen.findByText('No requests found for the selected filters.')
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
+    fireEvent.click(columnCheckbox('Speed'))
+    expect(columnHeaders()).toEqual(['Time', 'Model', 'Speed'])
+    expect(columnCheckbox('Speed').checked).toBe(true)
+    expect(columnCheckbox('Session').checked).toBe(false)
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({
+      visibleColumnIds: ['time', 'model', 'session', 'speed'], pinnedColumnIds: ['speed'],
+    })
+    view.unmount()
+    render(createElement(LogsPage))
+    await screen.findByText('No requests found for the selected filters.')
+    expect(columnHeaders()).toEqual(['Time', 'Model', 'Speed'])
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
+    fireEvent.click(columnCheckbox('Speed'))
+    expect(columnHeaders()).toEqual(['Time', 'Model', 'Session'])
+    expect(columnCheckbox('Speed').checked).toBe(false)
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({
+      visibleColumnIds: ['time', 'model', 'session'], pinnedColumnIds: [],
+    })
+  })
+
+  it('keeps pinned columns when their widths overflow and preserves the resize stability rule', async () => {
+    mockHistory([])
+    mockTableWidth(100)
+    localStorage.setItem('tokenage-request-log-columns', JSON.stringify({
+      visibleColumnIds: ['time', 'model', 'session', 'speed'], pinnedColumnIds: ['session', 'speed'],
+    }))
+    render(createElement(LogsPage))
+    await screen.findByText('No requests found for the selected filters.')
+    expect(columnHeaders()).toEqual(['Session', 'Speed'])
+    const width = screen.getAllByRole('columnheader').reduce((sum, th) => sum + parseFloat(th.style.width), 0)
+    expect(width).toBeGreaterThan(100)
+    fireEvent.mouseDown(screen.getAllByRole('columnheader')[0].querySelector('.col-resize-handle')!)
+    expect(columnHeaders()).toEqual(['Time', 'Model', 'Session', 'Speed'])
+    fireEvent.mouseUp(document)
+    expect(columnHeaders()).toEqual(['Session', 'Speed'])
+  })
+
+  it('keeps spacers in table coordinates and removes the bottom spacer at the last loaded row', async () => {
+    tableHeaderHeight = 63
+    mockHistory()
+    render(createElement(LogsPage))
+    await waitFor(() => expect(document.querySelector('tbody[data-index]')).toBeTruthy())
+    const assertSpacers = () => {
+      const bodies = [...document.querySelectorAll<HTMLTableSectionElement>('tbody[data-index]')]
+      const spacers = document.querySelectorAll<HTMLTableCellElement>('tr[aria-hidden] td')
+      const first = Number(bodies[0].dataset.index)
+      const last = Number(bodies.at(-1)!.dataset.index)
+      expect(spacers[0].style.height).toBe(`${first * 52}px`)
+      expect(spacers[1].style.height).toBe(`${(99 - last) * 52}px`)
+    }
+    assertSpacers()
+    scrollWindowTo(2000)
+    await waitFor(() => expect(Number(document.querySelector<HTMLElement>('tbody[data-index]')!.dataset.index)).toBeGreaterThan(0))
+    assertSpacers()
+    scrollWindowTo(5000)
+    await waitFor(() => expect(document.querySelector('tbody[data-index="99"]')).toBeTruthy())
+    assertSpacers()
+    // The sentinel must not become the browser's anchor when another page appends.
+    expect(screen.getByTestId('logs-sentinel').parentElement!.style.overflowAnchor).toBe('none')
+  })
+
   it('loads from the sentinel and renders only a window after accumulating a long history', async () => {
     const api = mockHistory(rows(2000, 1000))
     render(createElement(StrictMode, null, createElement(LogsPage)))
@@ -215,8 +439,7 @@ describe('Request Logs table', () => {
     await waitFor(() => expect(intersections.size).toBe(1))
     expect(document.querySelectorAll('tr.expandable-row').length).toBeGreaterThan(0)
     expect(document.querySelectorAll('tr.expandable-row').length).toBeLessThan(40)
-    const viewport = screen.getByTestId('logs-sentinel').parentElement!
-    fireEvent.scroll(viewport, { target: { scrollTop: 25000 } })
+    scrollWindowTo(25000)
     await waitFor(() => expect(document.querySelector('tbody[data-index="480"]')).toBeTruthy())
     expect(document.querySelectorAll('tr.expandable-row').length).toBeLessThan(40)
     await intersectSentinel()
@@ -238,20 +461,37 @@ describe('Request Logs table', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
   })
 
-  it('keeps the visible row anchored during a refresh prepend and scrolls to top on filter change', async () => {
+  it.each([0, 124, 300, 339])('preserves page position on refresh when scrollY=%i is before the first row', async (position) => {
     const history = rows(1000, 300)
     const api = mockHistory(history)
     const view = render(createElement(LogsPage))
     await waitFor(() => expect(intersections.size).toBe(1))
-    const viewport = screen.getByTestId('logs-sentinel').parentElement!
-    fireEvent.scroll(viewport, { target: { scrollTop: 1040 } })
+    // The first row starts at table top 300 + header height 40.
+    scrollWindowTo(position)
+    const scrollTo = vi.spyOn(window, 'scrollTo')
+    api.setHistory([...rows(1010, 10).map(r => ({ ...r, model: 'new-model' })), ...history])
+    app.refreshTrigger++
+    view.rerender(createElement(LogsPage))
+    await waitFor(() => expect(document.querySelector('tbody[data-index="0"]')!.textContent).toContain('new-model'))
+    expect(window.scrollY).toBe(position)
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+
+  it.each([340, 1040])('keeps the visible row anchored at scrollY=%i during a refresh prepend and resets on filter change', async (position) => {
+    const history = rows(1000, 300)
+    const api = mockHistory(history)
+    const view = render(createElement(LogsPage))
+    await waitFor(() => expect(intersections.size).toBe(1))
+    scrollWindowTo(position)
     api.setHistory([...rows(1010, 10), ...history])
     app.refreshTrigger++
     view.rerender(createElement(LogsPage))
-    await waitFor(() => expect(viewport.scrollTop).toBe(1560))
+    await waitFor(() => expect(window.scrollY).toBe(position + 520))
     app.activeSource = 'codex'
     view.rerender(createElement(LogsPage))
-    await waitFor(() => expect(viewport.scrollTop).toBe(0))
+    // The table (document top 300) lands right under the sticky navbar and
+    // filter bar (12 + 56 + 8 + 100).
+    await waitFor(() => expect(window.scrollY).toBe(124))
     expect(usageCalls(api.fetchMock).at(-1)!.searchParams.has('before')).toBe(false)
   })
 })

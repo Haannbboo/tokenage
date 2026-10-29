@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type CSSProperties } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { useWindowVirtualizer } from '@tanstack/react-virtual'
 import { useApp } from '../contexts/AppContext'
 import { useDashboardData } from '../hooks/useDashboardData'
 import { useLogsData } from '../hooks/useLogsData'
@@ -16,9 +16,7 @@ import {
   formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime,
   value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, resolveTimezone, ToolBadge, formatModelName, formatProviderName,
 } from '../utils'
-import { DATE_RANGE_OPTIONS, getSinceDate } from '../dateRange.ts'
 import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
-import type { DateRangeOption } from '../types'
 
 export function LogsPage() {
   // Read session filter from sessionStorage (set by Dashboard/Sessions tab navigation)
@@ -35,20 +33,22 @@ export function LogsPage() {
     sessionStorage.removeItem('tokenage-logs-filters')
   }, [])
 
-  const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice, dateRange, setDateRange, timezone, refreshTrigger } = useApp()
+  const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice, timezone, refreshTrigger } = useApp()
   const tz = resolveTimezone(timezone)
   const {
     columns,
     visibleColumns,
     visibleColumnIds: selectedColumnIds,
-    setVisibleColumnIds: setSelectedColumnIds,
+    pinnedColumnIds,
+    setColumnVisible,
     resetColumns,
+    showAllColumns,
   } = useRequestLogColumns()
 
-  // Dashboard data for summary/sources/providerColors
+  // Filter options cover the full log history, independent of the dashboard range.
   const {
     summary, sources, providerColors,
-  } = useDashboardData({ includeDaily: false, includeHeatmap: false, includeCount: false })
+  } = useDashboardData({ dateRange: 'all', includeDaily: false, includeHeatmap: false, includeCount: false })
 
   // Session filter state (local to logs view)
   const [sessionFilter, setSessionFilter] = useState<string | null>(storedSessionFilter)
@@ -64,48 +64,72 @@ export function LogsPage() {
     usageRows, setUsageRows, hasMore, loadMore, loadMoreFailed, scrollReset,
     logsLoading, expandedRow, setExpandedRow,
     colWidths, isResizing, handleResizeStart,
-  } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, deviceFilter: activeDevice, dateRange })
+  } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, deviceFilter: activeDevice })
 
   // Sessions data for the session filter dropdown
-  const { sessions } = useSessionSelectorData({ activeSource, dateRange })
+  const { sessions } = useSessionSelectorData({ activeSource, dateRange: 'all' })
 
-  // Distinct tool names for the tool filter dropdown (fetched from API, filtered by time range)
+  // Distinct tool names across the full log history.
   const [availableTools, setAvailableTools] = useState<string[]>([])
   useEffect(() => {
     const controller = new AbortController()
-    const since = getSinceDate(dateRange)
     const url = new URL('/usage/tools', window.location.origin)
-    if (since) url.searchParams.set('since', since)
     fetch(url.toString(), { signal: controller.signal })
       .then(r => r.ok ? r.json() : [])
       .then(data => { if (!controller.signal.aborted) setAvailableTools(data) })
       .catch((err) => { if (err?.name !== 'AbortError') console.warn('Failed to fetch tools', err) })
     return () => controller.abort()
-  }, [dateRange, refreshTrigger])
+  }, [refreshTrigger])
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
+  const tableRef = useRef<HTMLTableElement>(null)
+  const filterBarRef = useRef<HTMLDivElement>(null)
   const [tableWidth, setTableWidth] = useState(0)
+  // Document offset of the table: the window scrolls, so the virtualizer
+  // needs to know where the list starts inside the document.
+  const [tableTop, setTableTop] = useState(0)
+  const [tableHeaderHeight, setTableHeaderHeight] = useState(0)
+  const [filterHeight, setFilterHeight] = useState(0)
   const sentinelRef = useRef<HTMLDivElement>(null)
-  const rowVirtualizer = useVirtualizer({
+  const rowVirtualizer = useWindowVirtualizer({
     count: usageRows.length,
-    getScrollElement: () => tableContainerRef.current,
     estimateSize: () => 52,
     getItemKey: useCallback((index: number) => usageRows[index].id, [usageRows]),
     overscan: 8,
-    paddingStart: 40,
+    paddingStart: tableHeaderHeight,
+    scrollMargin: tableTop,
   })
   const virtualRows = rowVirtualizer.getVirtualItems()
   const anchorRef = useRef<{ id: string; offset: number } | null>(null)
   const previousList = useRef({ head: '', scrollReset: -1 })
-  const rememberAnchor = () => {
-    const scrollTop = tableContainerRef.current?.scrollTop ?? 0
-    const item = rowVirtualizer.getVirtualItemForOffset(scrollTop)
-    anchorRef.current = item ? { id: String(item.key), offset: item.start - scrollTop } : null
-  }
+  const rememberAnchor = useCallback(() => {
+    const scrollY = window.scrollY
+    const item = rowVirtualizer.getVirtualItemForOffset(scrollY)
+    // Before the list (including its header), the virtualizer still returns row 0.
+    // Preserve the page position there so a prepend leaves new requests in view.
+    anchorRef.current = item && scrollY >= item.start ? { id: String(item.key), offset: item.start - scrollY } : null
+  }, [rowVirtualizer])
+  // Scroll the table back under the sticky filter bar after a filter change.
+  const scrollTableIntoView = useCallback(() => {
+    const table = tableRef.current
+    if (!table) return
+    const styles = getComputedStyle(document.documentElement)
+    const size = (name: string) => parseFloat(styles.getPropertyValue(name)) || 0
+    const navBottom = size('--navbar-top') + size('--navbar-height')
+    const top = table.getBoundingClientRect().top + window.scrollY
+    window.scrollTo({ top: Math.max(0, top - navBottom - filterHeight - size('--sticky-gap')) })
+  }, [filterHeight])
+  useLayoutEffect(() => {
+    const table = tableRef.current
+    if (!table) return
+    const top = table.getBoundingClientRect().top + window.scrollY
+    setTableTop(prev => (Math.abs(prev - top) < 1 ? prev : top))
+    setTableHeaderHeight(table.tHead?.offsetHeight ?? 0)
+  })
   useLayoutEffect(() => {
     const head = usageRows[0]?.id ?? ''
     if (previousList.current.scrollReset !== scrollReset) {
-      rowVirtualizer.scrollToOffset(0)
+      scrollTableIntoView()
     } else if (previousList.current.head !== head && anchorRef.current) {
       const anchor = anchorRef.current
       const index = usageRows.findIndex(row => row.id === anchor.id)
@@ -116,12 +140,24 @@ export function LogsPage() {
     rememberAnchor()
   })
   useEffect(() => {
+    const filter = filterBarRef.current
+    if (!filter) return
+    const update = () => setFilterHeight(prev => (prev === filter.offsetHeight ? prev : filter.offsetHeight))
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(filter)
+    return () => observer.disconnect()
+  }, [])
+  useEffect(() => {
+    window.addEventListener('scroll', rememberAnchor, { passive: true })
+    return () => window.removeEventListener('scroll', rememberAnchor)
+  }, [rememberAnchor])
+  useEffect(() => {
     const sentinel = sentinelRef.current
-    const root = tableContainerRef.current
-    if (!sentinel || !root || !hasMore || logsLoading || loadMoreFailed) return
+    if (!sentinel || !hasMore || logsLoading || loadMoreFailed) return
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) void loadMore()
-    }, { root, rootMargin: '300px' })
+    }, { rootMargin: '300px' })
     observer.observe(sentinel)
     return () => observer.disconnect()
   }, [hasMore, logsLoading, loadMore, loadMoreFailed])
@@ -204,7 +240,7 @@ export function LogsPage() {
     const toRemove = new Set<RequestLogColumnId>()
     let remaining = totalWidth
     for (const col of hidePriority) {
-      if (!visibleIds.includes(col)) continue
+      if (!visibleIds.includes(col) || pinnedColumnIds.includes(col)) continue
       if (toRemove.size >= visibleIds.length - 1) break
       toRemove.add(col)
       remaining -= colWidths[col] ?? 100
@@ -212,11 +248,10 @@ export function LogsPage() {
     }
 
     return visibleColumns.filter(c => !toRemove.has(c.id))
-  }, [visibleColumns, colWidths, tableWidth, isResizing])
+  }, [visibleColumns, pinnedColumnIds, colWidths, tableWidth, isResizing])
 
   const getHeaderStyle = (columnId: RequestLogColumnId): CSSProperties => ({
     width: colWidths[columnId],
-    position: 'relative',
   })
 
   const renderLoadingCell = (columnId: RequestLogColumnId) => {
@@ -640,8 +675,8 @@ export function LogsPage() {
   }
 
   return (
-    <div className="logs-page">
-      <div className="filter-bar">
+    <div className="logs-page" style={{ '--logs-filter-height': `${filterHeight}px` } as CSSProperties}>
+      <div className="filter-bar" ref={filterBarRef}>
         <div className="filter-group">
           <div className="filter-label">{t('Model')}</div>
           <ModelSelector
@@ -695,25 +730,14 @@ export function LogsPage() {
           </select>
         </div>
 
-        <div className="filter-group">
-          <div className="filter-label">{t('Date Range')}</div>
-          <select
-            className="input-plain"
-            value={dateRange}
-            onChange={(e) => setDateRange(e.target.value as DateRangeOption)}
-          >
-            {DATE_RANGE_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{t(o.label)}</option>
-            ))}
-          </select>
-        </div>
-
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', alignSelf: 'flex-end' }}>
            <RequestLogColumnsControl
             columns={columns}
             selectedColumnIds={selectedColumnIds}
-            setSelectedColumnIds={setSelectedColumnIds}
+            displayedColumnIds={effectiveVisibleColumns.map(column => column.id)}
+            setColumnVisible={setColumnVisible}
             resetColumns={resetColumns}
+            showAllColumns={showAllColumns}
            />
            <button
             className="btn-ghost btn-refresh"
@@ -731,7 +755,6 @@ export function LogsPage() {
               setActiveDevice(null)
               setSessionFilter(null)
               setToolFilter(null)
-              setDateRange('24h')
             }}
            >
              {t('Reset')}
@@ -756,8 +779,13 @@ export function LogsPage() {
       )}
 
       <div className="panel">
-          <div ref={tableContainerRef} onScroll={rememberAnchor} className="panel-body" style={{ padding: 0, maxHeight: '70vh', overflow: 'auto', overflowAnchor: 'none' }}>
-            <table className="table" style={{ tableLayout: 'fixed' }} data-request-log-column-count={effectiveVisibleColumns.length}>
+          <div ref={tableContainerRef} className="panel-body" style={{ padding: 0, overflowAnchor: 'none' }}>
+            <table
+              ref={tableRef}
+              className="table"
+              style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0 }}
+              data-request-log-column-count={effectiveVisibleColumns.length}
+            >
             <thead>
               <tr>
                 {effectiveVisibleColumns.map((column) => (
@@ -782,7 +810,7 @@ export function LogsPage() {
                 ))
               ) : null}
               {virtualRows.length > 0 && (
-                <tr aria-hidden="true"><td colSpan={effectiveVisibleColumns.length} style={{ height: virtualRows[0].start - 40, padding: 0, border: 0 }} /></tr>
+                <tr aria-hidden="true"><td colSpan={effectiveVisibleColumns.length} style={{ height: Math.max(0, virtualRows[0].start - tableTop - tableHeaderHeight), padding: 0, border: 0 }} /></tr>
               )}
             </tbody>
               {virtualRows.map(virtualRow => {
@@ -888,8 +916,9 @@ export function LogsPage() {
                 )
               })}
             <tbody>
+              {/* Item offsets include scrollMargin; total size is table-relative. */}
               {virtualRows.length > 0 && (
-                <tr aria-hidden="true"><td colSpan={effectiveVisibleColumns.length} style={{ height: rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end, padding: 0, border: 0 }} /></tr>
+                <tr aria-hidden="true"><td colSpan={effectiveVisibleColumns.length} style={{ height: Math.max(0, rowVirtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1].end - tableTop)), padding: 0, border: 0 }} /></tr>
               )}
               {usageRows.length === 0 && !logsLoading && (
                 <tr>

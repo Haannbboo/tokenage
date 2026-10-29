@@ -7,7 +7,7 @@
 /* Top Navbar */
 .top-navbar {
   position: sticky;
-  top: 12px;
+  top: var(--navbar-top);
   z-index: 100;
   margin: 0 clamp(16px, 4vw, 80px);
   background-color: var(--glass-bg);
@@ -18,7 +18,7 @@
   box-shadow: var(--shadow-premium);
   display: flex;
   align-items: center;
-  height: 56px;
+  height: var(--navbar-height);
   padding: 8px 24px;
 }
 
@@ -236,6 +236,7 @@
 }
 
 .table th {
+  position: relative;
   text-align: left;
   padding: 12px 16px;
   color: var(--text-muted);
@@ -246,6 +247,28 @@
   border-bottom: 1px solid var(--border-color);
   transition: background-color 0.15s ease;
   user-select: none;
+}
+
+.logs-page .table td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The log table scrolls with the page, so its header sticks right under the
+   navbar and the filter bar. It carries the same liquid glass as the navbar,
+   so the rows sliding under it blur out instead of showing through. */
+.logs-page .table thead th {
+  position: sticky;
+  top: calc(var(--sticky-nav-bottom) + var(--logs-filter-height, 0px));
+  z-index: 3;
+  color: var(--text-secondary);
+  background-color: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: 0 6px 10px -8px rgba(0, 0, 0, 0.25);
+}
+
+.logs-page .table thead th:hover {
+  background-image: linear-gradient(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.04));
 }
 
 .table th:hover {
@@ -1221,14 +1244,20 @@
 }
 
 .filter-bar {
+  position: sticky;
+  top: var(--sticky-nav-bottom);
+  z-index: 90;
   display: flex;
   gap: 16px;
   align-items: center;
   flex-wrap: wrap;
   padding: 16px 24px;
-  background: var(--card-bg);
+  background-color: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
   border-radius: 12px;
-  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-premium);
   margin-bottom: 24px;
 }
 

@@ -1,18 +1,20 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import type { DailyUsage, UsageSummary } from '../types'
+import type { DailyUsage, DateRangeOption, UsageSummary } from '../types'
 import { getSinceDate, rangeGranularity } from '../dateRange.ts'
 import { getTimezoneOffset, resolveTimezone, FIXED_PROVIDER_COLORS, PALETTE, netThroughput } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
 type DashboardDataOptions = {
+  dateRange?: DateRangeOption
   includeDaily?: boolean
   includeHeatmap?: boolean
   includeCount?: boolean
 }
 
-export function useDashboardData({ includeDaily = true, includeHeatmap = true, includeCount = true }: DashboardDataOptions = {}) {
-  const { refreshTrigger, setError, activeFilter, activeSource, activeDevice, dateRange, timezone } = useApp()
+export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = true, includeHeatmap = true, includeCount = true }: DashboardDataOptions = {}) {
+  const { refreshTrigger, setError, activeFilter, activeSource, activeDevice, dateRange: appDateRange, timezone } = useApp()
+  const dateRange = dateRangeOverride ?? appDateRange
   const tz = resolveTimezone(timezone)
 
   const [summary, setSummary] = useState<UsageSummary[]>([])

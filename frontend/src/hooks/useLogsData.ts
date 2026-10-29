@@ -1,7 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
-import type { UsageRow, DateRangeOption, ActiveFilter } from '../types'
+import type { UsageRow, ActiveFilter } from '../types'
 import type { RequestLogColumnId } from './useRequestLogColumns'
-import { getSinceDate } from '../dateRange.ts'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -42,7 +41,6 @@ export function useLogsData(opts: {
   sessionFilter: string | null
   toolFilter: string | null
   deviceFilter: string | null
-  dateRange: DateRangeOption
 }) {
   const { refreshTrigger, setError } = useApp()
 
@@ -124,7 +122,7 @@ export function useLogsData(opts: {
 
   const provider = opts.activeFilter?.provider
   const model = opts.activeFilter?.model
-  const { activeSource, sessionFilter, toolFilter, deviceFilter, dateRange } = opts
+  const { activeSource, sessionFilter, toolFilter, deviceFilter } = opts
   const query = useMemo(() => {
     const params = new URLSearchParams({ limit: String(LOGS_PAGE_SIZE) })
     if (provider) params.set('provider', provider)
@@ -133,10 +131,8 @@ export function useLogsData(opts: {
     if (sessionFilter) params.set('session_id', sessionFilter)
     if (toolFilter) params.set('tool_name', toolFilter)
     if (deviceFilter) params.set('device_id', deviceFilter)
-    const since = getSinceDate(dateRange)
-    if (since) params.set('since', since)
     return params.toString()
-  }, [provider, model, activeSource, sessionFilter, toolFilter, deviceFilter, dateRange])
+  }, [provider, model, activeSource, sessionFilter, toolFilter, deviceFilter])
 
   const fetchPage = useCallback(async (controller: AbortController, before?: string): Promise<UsageRow[]> => {
     const url = new URL('/usage', window.location.origin)

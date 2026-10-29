@@ -280,9 +280,11 @@ def login(
         previous = {}
     if previous.get("server_url") == server:
         ingest_token = previous.get("ingest_token")
-        # The server caps this field; an over-long value would fail every
-        # login, so it is simply not sent.
-        if isinstance(ingest_token, str) and 0 < len(ingest_token) <= 256:
+        # Match src/auth/routes.py CliExchangeRequest.ingest_token validation
+        # so a corrupt saved token cannot make every login fail with a 422.
+        if isinstance(ingest_token, str) and re.fullmatch(
+            r"[\x20-\x7E]{1,256}", ingest_token
+        ):
             body["ingest_token"] = ingest_token
     # The server validates both fields strictly; a malformed one would fail the
     # exchange permanently, so an unrecognized value is simply not sent.

@@ -312,9 +312,15 @@ def test_relogin_only_sends_ingest_token_to_its_server(
     assert "previous-ingest-token" not in output.out + output.err
 
 
-def test_relogin_drops_an_ingest_token_the_server_would_reject(monkeypatch, capsys):
-    """An over-long stored token must not make every login fail with a 422."""
-    stored_token = "t" * 300
+@pytest.mark.parametrize(
+    "stored_token",
+    ["t" * 300, "t\u00e9", "t\n", "t\x7f"],
+    ids=["overlong", "non-ascii", "newline", "delete"],
+)
+def test_relogin_drops_an_ingest_token_the_server_would_reject(
+    monkeypatch, capsys, stored_token
+):
+    """An invalid stored token must not make every login fail with a 422."""
     auth.save_credentials(
         {"server_url": "https://srv.example", "ingest_token": stored_token}
     )

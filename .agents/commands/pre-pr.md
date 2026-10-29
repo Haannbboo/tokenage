@@ -32,6 +32,7 @@ Run this before pushing/opening a PR.
 Backend touched:
 
 - [ ] `uv run python -m pytest -q` or documented fallback to `./.venv/bin/python -m pytest -q`
+- [ ] Time the suite on this branch and on `origin/main`: `uv run python -m pytest -q` and `uv run python -m pytest -q -m "not slow" -n 4`, plus `--durations=10`, or the documented `./.venv/bin/python -m pytest` fallback. Rerun a time that looks off (host load is noisy).
 
 Scripts touched:
 

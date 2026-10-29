@@ -74,6 +74,11 @@ def _iso_to_millis(value: str) -> int:
 # uniqueness constraint on a real shared key, which doesn't exist yet.
 DEDUP_WINDOW_MICROS = 15_000_000
 
+# ponytail: cap same-path OTLP matching at 2 seconds and require equal latency;
+# parallel requests can have identical token counts but different latencies,
+# while duplicate copies read the same message and share its latency.
+OTLP_DEDUP_WINDOW_MICROS = 2_000_000
+
 # `provider` is not a reliable match field: OTLP's opencode/kilo parser
 # reports the agent's own configured provider alias (e.g. "tokenage
 # proxy" when opencode points at the local proxy), while the proxy reports
@@ -110,17 +115,24 @@ def merge_duplicate_usage(
     cached_tokens: int | None,
     total_tokens: int | None,
     cache_creation_tokens: int | None,
+    reasoning_tokens: int | None,
+    tool_tokens: int | None,
+    latency_ms: int | None,
+    status: int | None,
     ts: int,
     session_id: str | None,
     user_id: str,
     device_id: str,
     session: Session,
-) -> Usage | None:
-    """Find a same-shaped usage row already recorded by the other collection path
-    and enrich it instead of inserting a duplicate.
+) -> tuple[Usage, bool] | None:
+    """Find a same-shaped usage row and avoid inserting a duplicate.
+
+    Return the matching row and whether the OTLP event is a repeat.
+    Repeated OTLP events in the same session return the existing row untouched.
+    The caller must drop these without attaching tools or running follow-up work.
 
     `is_otlp` is whether the call currently being recorded is OTLP-sourced;
-    the lookup searches the opposite path (OTLP looks for a proxy row and
+    the cross-path lookup searches the opposite path (OTLP looks for a proxy row and
     vice versa) so a request captured by both never double-counts. The match
     includes the device: identical events from two machines never merge.
 
@@ -134,6 +146,40 @@ def merge_duplicate_usage(
     moment the existing row was inserted, so changing them here would desync
     those aggregates without a matching correction.
     """
+    shape_filters = (
+        Usage.user_id == user_id,
+        Usage.device_id == device_id,
+        Usage.model == normalize_model_name(model),
+        Usage.prompt_tokens == prompt_tokens,
+        Usage.completion_tokens == completion_tokens,
+        Usage.cached_tokens == cached_tokens,
+        Usage.total_tokens == total_tokens,
+        # Proxy normalizes a missing cache-write to 0 while the OTLP
+        # extractors leave it NULL; match the same logical count.
+        func.coalesce(Usage.cache_creation_tokens, 0)
+        == func.coalesce(cache_creation_tokens, 0),
+    )
+    if is_otlp and session_id is not None:
+        repeated = session.scalar(
+            select(Usage)
+            .where(
+                *shape_filters,
+                func.coalesce(Usage.reasoning_tokens, 0)
+                == func.coalesce(reasoning_tokens, 0),
+                func.coalesce(Usage.tool_tokens, 0) == func.coalesce(tool_tokens, 0),
+                Usage.latency_ms.is_not_distinct_from(latency_ms),
+                Usage.status == status,
+                Usage.endpoint == "otlp",
+                Usage.client_source == client_source,
+                Usage.session_id == session_id,
+                Usage.ts >= ts - OTLP_DEDUP_WINDOW_MICROS,
+                Usage.ts <= ts + OTLP_DEDUP_WINDOW_MICROS,
+            )
+            .limit(1)
+        )
+        if repeated is not None:
+            return repeated, True
+
     family = _CLIENT_SOURCE_FAMILIES.get(client_source or "")
     if family is None:
         return None
@@ -143,24 +189,11 @@ def merge_duplicate_usage(
     existing = session.scalar(
         select(Usage)
         .where(
-            and_(
-                endpoint_filter,
-                Usage.user_id == user_id,
-                Usage.device_id == device_id,
-                Usage.client_source.in_(other_path_sources),
-                Usage.model == normalize_model_name(model),
-                Usage.prompt_tokens == prompt_tokens,
-                Usage.completion_tokens == completion_tokens,
-                Usage.cached_tokens == cached_tokens,
-                Usage.total_tokens == total_tokens,
-                # Proxy normalizes a missing cache-write to 0 while the OTLP
-                # extractors leave it NULL; coalesce so the two paths still
-                # match on the same logical request.
-                func.coalesce(Usage.cache_creation_tokens, 0)
-                == func.coalesce(cache_creation_tokens, 0),
-                Usage.ts >= ts - DEDUP_WINDOW_MICROS,
-                Usage.ts <= ts + DEDUP_WINDOW_MICROS,
-            )
+            *shape_filters,
+            endpoint_filter,
+            Usage.client_source.in_(other_path_sources),
+            Usage.ts >= ts - DEDUP_WINDOW_MICROS,
+            Usage.ts <= ts + DEDUP_WINDOW_MICROS,
         )
         .order_by(func.abs(Usage.ts - ts))
         # Row lock is PostgreSQL-only; the SQLite dialect ignores FOR UPDATE
@@ -170,6 +203,9 @@ def merge_duplicate_usage(
     )
     if existing is None:
         return None
+
+    if is_otlp and session_id is not None and existing.session_id == session_id:
+        return existing, True
 
     session_id_was_empty = not existing.session_id
     if session_id is not None and (is_otlp or existing.session_id is None):
@@ -204,7 +240,7 @@ def merge_duplicate_usage(
                 "Failed to update session record for merged usage ts=%s", existing.ts
             )
 
-    return existing
+    return existing, False
 
 
 def log_usage(

@@ -64,11 +64,11 @@ def test_record_usage_normalizes_models_and_rollups(test_db, monkeypatch):
         costs.MODEL_COSTS, canonical, ModelCost(input=0, output=0, cache_read=0)
     )
     usages = []
-    for model in (" Space-Bunny-Free ", "STEALTH/SPACE-BUNNY-ALPHA"):
+    for index, model in enumerate((" Space-Bunny-Free ", "STEALTH/SPACE-BUNNY-ALPHA")):
         usage = ingest_write(
             record_usage,
             device_id="test-device",
-            ts=1779148800000000,
+            ts=1779148800000000 + index * 3_000_000,
             provider="normalization-test",
             model=model,
             client_source="opencode",
@@ -148,11 +148,11 @@ def test_record_usage_normalizes_provider_without_losing_pricing(test_db, monkey
     monkeypatch.setitem(costs.MODEL_COST_SOURCES, "test-model", "test-source")
     assert costs.resolve_cost_match("test-model").source == "test-source"
 
-    for name in ("CUSTOM-PROVIDER", "Custom-Provider"):
+    for index, name in enumerate(("CUSTOM-PROVIDER", "Custom-Provider")):
         usage = ingest_write(
             record_usage,
             device_id="test-device",
-            ts=1779148800000000,
+            ts=1779148800000000 + index * 3_000_000,
             provider=name,
             model="test-model",
             session_id="provider-normalization",
@@ -690,7 +690,8 @@ def _record_otlp_usage(test_db, **overrides):
         user_id="test-user",
     )
     fields.update(overrides)
-    return ingest_write(record_usage, device_id="test-device", **fields)
+    fields.setdefault("device_id", "test-device")
+    return ingest_write(record_usage, **fields)
 
 
 def _record_proxy_usage(test_db, **overrides):
@@ -711,7 +712,8 @@ def _record_proxy_usage(test_db, **overrides):
         user_id="test-user",
     )
     fields.update(overrides)
-    return ingest_write(record_usage, device_id="test-device", **fields)
+    fields.setdefault("device_id", "test-device")
+    return ingest_write(record_usage, **fields)
 
 
 @pytest.mark.parametrize("otlp_first", [True, False])
@@ -797,6 +799,56 @@ def test_record_usage_merges_otlp_duplicate_into_existing_proxy_row(test_db):
         assert record.total_tokens == 150
 
 
+def test_proxy_first_repeated_otlp_runs_follow_up_once(test_db, monkeypatch):
+    from unittest.mock import Mock
+
+    from sqlalchemy.orm import Session
+
+    from src import otlp
+    from src.database.engine import get_engine
+    from src.database.models import SessionRecord
+
+    proxy = _record_proxy_usage(test_db, client_source="opencode")
+    fields = dict(
+        ts=1779148800000000 + 4_000_000,
+        provider="anthropic",
+        model="claude-3",
+        client_source="opencode",
+        session_id="otlp-session-1",
+        endpoint="otlp",
+        prompt_tokens=100,
+        completion_tokens=50,
+        cached_tokens=0,
+        total_tokens=150,
+        status=200,
+        user_id="test-user",
+        _tool_info=[{"tool_use_id": "tool", "tool_name": "bash", "ts": 1779148800000}],
+    )
+    monkeypatch.setattr(
+        otlp, "_extract_opencode_fields", lambda *a, **kw: fields.copy()
+    )
+    follow_up = Mock()
+    monkeypatch.setattr(otlp, "record_tool_call", follow_up)
+    for _ in range(3):
+        ingest_write(
+            otlp._parse_opencode_record,
+            {},
+            [],
+            "otlp-session-1",
+            user_id="test-user",
+            device_id="test-device",
+            db_path=test_db,
+        )
+
+    follow_up.assert_called_once()
+    assert follow_up.call_args.kwargs["usage_id"] == proxy.id
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
+    assert len(rows) == 1
+    assert rows[0]["session_id"] == "otlp-session-1"
+    with Session(get_engine(test_db)) as session:
+        assert session.get(SessionRecord, "otlp-session-1").request_count == 1
+
+
 def test_record_usage_keeps_proxy_row_when_tokens_differ(test_db):
     assert _record_otlp_usage(test_db) is not None
 
@@ -828,16 +880,101 @@ def test_record_usage_keeps_proxy_row_for_unrecognized_client_source(test_db):
     assert len(rows) == 2
 
 
-def test_record_usage_otlp_rows_are_never_deduped_against_each_other(test_db):
-    """The dedup check only matches the opposite collection path."""
-    first = _record_otlp_usage(test_db)
-    second = _record_otlp_usage(test_db, ts=1779148800000000 + 1_000_000)
+@pytest.mark.parametrize(
+    "source", ["claude-code", "codex", "opencode", "kilo", "gemini", "future-agent"]
+)
+@pytest.mark.parametrize("offset", [0, 1_000_000, 2_000_000, -2_000_000])
+@pytest.mark.parametrize("latency_ms", [999, None])
+def test_record_usage_drops_repeated_otlp(test_db, source, offset, latency_ms):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
 
+    from src.database import get_engine
+    from src.database.models import SessionRecord, ToolCall, UsageHourly
+
+    first = _record_otlp_usage(test_db, client_source=source, latency_ms=latency_ms)
+    second = _record_otlp_usage(
+        test_db,
+        client_source=source,
+        ts=1779148800000000 + offset,
+        provider="different-provider",
+        cache_creation_tokens=0,
+        reasoning_tokens=0,
+        tool_tokens=0,
+        latency_ms=latency_ms,
+        tool_calls=[("must-not-attach", "bash")],
+    )
+    assert first is not None
+    assert second is None
+    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
+    assert len(rows) == 1
+    assert rows[0]["provider"] == "anthropic"
+    assert rows[0]["ts"] == first.ts
+    with Session(get_engine(test_db)) as session:
+        hourly = session.scalars(select(UsageHourly)).all()
+        assert len(hourly) == 1
+        assert hourly[0].request_count == 1
+        assert hourly[0].prompt_tokens == 100
+        sessions = session.scalars(select(SessionRecord)).all()
+        assert len(sessions) == 1
+        assert sessions[0].request_count == 1
+        assert session.scalars(select(ToolCall)).all() == []
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ts": 1779148800000000 + 2_000_001},
+        {"ts": 1779148800000000 - 2_000_001},
+        {"session_id": "another-session"},
+        {"session_id": None},
+        {"device_id": "another-device"},
+        {"user_id": "another-user"},
+        {"client_source": "claude"},
+        {"model": "another-model"},
+        {"prompt_tokens": 101},
+        {"completion_tokens": 51},
+        {"cached_tokens": 1},
+        {"total_tokens": 151},
+        {"cache_creation_tokens": 1},
+        {"reasoning_tokens": 1},
+        {"tool_tokens": 1},
+        {"status": 500},
+    ],
+)
+def test_record_usage_keeps_distinct_otlp(test_db, overrides):
+    first = _record_otlp_usage(test_db)
+    second = _record_otlp_usage(test_db, **overrides)
     assert first is not None
     assert second is not None
     assert first.id != second.id
-    rows = fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")
-    assert len(rows) == 2
+
+
+@pytest.mark.parametrize(
+    "first_latency,second_latency",
+    [(760, 751), (532, 549), (711, 769), (None, 751), (760, None)],
+)
+def test_record_usage_keeps_parallel_otlp_with_different_latency(
+    test_db, first_latency, second_latency
+):
+    first = _record_otlp_usage(test_db, latency_ms=first_latency)
+    second = _record_otlp_usage(
+        test_db, ts=1779148800000000 + 42_000, latency_ms=second_latency
+    )
+    assert first is not None
+    assert second is not None
+    assert first.id != second.id
+    assert len(fetch_recent_usage(limit=10, db_path=test_db, user_id="test-user")) == 2
+
+
+def test_record_usage_keeps_otlp_without_session(test_db):
+    assert _record_otlp_usage(test_db, session_id=None) is not None
+    assert _record_otlp_usage(test_db, session_id=None) is not None
+
+
+def test_record_usage_drops_otlp_with_normalized_model(test_db):
+    assert _record_otlp_usage(test_db, model=" Space-Bunny-Free ") is not None
+    assert _record_otlp_usage(test_db, model="STEALTH/SPACE-BUNNY-ALPHA") is None
 
 
 def test_record_usage_merges_kilo_and_opencode_across_the_family(test_db):

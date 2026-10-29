@@ -16,6 +16,7 @@ Use for docs-only, config-only, tiny low-risk fixes, or isolated cleanup.
 ## Testing
 
 - `command`: pass/fail/not run — result or reason
+- Test time (branch vs `origin/main`): serial `<s>` vs `<s>`, parallel `<s>` vs `<s>`; new slow tests: none / list
 
 ## Review
 
@@ -46,6 +47,7 @@ Use for most behavior changes.
 ## Testing
 
 - `command`: pass/fail/not run — result or reason
+- Test time (branch vs `origin/main`): serial `<s>` vs `<s>`, parallel `<s>` vs `<s>`; new slow tests: none / list
 
 ## Risk Areas
 
@@ -100,6 +102,7 @@ This PR changes high-risk area(s): <list>.
 ## Testing
 
 - `command`: pass/fail/not run — result or reason
+- Test time (branch vs `origin/main`): serial `<s>` vs `<s>`, parallel `<s>` vs `<s>`; new slow tests: none / list
 
 ## Risk / Rollout / Rollback
 

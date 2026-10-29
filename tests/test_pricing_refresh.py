@@ -278,7 +278,7 @@ def test_manual_reprice_finds_fresh_cache_and_prices_later_ingest(
 
     row = record(e)
     worker = e.refresh.PricingRefresh()
-    e.clock.wall += 1
+    e.clock.wall += 3  # A distinct request beyond the OTLP dedup ceiling.
     record(e)
     e.state.prices["new-model"] = e.price
     monkeypatch.setattr(api, "_request_user_id", lambda _: "u0")
@@ -293,6 +293,7 @@ def test_manual_reprice_finds_fresh_cache_and_prices_later_ingest(
         assert totals(e)[0] is not None
     assert totals(e)[2:] == (10, 10)
     assert e.state.calls[0] is True
+    e.clock.wall += 3
     later = record(e)
     assert later.price_snapshot_id is not None
     assert float(later.total_cost_usd) == 5

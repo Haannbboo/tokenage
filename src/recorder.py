@@ -63,6 +63,7 @@ def record_usage(
 
     *tool_calls* are ``(tool_use_id, tool_name)`` pairs reported with the usage
     itself (the proxy path); they are stored with the row in one transaction.
+    Repeated OTLP events return None so callers skip tools and follow-up work.
     Callers that learn about tool calls later use ``record_tool_call``.
     """
     # Skip if successful and no token counts are available (None or zero).
@@ -75,11 +76,12 @@ def record_usage(
     model = normalize_model_name(model)
     usage_ts = ts if ts is not None else time.time_ns() // 1000
 
+    # Repeated OTLP events are dropped without follow-up work.
     # Proxy and OTLP are independent collection paths for the same agent;
     # either can land first, so check for a same-shaped row already recorded
     # by the other path, enrich it, and return it instead of inserting a
     # duplicate (the caller can still attach tool calls to its id).
-    duplicate = merge_duplicate_usage(
+    match = merge_duplicate_usage(
         client_source=client_source,
         is_otlp=(endpoint == "otlp"),
         model=model,
@@ -88,13 +90,20 @@ def record_usage(
         cached_tokens=cached_tokens,
         total_tokens=total_tokens,
         cache_creation_tokens=cache_creation_tokens,
+        reasoning_tokens=reasoning_tokens,
+        tool_tokens=tool_tokens,
+        latency_ms=latency_ms,
+        status=status,
         ts=usage_ts,
         session_id=session_id,
         user_id=user_id,
         device_id=device_id,
         session=session,
     )
-    if duplicate is not None:
+    if match is not None:
+        duplicate, repeated = match
+        if repeated:
+            return None
         for tool_use_id, tool_name in tool_calls:
             record_tool_call(
                 tool_use_id=tool_use_id,

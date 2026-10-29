@@ -57,3 +57,36 @@ test("a lone incomplete v2 tracker still emits once", async () => {
     release(`message:${messageId}`)
   }
 })
+
+test("an incomplete completion does not block the next event", async () => {
+  const lateId = "v2-nonblocking-late"
+  const nextId = "v2-nonblocking-next"
+  const sent = []
+  const originalFetch = globalThis.fetch
+  let nextEmitted
+  const nextEmission = new Promise((resolve) => { nextEmitted = resolve })
+  globalThis.fetch = async (_url, options) => {
+    sent.push(JSON.parse(options.body))
+    nextEmitted()
+    return { ok: true }
+  }
+  const event = (type, id) => ({ type, created: 2000, data: { sessionID: "s", assistantMessageID: id } })
+  try {
+    createPluginV2("opencode").setup({ options: { endpoint: "http://collector" }, event: { subscribe: async function* () {
+      yield event("session.step.ended", lateId)
+      yield event("session.step.started", nextId)
+      yield event("session.step.ended", nextId)
+    } } })
+    const promptly = await Promise.race([nextEmission.then(() => true), sleep(500).then(() => false)])
+    assert.equal(promptly, true, "the next completion should emit before the grace period ends")
+    assert.equal(sent.length, 1)
+    await sleep(1100)
+    assert.equal(sent.length, 2)
+    const messageIds = sent.map((payload) => payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes.find((a) => a.key === "message.id").value.stringValue)
+    assert.deepEqual(messageIds.sort(), [lateId, nextId].sort())
+  } finally {
+    globalThis.fetch = originalFetch
+    release(`message:${lateId}`)
+    release(`message:${nextId}`)
+  }
+})

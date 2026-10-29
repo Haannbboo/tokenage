@@ -77,46 +77,53 @@ function createV2Tracker(
 
     const now = finiteNumber(event.created) ?? Date.now()
     if (isClaimed(`message:${messageId}`)) return
-    // ponytail: a late subscriber waits at most 1s for a complete tracker to claim.
-    if (!step) await new Promise((resolve) => setTimeout(resolve, 1_000))
-    if (!claim(`message:${messageId}`)) return
-    const error = failed ? data.error : null
-    const statusCode = failed ? (finiteNumber(error?.status) ?? 500) : null
-    const tokens = data.tokens
-    const inputTokens = nonNegative(tokens?.input)
-    const outputTokens = nonNegative(tokens?.output)
-    const reasoningTokens = nonNegative(tokens?.reasoning)
-    const parts = [inputTokens, outputTokens, reasoningTokens]
-    const totalTokens = parts.some((value) => value != null)
-      ? parts.reduce<number>((sum, value) => sum + (value ?? 0), 0)
-      : null
+    const promptLength = promptLengths.get(sessionId) ?? null
+    const capturedMessageId = messageId
+    const capturedSessionId = sessionId
+    async function emitStep(): Promise<void> {
+      // ponytail: a late subscriber waits at most 1s for a complete tracker to claim.
+      if (!step) await new Promise((resolve) => setTimeout(resolve, 1_000))
+      if (!claim(`message:${capturedMessageId}`)) return
+      const error = failed ? data.error : null
+      const statusCode = failed ? (finiteNumber(error?.status) ?? 500) : null
+      const tokens = data.tokens
+      const inputTokens = nonNegative(tokens?.input)
+      const outputTokens = nonNegative(tokens?.output)
+      const reasoningTokens = nonNegative(tokens?.reasoning)
+      const parts = [inputTokens, outputTokens, reasoningTokens]
+      const totalTokens = parts.some((value) => value != null)
+        ? parts.reduce<number>((sum, value) => sum + (value ?? 0), 0)
+        : null
 
-    const payload = buildOtlpPayload(
-      {
-        sessionId,
-        messageId,
-        model: step?.model ?? "unknown",
-        provider: step?.provider ?? "unknown",
-        promptLength: promptLengths.get(sessionId) ?? null,
-        inputTokens,
-        outputTokens,
-        reasoningTokens,
-        cachedTokens: nonNegative(tokens?.cache?.read),
-        cacheCreationTokens: nonNegative(tokens?.cache?.write),
-        totalTokens,
-        // Latency excludes tool execution, like Claude Code and Codex.
-        durationMs: step
-          ? Math.max(0, now - step.startedAt - toolTimeWithin(intervals, step.startedAt, now))
-          : null,
-        ttftMs:
-          step?.firstPartAt != null ? Math.max(0, Math.round(step.firstPartAt - step.startedAt)) : null,
-        statusCode,
-        errorName: failed ? (typeof error?.type === "string" ? error.type : "error") : null,
-        timestampMs: now,
-      },
-      clientSource,
-    )
-    if (!(await emitOtlp(payload, endpoint, 10_000, headers))) release(`message:${messageId}`)
+      const payload = buildOtlpPayload(
+        {
+          sessionId: capturedSessionId,
+          messageId: capturedMessageId,
+          model: step?.model ?? "unknown",
+          provider: step?.provider ?? "unknown",
+          promptLength,
+          inputTokens,
+          outputTokens,
+          reasoningTokens,
+          cachedTokens: nonNegative(tokens?.cache?.read),
+          cacheCreationTokens: nonNegative(tokens?.cache?.write),
+          totalTokens,
+          // Latency excludes tool execution, like Claude Code and Codex.
+          durationMs: step
+            ? Math.max(0, now - step.startedAt - toolTimeWithin(intervals, step.startedAt, now))
+            : null,
+          ttftMs:
+            step?.firstPartAt != null ? Math.max(0, Math.round(step.firstPartAt - step.startedAt)) : null,
+          statusCode,
+          errorName: failed ? (typeof error?.type === "string" ? error.type : "error") : null,
+          timestampMs: now,
+        },
+        clientSource,
+      )
+      if (!(await emitOtlp(payload, endpoint, 10_000, headers))) release(`message:${capturedMessageId}`)
+    }
+    if (step) await emitStep()
+    else void emitStep().catch((err) => console.error("[tokenage] event handling failed:", err))
   }
 
   async function emitTool(event: V2Event, callId: string): Promise<void> {

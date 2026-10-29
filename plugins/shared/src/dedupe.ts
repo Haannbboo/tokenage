@@ -6,6 +6,10 @@ const claimKey = Symbol.for("tokenage.plugin.claimed")
 const shared = globalThis as typeof globalThis & { [claimKey]?: Set<string> }
 const claimed = shared[claimKey] ??= new Set<string>()
 
+export function isClaimed(key: string): boolean {
+  return claimed.has(key)
+}
+
 export function claim(key: string): boolean {
   if (claimed.has(key)) return false
   claimed.add(key)

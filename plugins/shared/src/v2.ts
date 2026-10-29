@@ -1,7 +1,7 @@
 import { finiteNumber } from "./helpers.js"
 import { MAX_TRACKED_MESSAGES } from "./prompt.js"
 import { buildOtlpPayload, buildToolEventPayload, emitOtlp } from "./otlp.js"
-import { claim, release } from "./dedupe.js"
+import { claim, isClaimed, release } from "./dedupe.js"
 import { resolveOptions, toolTimeWithin } from "./plugin.js"
 
 // OpenCode 2 publishes its public event stream through `ctx.event.subscribe()`.
@@ -73,9 +73,13 @@ function createV2Tracker(
     const intervals = toolIntervals.get(messageId) ?? []
     toolIntervals.delete(messageId)
     const sessionId: string | undefined = data.sessionID ?? step?.sessionId
-    if (!sessionId || !claim(`message:${messageId}`)) return
+    if (!sessionId) return
 
     const now = finiteNumber(event.created) ?? Date.now()
+    if (isClaimed(`message:${messageId}`)) return
+    // ponytail: a late subscriber waits at most 1s for a complete tracker to claim.
+    if (!step) await new Promise((resolve) => setTimeout(resolve, 1_000))
+    if (!claim(`message:${messageId}`)) return
     const error = failed ? data.error : null
     const statusCode = failed ? (finiteNumber(error?.status) ?? 500) : null
     const tokens = data.tokens

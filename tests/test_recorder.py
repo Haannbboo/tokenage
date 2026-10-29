@@ -900,6 +900,7 @@ def test_record_usage_drops_repeated_otlp(test_db, source, offset, latency_ms):
         provider="different-provider",
         cache_creation_tokens=0,
         reasoning_tokens=0,
+        tool_tokens=0,
         latency_ms=latency_ms,
         tool_calls=[("must-not-attach", "bash")],
     )
@@ -937,6 +938,7 @@ def test_record_usage_drops_repeated_otlp(test_db, source, offset, latency_ms):
         {"total_tokens": 151},
         {"cache_creation_tokens": 1},
         {"reasoning_tokens": 1},
+        {"tool_tokens": 1},
         {"status": 500},
     ],
 )

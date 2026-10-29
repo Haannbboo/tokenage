@@ -11,7 +11,7 @@ export POSTGRES_PASSWORD=smoke-only
 project="tokenage-smoke-$(basename "$scratch" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
 compose=(docker compose -p "$project" --project-directory "$scratch" -f "$repo/docker/compose.yml" -f "$scratch/override.yml")
 cleanup() {
-    "${compose[@]}" --profile postgres --profile redis --profile nginx down -v --remove-orphans >/dev/null 2>&1 || true
+    "${compose[@]}" --profile postgres --profile redis --profile caddy down -v --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$scratch"
 }
 trap cleanup EXIT
@@ -31,7 +31,7 @@ services:
         source: ./config.yaml
         target: /data/config.yaml
         read_only: true
-  nginx:
+  caddy:
     ports: !override ["127.0.0.1::80"]
 volumes:
   second-data:
@@ -121,35 +121,67 @@ python3 - "$scratch/config.yaml" <<'PY'
 import sys
 from pathlib import Path
 path = Path(sys.argv[1])
-path.write_text(path.read_text().replace("  api_port: 4001", "  base_url: https://smoke.example.test\n  api_port: 4001"))
+config = path.read_text()
+assert config.count("  api_port: 4001") == 1
+config = config.replace("  api_port: 4001", "  base_url: https://smoke.example.test\n  api_port: 4001")
+assert "  base_url: https://smoke.example.test\n  api_port: 4001" in config
+path.write_text(config)
 PY
-mkdir "$scratch/nginx"
-cp docker/nginx/tokenage.conf.example "$scratch/nginx/tokenage.conf"
+mkdir "$scratch/caddy"
+cp docker/caddy/Caddyfile.example "$scratch/caddy/Caddyfile"
 # Static second address models an independently hosted node. Start sequentially
 # below so the two entrypoints cannot race schema migrations.
-chmod 644 "$scratch/nginx/tokenage.conf"
-"${compose[@]}" --profile postgres --profile redis --profile nginx up -d --wait postgres redis
-"${compose[@]}" --profile postgres --profile redis --profile nginx up -d --wait tokenage
+chmod 644 "$scratch/caddy/Caddyfile"
+"${compose[@]}" --profile postgres --profile redis --profile caddy up -d --wait postgres redis
+"${compose[@]}" --profile postgres --profile redis --profile caddy up -d --wait tokenage
 "${compose[@]}" --profile postgres --profile redis up -d --wait second
 second_ip=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$("${compose[@]}" ps -q second)")
-python3 - "$scratch/nginx/tokenage.conf" "$second_ip" <<'PYCONFIG'
+python3 - "$scratch/caddy/Caddyfile" <<'PYCONFIG'
 import sys
 from pathlib import Path
 path = Path(sys.argv[1])
 config = path.read_text()
 active = "\n".join(line.split("#", 1)[0] for line in config.splitlines())
-assert "proxy_next_upstream error timeout;" in active
-assert "non_idempotent" not in active, "Sent POSTs must never be replayed"
-path.write_text(config.replace("# server 192.168.x.y:<api_port>", f"server {sys.argv[2]}:4001"))
+assert "lb_try_duration 5s" in active
+assert "lb_retry_match expression false" in active, "Sent requests must never be replayed"
+assert "keepalive off" in active, "Transport retries must not bypass the retry matcher"
+assert "health_uri /version" in active and "health_interval 5s" in active
+for directive in (
+    "max_size 10MiB",
+    "dial_timeout 1s",
+    "response_header_timeout 60s",
+    "lb_policy least_conn",
+    "fail_duration 10s",
+    "max_fails 1",
+    "flush_interval -1",
+):
+    assert directive in active, f"Missing required directive: {directive}"
+assert "trusted_proxies" not in active
 PYCONFIG
-"${compose[@]}" --profile nginx up -d nginx
-wait_ready nginx 80
-# nginx must not become a tokenless local owner, even with spoofed loopback headers.
+"${compose[@]}" --profile caddy up -d caddy
+wait_ready caddy 80
+# Caddy must not become a tokenless local owner, even with spoofed loopback headers.
 status=$(curl --max-time 10 --silent --output /dev/null --write-out '%{http_code}' \
-    -H 'Host: localhost' -H 'X-Forwarded-For: 127.0.0.1' "$endpoint/usage")
+    -H 'Host: localhost' -H 'X-Forwarded-For: 127.0.0.1' \
+    -H 'X-Forwarded-Proto: https' -H 'X-Forwarded-Host: localhost' "$endpoint/usage")
 [ "$status" = 401 ]
 ingest_and_assert
-echo 'PASS: nginx + Redis + Postgres OTLP ingest and auth isolation'
+echo 'PASS: Caddy + Redis + Postgres OTLP ingest and auth isolation'
+# Keep a token for the body-limit and post-replacement POST probes.
+"${compose[@]}" exec -T tokenage python -m src.cli token create \
+    --email smoke@example.test --kind ingest --name docker-probes > "$scratch/token"
+printf 'x-tokenage-token: %s\n' "$(tail -n 1 "$scratch/token")" > "$scratch/headers"
+python3 - "$scratch/oversized.json" "$SMOKE_RECORD" <<'PY'
+import sys
+from pathlib import Path
+Path(sys.argv[1]).write_bytes(b" " * (10 * 1024 * 1024) + sys.argv[2].encode())
+PY
+status=$(curl --max-time 30 --silent --output /dev/null --write-out '%{http_code}' \
+    -H @"$scratch/headers" -H 'Content-Type: application/json' \
+    --data-binary @"$scratch/oversized.json" "$endpoint/otlp/v1/logs")
+[ "$status" = 413 ]
+rm -f "$scratch/oversized.json"
+echo 'PASS: Caddy rejects ingest bodies larger than 10 MiB'
 # Installer origin is operator-configured, never taken from request headers.
 curl --max-time 5 --fail --silent -H 'Host: other.example.test' "$endpoint/install.sh" |
     python3 -c "import sys; assert 'TOKENAGE_INSTALL_SERVER=https://smoke.example.test\n' in sys.stdin.read()"
@@ -161,31 +193,111 @@ assert os.getuid() == 10001
 assert not Path('/app/client').exists() and not Path('/app/plugins').exists()
 assert 'redis' in type(get_shared_state()).__name__.lower()
 PY
-# Refresh startup-resolved upstream addresses after container replacement.
+# With only tokenage configured, replacement must recover without a Caddy reload.
+caddy_endpoint=$endpoint
 "${compose[@]}" up -d --force-recreate tokenage
 wait_ready tokenage 4001
+# The first client probe through Caddy must be a POST, since a GET could hide a
+# stale pooled connection by being replayed. Use a separate model for row counts.
+curl --max-time 10 --fail --silent --output /dev/null -H @"$scratch/headers" -H 'Content-Type: application/json' \
+    --data-binary "${SMOKE_RECORD/docker-smoke-model/docker-recreated-model}" "$caddy_endpoint/otlp/v1/logs"
+"${compose[@]}" exec -T tokenage python - <<'PY'
+import time
+from sqlalchemy import text
+from src.database import get_engine
+for _ in range(60):
+    with get_engine().connect() as connection:
+        count = connection.execute(text("SELECT COUNT(*) FROM usage WHERE model = 'docker-recreated-model'")).scalar_one()
+    if count == 1:
+        break
+    time.sleep(1)
+else:
+    raise SystemExit("Post-replacement ingest did not land exactly once")
+PY
+rm -f "$scratch/token" "$scratch/headers"
+wait_ready caddy 80
+echo 'PASS: Caddy ingests through the replaced upstream without a reload'
 # Save by rename like an editor: a directory mount must expose the new inode.
-python3 - "$scratch/nginx/tokenage.conf" <<'PYCONFIG'
+python3 - "$scratch/caddy/Caddyfile" "$second_ip" <<'PYCONFIG'
 import sys
 from pathlib import Path
 path = Path(sys.argv[1])
 replacement = path.with_suffix(".new")
-replacement.write_text(path.read_text().replace("listen 80;", 'listen 80;\n    add_header X-Smoke-Reload "new-inode" always;'))
+config = path.read_text()
+assert config.count(":80 {") == 1
+config = config.replace(":80 {", ':80 {\n\theader X-Smoke-Reload "new-inode"')
+assert 'header X-Smoke-Reload "new-inode"' in config
+assert config.count("# to 192.168.x.y:4001") == 1
+config = config.replace("# to 192.168.x.y:4001", f"to {sys.argv[2]}:4001")
+assert f"to {sys.argv[2]}:4001" in config and "# to 192.168.x.y:4001" not in config
+replacement.write_text(config)
 replacement.replace(path)
 PYCONFIG
-"${compose[@]}" exec -T nginx nginx -t
-"${compose[@]}" exec -T nginx nginx -s reload
-wait_ready nginx 80
+"${compose[@]}" exec -T caddy caddy validate --config /etc/caddy/Caddyfile
+"${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+wait_ready caddy 80
 for _ in $(seq 30); do
     if curl --max-time 5 --fail --silent --dump-header - --output /dev/null "$endpoint/version" | tr -d '\r' | grep -qi '^X-Smoke-Reload: new-inode$'; then break; fi
     sleep 1
 done
 curl --max-time 5 --fail --silent --dump-header - --output /dev/null "$endpoint/version" | tr -d '\r' | grep -qi '^X-Smoke-Reload: new-inode$'
 assert_row
-echo 'PASS: configured installer origin, Redis store, non-root image and nginx reload after atomic config save'
+echo 'PASS: configured installer origin, Redis store, non-root image and Caddy reload after atomic config save'
 
-# Six sequential functional requests, never a load test. With the primary
-# stopped, nginx must retry an unsent POST on the independently addressed node.
+# Force ordered selection and disable retries so successful requests can only
+# bypass a stopped first node if background health checks removed it. No proxied
+# requests run between stop and the assertion (passive checks cannot mask it).
+cp "$scratch/caddy/Caddyfile" "$scratch/caddy/Caddyfile.failover"
+python3 - "$scratch/caddy/Caddyfile" <<'PYCONFIG'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+replacement = path.with_suffix(".new")
+config = path.read_text()
+assert config.count("lb_policy least_conn") == 1
+config = config.replace("lb_policy least_conn", "lb_policy first")
+assert "lb_policy first" in config and "lb_policy least_conn" not in config
+assert config.count("lb_try_duration 5s") == 1
+config = config.replace("lb_try_duration 5s", "lb_try_duration 0")
+assert "lb_try_duration 0" in config and "lb_try_duration 5s" not in config
+replacement.write_text(config)
+replacement.replace(path)
+PYCONFIG
+"${compose[@]}" exec -T caddy caddy validate --config /etc/caddy/Caddyfile
+"${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+wait_ready caddy 80
+"${compose[@]}" stop tokenage
+# Allow one full 5s interval plus the 2s health timeout and scheduling margin.
+sleep 10
+for _ in $(seq 6); do
+    curl --max-time 5 --fail --silent --output /dev/null "$endpoint/version"
+done
+echo 'PASS: active health checks bypass a stopped upstream with retries disabled'
+"${compose[@]}" up -d --wait tokenage
+wait_ready tokenage 4001
+
+# Six sequential functional requests, never a load test. Disable active checks
+# for this assertion so the first POST must actually try the stopped first node.
+# The example's keepalive off ensures a fresh dial to the stopped node.
+python3 - "$scratch/caddy/Caddyfile" <<'PYCONFIG'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+config = path.with_name("Caddyfile.failover").read_text()
+assert config.count("lb_policy least_conn") == 1
+config = config.replace("lb_policy least_conn", "lb_policy first")
+assert "lb_policy first" in config and "lb_policy least_conn" not in config
+assert any(line.strip().startswith("health_") for line in config.splitlines())
+config = "\n".join(line for line in config.splitlines() if not line.strip().startswith("health_")) + "\n"
+active = "\n".join(line.split("#", 1)[0] for line in config.splitlines())
+assert "health_" not in active
+replacement = path.with_suffix(".new")
+replacement.write_text(config)
+replacement.replace(path)
+PYCONFIG
+"${compose[@]}" exec -T caddy caddy validate --config /etc/caddy/Caddyfile
+"${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+wait_ready caddy 80
 "${compose[@]}" exec -T tokenage python -m src.cli token create \
     --email failover@example.test --kind ingest --name docker-failover > "$scratch/token"
 printf 'x-tokenage-token: %s\n' "$(tail -n 1 "$scratch/token")" > "$scratch/headers"

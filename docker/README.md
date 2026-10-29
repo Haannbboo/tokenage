@@ -15,7 +15,7 @@ and mode 640). Config is never rewritten. Compose 2.24.4 or newer is required.
 | Bundled Postgres | `docker compose --profile postgres up -d` | uncomment bundled `db.url` |
 | Bundled Redis | add `--profile redis` | uncomment `queue.url` and `queue.prefix` |
 | Existing Redis | no extra profile | set `queue.url` to its address |
-| nginx | add `--profile nginx` | copy `nginx/tokenage.conf.example` to `nginx/tokenage.conf` |
+| Caddy | add `--profile caddy` | copy `caddy/Caddyfile.example` to `caddy/Caddyfile` |
 
 Set these options in `config.yaml` for the selected services:
 
@@ -26,7 +26,7 @@ Set these options in `config.yaml` for the selected services:
 # db: {url: "postgresql+psycopg://tokenage:CHANGE_ME@host.docker.internal:5432/tokenage"}
 # Bundled Redis:
 # queue: {url: "redis://redis:6379/0", prefix: "tokenage:"}
-# Public origin behind nginx/TLS:
+# Public origin behind Caddy/TLS:
 # server: {base_url: "https://tokenage.example"}
 ```
 
@@ -38,7 +38,7 @@ For bundled Postgres, set `POSTGRES_PASSWORD` in `.env` and put the same passwor
 waits for bundled Postgres and Redis readiness before starting tokenage. Use
 `pg_dump` for backups.
 
-Several servers behind nginx must use the same Postgres (`db.url`), Redis
+Several servers behind Caddy must use the same Postgres (`db.url`), Redis
 (`queue.url` and `queue.prefix`), and `server.base_url`. Delivery is at-least-once.
 SQLite and its default queue are local. Upgrade one server at a time: migrations
 do not lock across servers.
@@ -74,40 +74,59 @@ headers do not replace it. Container gunicorn always binds `0.0.0.0:4001`,
 regardless of `server.api_port`. Client installation through
 `/install.sh` requires HTTPS or localhost; put a TLS proxy or tunnel in front.
 
-Create `nginx/tokenage.conf` from the shipped example before starting the nginx
-profile. Compose mounts the entire `nginx/` directory at `/etc/nginx/conf.d`,
-so editors that save by rename are picked up on reload. Only active `.conf`
-files belong there; keep saved examples with a different suffix. If migrating
-from the old single-file mount, move your upstream and server blocks from
-`nginx.conf` into `nginx/tokenage.conf`, removing the outer `events {}` and
-`http {}` blocks, then recreate nginx to switch its mount.
+Create `caddy/Caddyfile` from the shipped example before starting the Caddy
+profile. Compose mounts the entire `caddy/` directory read-only at `/etc/caddy`,
+so editors that save by rename are picked up on reload. Caddy listens on plain
+HTTP `:80`; terminate TLS in front of Caddy (for example, at Cloudflare). Automatic HTTPS
+and config persistence are disabled; no certificate storage is needed.
 
-nginx uses `least_conn`: `server tokenage:4001` reaches the compose container;
-add other machines by LAN address (`server 192.168.x.y:<api_port>`) or Tailscale
-(`server <tailscale-host>:<api_port> backup`). Edit `nginx/tokenage.conf`, then validate and reload:
+Caddy uses `least_conn`: `to tokenage:4001` reaches the Compose container.
+Uncomment/add `to 192.168.x.y:<api_port>` or `to <tailscale-host>:<api_port>` for
+other machines. There is no per-node `backup` flag; replace `lb_policy least_conn`
+with `lb_policy first` for ordered primary/standby failover, listing the standby
+last. Edit `caddy/Caddyfile`, then validate and reload:
 
 ```sh
-docker compose exec nginx nginx -t
-docker compose exec nginx nginx -s reload
+docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
+docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
-Old workers finish existing requests. Addresses resolve at startup/reload;
-**reload after replacing an upstream container** to pick up its new IP. Keep the
-node out of rotation until this reload; its old IP may be reused by Docker. Runtime
-`resolve` is deliberately avoided: nginx 1.28 can remove a Docker DNS peer during
-a connect timeout and cancel failover. A connect failure can retry another node
-before a POST is sent; a POST already sent is never automatically replayed.
-The example marks a peer unavailable for 10 seconds after one failure and uses a
-1-second connect timeout. Tune `max_fails`, `fail_timeout` and
-`proxy_connect_timeout` for your network if a healthy node needs longer to connect.
-An interrupted in-flight request can still fail, so clients must handle ambiguous
-failures according to the at-least-once delivery contract.
+Caddy resolves hostnames on each new connection. With upstream keepalive disabled
+as in the example, replacing an upstream container needs no proxy reload, including
+for ingest POSTs. Active `GET /version` checks run every 5 seconds
+with a 2-second timeout; one failed check removes the node, one successful check restores
+it. Passive checks exclude a node for the full 10-second `fail_duration` after one
+failed request, even if active checks pass during that time. The
+example uses a 1-second dial timeout and a 60-second response header timeout.
+Responses flush immediately, including streams.
 
-For planned maintenance, first mark that server `backup` (when another primary
-is healthy) or remove it from the upstream and reload. Wait for existing requests
-to finish before stopping it. Restore the server and reload when healthy.
-Requests through nginx do not receive local-owner access: the API sees nginx’s
-container address, not loopback.
+Retries wait up to 5 seconds for an available node. In Caddy 2.11.7, dial failures
+can retry any method before a request is sent; `lb_retry_match expression false`
+blocks retries after connecting, even for GET. A sent ingest POST is never
+replayed by this policy. See the [retry docs](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#load-balancing)
+and [v2.11.7 retry implementation](https://github.com/caddyserver/caddy/blob/v2.11.7/modules/caddyhttp/reverseproxy/reverseproxy.go#L1393-L1448).
+The pinned version preserves unread request bodies across dial failures
+([upstream issue #7546](https://github.com/caddyserver/caddy/issues/7546)), so POST
+failover works without request buffering.
+Upstream keepalive remains disabled for two reasons. [Caddy 2.11.7 uses Go's transport](https://github.com/caddyserver/caddy/blob/v2.11.7/modules/caddyhttp/reverseproxy/httptransport.go#L473-L492),
+which can [replay a sent, bodyless idempotent request on a reused connection](https://pkg.go.dev/net/http#Transport)
+independently of the retry matcher. Disabling reuse also avoids stale pooled
+connections to a replaced container's old IP: an ingest POST on such a connection
+could return 502 because it cannot be retried. This makes replacement without a
+proxy reload work for ingest. The cost is one upstream TCP connection and handshake
+per request, which is cheap on the Compose bridge but noticeable over LAN/Tailscale
+upstreams, with more TIME_WAIT and ephemeral-port churn at high request rates.
+An interrupted in-flight request can still fail ambiguously; clients must follow
+the at-least-once delivery contract.
+
+For planned maintenance, remove the node from the upstream list, validate and
+reload, then wait for existing requests to finish before stopping it. Ordinary
+HTTP requests finish on the old config; reloads close WebSockets by default.
+Restore the node and reload when healthy. Requests through Caddy do not receive
+local-owner access: the API sees Caddy’s container address, not loopback. Host
+passes through; Caddy sets `X-Forwarded-For/Proto/Host` and ignores client-supplied
+values. Do not configure `trusted_proxies`, even when TLS terminates upstream;
+set the public HTTPS origin in `server.base_url` instead.
 
 For an existing Postgres:
 
@@ -137,8 +156,7 @@ procedure above when several servers share a database/queue:
 
 ```sh
 docker compose pull tokenage && docker compose up -d tokenage
-# Wait for tokenage to become healthy (docker compose ps), then, if using nginx:
-docker compose exec nginx nginx -t && docker compose exec nginx nginx -s reload
+# Wait for tokenage to become healthy (docker compose ps).
 curl --fail http://localhost:<public-port>/version
 ```
 
@@ -149,10 +167,15 @@ across a release that changes the database schema.
 
 Set `TOKENAGE_VERSION` to pin an image; tags include the server version,
 `MAJOR.MINOR`, and `latest`. GHCR keeps the newest 20 tagged image versions;
-older version pins eventually expire. Set `TOKENAGE_PORT` / `NGINX_PORT` for host ports.
+older version pins eventually expire. Set `TOKENAGE_PORT` / `CADDY_PORT` for host ports.
 From the repository root, build locally: `docker build --build-arg GIT_COMMIT="$(git rev-parse HEAD)" -t tokenage:local .`.
 Run `TOKENAGE_SMOKE_IMAGE=tokenage:local ./docker/smoke.sh` for isolated functional
-checks (Postgres ingest, SQLite persistence, nginx + Redis ingest, atomic config saves/reloads, and abrupt-stop POST failover).
+checks (Postgres ingest, SQLite persistence, Caddy + Redis ingest, atomic config
+saves/reloads, active health removal, and abrupt-stop POST failover).
+The checks also cover the 10 MiB body limit and an ingest POST after container
+replacement without a proxy reload. Sent-POST no-replay behavior was verified
+against the pinned Caddy source; the smoke test does not simulate a connection
+reset after sending a POST.
 
 ### Prometheus metrics
 

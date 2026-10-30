@@ -112,7 +112,13 @@ class Consumer:
         metrics = get_metrics()
         done = 0
         self.retry_delay = POLL_SECONDS
-        for partition in sorted(s.partition for s in self.store.status() if s.depth):
+        try:
+            partitions = sorted(s.partition for s in self.store.status() if s.depth)
+        except StoreUnavailable:
+            if metrics:
+                metrics.errors.labels("store_unavailable").inc()
+            raise
+        for partition in partitions:
             if self.stop_event.is_set():
                 break
             if not self.store.claim(partition, self.owner):

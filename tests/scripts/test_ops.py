@@ -6,6 +6,7 @@ import http.client
 import http.server
 import json
 import os
+import socket
 import subprocess
 import threading
 import urllib.error
@@ -97,6 +98,68 @@ def test_start_creates_config_checks_ports_then_migrates_then_starts(box):
     assert "migrate" in box.calls
 
 
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        None,
+        "invalid json",
+        json.dumps({"pid": 2, "bind": ["127.0.0.1:4001", "127.0.0.1:9108"]}),
+        json.dumps({"pid": 1, "bind": ["127.0.0.1:4001"]}),
+        json.dumps({"pid": 1, "bind": ["127.0.0.1:4001", "127.0.0.1:9109"]}),
+    ],
+)
+def test_start_refuses_running_api_with_changed_or_unknown_binds(box, capsys, stamp):
+    box.stamp()
+    box.home.mkdir()
+    (box.home / "supervisord.conf").write_text("")
+    (box.home / "config.yaml").write_text(
+        "server: {api_port: 4001}\nmetrics: {enabled: true, port: 9108}\n"
+    )
+    box.states = {"tokenage-api": "RUNNING"}
+    if stamp is not None:
+        (box.home / "run").mkdir()
+        (box.home / "run" / "api-binds.json").write_text(stamp)
+
+    assert ops.start() == 1
+    output = capsys.readouterr().out
+    assert "stop tokenage-api then tokenage server start" in output
+    assert "tokenage-api: running" not in output
+    assert not ctl(box, "start", "tokenage-api")
+    assert not ctl(box, "signal", "HUP", "tokenage-api")
+
+
+def test_upgrade_accepts_running_api_without_stamp_when_metrics_off(box, capsys):
+    # A master started by a release without api-binds.json bound only the API.
+    box.stamp()
+    box.home.mkdir()
+    (box.home / "supervisord.conf").write_text("")
+    (box.home / "config.yaml").write_text("server: {api_port: 4001}\n")
+    box.states = {"tokenage-api": "RUNNING"}
+
+    assert ops.start() == 0
+    assert "tokenage-api: running" in capsys.readouterr().out
+    assert ops.restart(["tokenage-api"]) == 0
+    assert ctl(box, "signal", "HUP", "tokenage-api")
+
+
+def test_start_accepts_running_api_with_matching_binds(box, capsys):
+    box.stamp()
+    box.home.mkdir()
+    (box.home / "supervisord.conf").write_text("")
+    (box.home / "config.yaml").write_text(
+        "server: {api_port: 4001}\nmetrics: {enabled: true, host: '[::1]', port: 9108}\n"
+    )
+    box.states = {"tokenage-api": "RUNNING"}
+    (box.home / "run").mkdir()
+    (box.home / "run" / "api-binds.json").write_text(
+        json.dumps({"pid": 1, "bind": ["127.0.0.1:4001", "[::1]:9108"]})
+    )
+
+    assert ops.start() == 0
+    assert "tokenage-api: running" in capsys.readouterr().out
+    assert not ctl(box, "start", "tokenage-api")
+
+
 def test_first_run_moves_busy_ports_but_an_existing_config_fails(box, capsys):
     box.stamp()
     box.busy = {4001}
@@ -129,6 +192,21 @@ def test_restart_reloads_named_programs(box):
     for args in (["nope"], ["tokenage-otlp"], ["--otlp-port", "5505"]):
         with pytest.raises(SystemExit):
             ops.restart(args)
+
+
+def test_start_reports_busy_api_port_override(box, monkeypatch, capsys):
+    box.stamp()
+    box.busy = {4100}
+    monkeypatch.setenv("TOKENAGE_API_PORT", "4100")
+
+    assert ops.start() == 1
+    output = capsys.readouterr().out
+    assert "TOKENAGE_API_PORT overrides server.api_port" in output
+    assert "migrate" not in box.calls
+    assert (
+        yaml.safe_load((box.home / "config.yaml").read_text())["server"]["api_port"]
+        == 4001
+    )
 
 
 def test_stop_named_or_everything(box):
@@ -297,6 +375,51 @@ def test_socket_fallback_sees_an_occupied_port(monkeypatch):
         assert ops._listeners(sock.getsockname()[1])
 
 
+def test_hostname_bind_probe_uses_gunicorn_ipv4_family():
+    if not socket.has_ipv6:
+        pytest.skip("IPv6 unavailable")
+    with socket.socket(socket.AF_INET6) as occupied:
+        try:
+            occupied.bind(("::1", 0))
+        except OSError:
+            pytest.skip("IPv6 loopback unavailable")
+        occupied.listen()
+        port = occupied.getsockname()[1]
+        assert ops._bindable("localhost", port)
+        assert not ops._bindable("[::1]", port)
+
+
+def test_listeners_ignore_an_available_bind_on_another_interface(monkeypatch):
+    monkeypatch.setattr(ops.shutil, "which", lambda name: "lsof")
+    run = Mock(side_effect=AssertionError("Available binds need no lsof lookup"))
+    monkeypatch.setattr(ops, "_run", run)
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen()
+        assert ops._listeners(occupied.getsockname()[1], "127.0.0.2") == []
+
+
+@pytest.mark.parametrize(
+    "host,expected",
+    [
+        ("127.0.0.1", [ops.PortListener(42, "gunicorn")]),
+        ("0.0.0.0", [ops.PortListener(99, "other"), ops.PortListener(42, "gunicorn")]),
+    ],
+)
+def test_listeners_filter_foreign_interface_owners(monkeypatch, host, expected):
+    monkeypatch.setattr(ops, "_bindable", lambda *args: False)
+    monkeypatch.setattr(ops.shutil, "which", lambda name: "lsof")
+    output = (
+        "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
+        "other 99 user 1u IPv4 0 0t0 TCP 127.0.0.2:9108 (LISTEN)\n"
+        "gunicorn 42 user 2u IPv4 0 0t0 TCP 127.0.0.1:9108 (LISTEN)\n"
+    )
+    monkeypatch.setattr(
+        ops, "_run", lambda *args, **kw: subprocess.CompletedProcess([], 0, output)
+    )
+    assert ops._listeners(9108, host) == expected
+
+
 # ── update, against real git repos ──────────────────────────────────
 
 
@@ -422,3 +545,22 @@ def test_restart_refuses_changed_or_unknown_bind(box, capsys, stamp):
     assert not ctl(box, "signal", "HUP", "tokenage-api")
     assert "migrate" not in box.calls
     assert "stop tokenage-api then tokenage server start" in capsys.readouterr().out
+
+
+def test_restart_accepts_matching_api_and_metrics_binds(box):
+    box.home.mkdir()
+    (box.home / "supervisord.conf").write_text("")
+    (box.home / "config.yaml").write_text(
+        "server: {api_port: 4001}\nmetrics: {enabled: true, host: '[::1]', port: 9108}\n"
+    )
+    box.states = {"tokenage-api": "RUNNING"}
+    (box.home / "run").mkdir()
+    (box.home / "run" / "api-binds.json").write_text(
+        json.dumps({"pid": 1, "bind": ["127.0.0.1:4001", "[::1]:9108"]})
+    )
+
+    assert ops.restart() == 0
+    assert "migrate" in box.calls
+    hup = ctl(box, "signal", "HUP", "tokenage-api")
+    assert len(hup) == 1
+    assert box.calls.index("migrate") < box.calls.index(hup[0])

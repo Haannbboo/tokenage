@@ -46,6 +46,12 @@ def collect_metrics_cycles():
         {"allowed_hosts": ["host:9108"]},
         {"host": "127.0.0.1:9108"},
         {"host": ""},
+        {"host": "."},
+        {"host": ".."},
+        {"host": ".example.com"},
+        {"host": "example..com"},
+        {"host": "example.com.."},
+        {"allowed_hosts": ["example..com"]},
         {"host": "host\nname"},
         {"host": None},
         [],
@@ -99,6 +105,26 @@ def test_metrics_config_defaults_and_binds(config_module, monkeypatch, tmp_path)
     for loader in (config_module.load_config, load_server_config):
         with pytest.raises(ValueError, match="differ"):
             loader()
+
+
+@pytest.mark.parametrize("port", ["0", "65536", "-1", "invalid"])
+def test_api_port_override_validation(config_module, monkeypatch, tmp_path, port):
+    from src.config.server_config import load_server_config
+
+    config = tmp_path / "config.yaml"
+    config.write_text("{}")
+    monkeypatch.setenv("TOKENAGE_CONFIG", str(config))
+    monkeypatch.setenv("TOKENAGE_API_PORT", port)
+    for loader in (config_module.load_config, load_server_config):
+        with pytest.raises(ValueError, match="TOKENAGE_API_PORT.*1 to 65535"):
+            loader()
+
+
+@pytest.mark.parametrize("host", ["localhost", "example.com.", "127.0.0.1", "[::1]"])
+def test_metrics_host_accepts_valid_labels(host):
+    from src.config.server_config import validate_metrics
+
+    assert validate_metrics({"metrics": {"host": host}}, 4001).host == host.strip("[]")
 
 
 class LocalPort:
@@ -321,6 +347,48 @@ def test_ingest_error_kinds(measured_app, fresh_db, monkeypatch, code, kind):
     )
 
 
+def test_consumer_status_failure_is_counted(measured_app):
+    from src.ingest_queue import Consumer
+    from src.shared_state import StoreUnavailable
+
+    _, metrics = measured_app
+
+    def fail():
+        raise StoreUnavailable()
+
+    with pytest.raises(StoreUnavailable):
+        Consumer(SimpleNamespace(status=fail)).drain()
+    assert (
+        metrics.registry.get_sample_value(
+            "tokenage_ingest_errors_total", {"kind": "store_unavailable"}
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize("route", ["/ingest/v1/usage", "/otlp/v1/logs"])
+def test_ingest_rate_limit_is_counted(measured_app, fresh_db, monkeypatch, route):
+    from src.auth.tokens import mint_token
+    from tests.test_usage_ingest import _report
+
+    app, metrics = measured_app
+    token, _ = mint_token("limit@example.com", kind="ingest", db_path=fresh_db.db_path)
+    monkeypatch.setattr("src.ratelimit.rate_limit_hit", lambda *args: 30)
+    response = TestClient(LocalPort(app, 4001)).post(
+        route,
+        json=_report() if route == "/ingest/v1/usage" else {},
+        headers={"x-tokenage-token": token},
+    )
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "30"
+    assert (
+        metrics.registry.get_sample_value(
+            "tokenage_ingest_errors_total", {"kind": "rate_limited"}
+        )
+        == 1
+    )
+
+
 def test_queue_depth_timeout_and_error_omit_sample(monkeypatch):
     from prometheus_client import CollectorRegistry, generate_latest
 
@@ -369,10 +437,15 @@ def test_queue_depth_timeout_and_error_omit_sample(monkeypatch):
 
 
 def test_multiprocess_directory_lifecycle(monkeypatch, tmp_path):
-    from src.metrics import cleanup_multiprocess, start_multiprocess, stop_multiprocess
+    from src.metrics import (
+        MULTIPROCESS_MARKER,
+        cleanup_multiprocess,
+        start_multiprocess,
+        stop_multiprocess,
+    )
 
     monkeypatch.setenv("TOKENAGE_HOME", str(tmp_path))
-    unowned = tmp_path / "unowned"
+    unowned = tmp_path / "metrics-unowned"
     unowned.mkdir()
     (unowned / "keep").write_text("preserve")
     monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(unowned))
@@ -380,7 +453,10 @@ def test_multiprocess_directory_lifecycle(monkeypatch, tmp_path):
     Path(first, "old.db").write_text("stale")
     second = start_multiprocess()
     assert first != second
-    assert [p.name for p in Path(second).iterdir()] == ["master.pid"]
+    assert {p.name for p in Path(second).iterdir()} == {
+        "master.pid",
+        MULTIPROCESS_MARKER,
+    }
     cleanup_multiprocess()
     assert Path(first).exists()  # Another live master must be preserved.
     Path(first, "master.pid").write_text("invalid")

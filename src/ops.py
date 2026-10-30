@@ -143,27 +143,72 @@ def _status_of(program: str) -> str:
     return out[1] if len(out) > 1 else ""
 
 
+def _api_binds_match(config: dict[str, Any]) -> bool:
+    """Check the configured binds against the current API master's stamp."""
+    desired = [
+        format_bind(p.host, p.port) for p in get_configured_service_ports(config)
+    ]
+    stamp = _home() / "run" / "api-binds.json"
+    if not stamp.exists() and len(desired) == 1:
+        # Masters from before the stamp existed only ever bound the API port.
+        return True
+    try:
+        running = json.loads(stamp.read_text())
+        state = parse_supervisor_status(
+            _ctl("status", "tokenage-api", capture=True).stdout
+        )
+        return (
+            running["bind"] == desired and running["pid"] == state["tokenage-api"].pid
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 # ── Ports ───────────────────────────────────────────────────────────
 def _listeners(port: int, host: str = "127.0.0.1") -> list[PortListener]:
+    # A listener on a different interface need not conflict with this bind.
+    if _bindable(host, port):
+        return []
     if shutil.which("lsof"):
         r = _run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"], capture_output=True)
         if r.returncode in (0, 1):
-            return [
+            try:
+                addresses = {
+                    address[0]
+                    for *_, address in socket.getaddrinfo(
+                        host.strip("[]"), port, _bind_family(host), socket.SOCK_STREAM
+                    )
+                }
+            except OSError:
+                addresses = set()
+            listeners = [
                 PortListener(pid=int(p[1]), command=p[0])
                 for p in (line.split() for line in r.stdout.splitlines()[1:])
-                if len(p) > 1
+                if len(p) >= 10
+                and (
+                    p[-2].rsplit(":", 1)[0].strip("[]")
+                    in addresses | {"*", "0.0.0.0", "::"}
+                    or host == "0.0.0.0"
+                    and p[4] == "IPv4"
+                    or host.strip("[]") == "::"
+                )
             ]
+            if listeners:
+                return listeners
     # No lsof: probe by binding.
-    return [] if _bindable(host, port) else [PortListener(-1, "(unknown)")]
+    return [PortListener(-1, "(unknown)")]
+
+
+def _bind_family(host: str) -> socket.AddressFamily:
+    # Gunicorn uses AF_INET for hostnames, AF_INET6 for IPv6 literals.
+    return socket.AF_INET6 if ":" in host else socket.AF_INET
 
 
 def _bindable(host: str, port: int) -> bool:
     try:
-        addresses = socket.getaddrinfo(host.strip("[]"), port, type=socket.SOCK_STREAM)
-        for family, kind, proto, _, address in addresses:
-            with socket.socket(family, kind, proto) as sock:
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                sock.bind(address)
+        with socket.socket(_bind_family(host), socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host.strip("[]"), port))
     except OSError:
         return False
     return True
@@ -299,7 +344,7 @@ def start(args: list[str] | None = None) -> int:
 
     config = _load_config(path)
     issues = _port_issues(config, strict=True)
-    if issues and created:
+    if issues and created and "TOKENAGE_API_PORT" not in os.environ:
         # A fresh config that collides with something already running: move it.
         _assign_free_ports(path, config)
         config = _load_config(path)
@@ -310,6 +355,10 @@ def start(args: list[str] | None = None) -> int:
         bad("Port check failed")
         for line in issues:
             _say(line)
+        if "TOKENAGE_API_PORT" in os.environ:
+            note(
+                "TOKENAGE_API_PORT overrides server.api_port; change or unset it if the API port is blocked."
+            )
         note("Change the configured service ports before starting tokenage.")
         return 1
     ok("Port check passed")
@@ -342,6 +391,16 @@ def start(args: list[str] | None = None) -> int:
 
     for prog in PROGRAMS:
         state = _status_of(prog)
+        if (
+            prog == "tokenage-api"
+            and state == "RUNNING"
+            and not _api_binds_match(config)
+        ):
+            bad("API bind changed or running bind is unknown.")
+            note(
+                "Run tokenage server stop tokenage-api then tokenage server start (brief outage)."
+            )
+            return 1
         if state in ("RUNNING", "STARTING"):
             ok(f"{prog}: {state.lower()}")
         else:
@@ -389,27 +448,12 @@ def restart(args: list[str] | None = None) -> int:
     if (
         "tokenage-api" in (names or PROGRAMS)
         and _status_of("tokenage-api") == "RUNNING"
+        and not _api_binds_match(_load_config(_config_path()))
     ):
-        desired = [
-            format_bind(p.host, p.port)
-            for p in get_configured_service_ports(_load_config(_config_path()))
-        ]
-        try:
-            running = json.loads((_home() / "run" / "api-binds.json").read_text())
-            state = parse_supervisor_status(
-                _ctl("status", "tokenage-api", capture=True).stdout
-            )
-            matches = (
-                running["bind"] == desired
-                and running["pid"] == state["tokenage-api"].pid
-            )
-        except (OSError, ValueError, KeyError, TypeError):
-            matches = False
-        if not matches:
-            raise die(
-                "API bind changed or running bind is unknown; refusing SIGHUP.",
-                "Run tokenage server stop tokenage-api then tokenage server start (brief outage).",
-            )
+        raise die(
+            "API bind changed or running bind is unknown; refusing SIGHUP.",
+            "Run tokenage server stop tokenage-api then tokenage server start (brief outage).",
+        )
 
     step("Applying schema migrations")
     migrate()

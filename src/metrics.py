@@ -25,16 +25,20 @@ INGEST_ROUTES = {
     "/ingest/v1/usage": "proxy_usage",
 }
 QUEUE_DEPTH_TIMEOUT = 0.2
+MULTIPROCESS_MARKER = ".tokenage-metrics"
 _metrics: Metrics | None = None
 
 
 def cleanup_multiprocess() -> None:
-    """Remove only stale directories under our own prefix, never an env path."""
+    """Remove only marked stale directories, never an arbitrary env path."""
     from .config.models import get_tracker_home
 
     home = Path(get_tracker_home())
     for directory in home.glob("metrics-*"):
         if directory.is_symlink() or not directory.is_dir():
+            continue
+        marker = directory / MULTIPROCESS_MARKER
+        if marker.is_symlink() or not marker.is_file():
             continue
         try:
             pid = int((directory / "master.pid").read_text())
@@ -56,6 +60,7 @@ def start_multiprocess() -> str:
     directory = tempfile.mkdtemp(prefix="metrics-", dir=home)
     try:
         Path(directory, "master.pid").write_text(str(os.getpid()))
+        Path(directory, MULTIPROCESS_MARKER).touch()
     except OSError:
         shutil.rmtree(directory, ignore_errors=True)
         raise
@@ -287,6 +292,7 @@ class MetricsMiddleware:
                 413: "too_large",
                 400: "bad_request",
                 422: "bad_request",
+                429: "rate_limited",
                 503: "store_unavailable",
             }.get(code)
             if kind:

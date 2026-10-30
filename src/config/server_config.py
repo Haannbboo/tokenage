@@ -21,11 +21,20 @@ class MetricsConfig:
 
 def resolve_api_bind(config: dict) -> tuple[str, int]:
     server = config.get("server", {})
+    setting = (
+        "TOKENAGE_API_PORT" if "TOKENAGE_API_PORT" in os.environ else "server.api_port"
+    )
+    try:
+        port = int(os.environ.get("TOKENAGE_API_PORT", server.get("api_port", 4001)))
+    except (TypeError, ValueError):
+        raise ValueError(f"{setting} must be an integer from 1 to 65535") from None
+    if not 1 <= port <= 65535:
+        raise ValueError(f"{setting} must be an integer from 1 to 65535")
     return (
         os.environ.get("TOKENAGE_API_HOST", str(server.get("host", "127.0.0.1"))).strip(
             "[]"
         ),
-        int(os.environ.get("TOKENAGE_API_PORT", server.get("api_port", 4001))),
+        port,
     )
 
 
@@ -41,6 +50,8 @@ def _metrics_host(host: object) -> str:
             ipaddress.IPv6Address(host)
         except ValueError:
             raise ValueError("metrics host must be a hostname or IP address") from None
+    elif any(not label for label in host.removesuffix(".").split(".")):
+        raise ValueError("metrics host must not contain empty hostname labels")
     return host.lower()
 
 

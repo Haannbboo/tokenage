@@ -107,17 +107,27 @@ class Consumer:
             raise ValueError("unknown queue event kind")
 
     def drain(self) -> int:
+        """Count store outages once, including failures handled per partition."""
+        from .metrics import get_metrics
+
+        self._store_unavailable = False
+        try:
+            return self._drain()
+        except StoreUnavailable:
+            self._store_unavailable = True
+            raise
+        finally:
+            metrics = get_metrics()
+            if metrics and self._store_unavailable:
+                metrics.errors.labels("store_unavailable").inc()
+
+    def _drain(self) -> int:
         from .metrics import committed_usage, get_metrics
 
         metrics = get_metrics()
         done = 0
         self.retry_delay = POLL_SECONDS
-        try:
-            partitions = sorted(s.partition for s in self.store.status() if s.depth)
-        except StoreUnavailable:
-            if metrics:
-                metrics.errors.labels("store_unavailable").inc()
-            raise
+        partitions = sorted(s.partition for s in self.store.status() if s.depth)
         for partition in partitions:
             if self.stop_event.is_set():
                 break
@@ -184,11 +194,10 @@ class Consumer:
                         session.commit()
                         committed_usage(counts)
             except Exception as exc:
-                if metrics:
-                    if isinstance(exc, StoreUnavailable):
-                        metrics.errors.labels("store_unavailable").inc()
-                    elif isinstance(exc, TRANSIENT_DB_ERRORS):
-                        metrics.errors.labels("db").inc()
+                if isinstance(exc, StoreUnavailable):
+                    self._store_unavailable = True
+                elif metrics and isinstance(exc, TRANSIENT_DB_ERRORS):
+                    metrics.errors.labels("db").inc()
                 self.retry_delay = 5
                 log.warning(
                     "Ingest partition unavailable partition=%s error=%s",

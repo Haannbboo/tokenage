@@ -64,7 +64,8 @@ _FORWARDING_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip")
 
 def _hostname(netloc: str) -> str | None:
     try:
-        return urlparse(f"//{netloc}").hostname
+        hostname = urlparse(f"//{netloc}").hostname
+        return hostname.removesuffix(".") if hostname else None
     except ValueError:
         return None
 

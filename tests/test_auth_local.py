@@ -46,6 +46,8 @@ def _me_email(client, **kwargs):
         ({"client": ("::1", 1)}, {"host": "[::1]:4001"}),
         ({"client": ("127.0.0.1", 1), "base_url": "http://127.0.0.1:4001"}, {}),
         ({}, {"origin": "http://localhost:5173"}),
+        ({}, {"host": "LOCALHOST.:4001"}),
+        ({}, {"host": "127.0.0.1.:4001"}),
     ],
 )
 def test_direct_loopback_is_the_owner(api_module, client_kwargs, headers):
@@ -67,6 +69,11 @@ def test_direct_loopback_is_the_owner(api_module, client_kwargs, headers):
         ({}, {"x-real-ip": "203.0.113.9"}),
         ({}, {"host": "evil.example"}),  # DNS rebinding
         ({}, {"host": "localhost.evil.example"}),
+        ({}, {"host": "localhost.evil.example."}),
+        ({}, {"host": ".localhost"}),
+        ({}, {"host": "localhost.."}),
+        ({"client": ("203.0.113.9", 1)}, {"host": "localhost."}),
+        ({}, {"host": "localhost.", "x-forwarded-for": "127.0.0.1"}),
         ({}, {"host": ""}),
     ],
 )
@@ -82,6 +89,18 @@ def test_cross_site_write_is_not_the_owner(api_module):
     assert client.post("/auth/logout", headers=evil).status_code == 401
     assert client.get("/auth/me", headers=evil).json()["user"]["email"] == OWNER
     assert client.post("/auth/logout").status_code == 204
+    assert (
+        client.post(
+            "/auth/logout", headers={"origin": "http://LOCALHOST.:5173"}
+        ).status_code
+        == 204
+    )
+    assert (
+        client.post(
+            "/auth/logout", headers={"origin": "https://localhost.evil.example."}
+        ).status_code
+        == 401
+    )
 
 
 def test_google_provider_never_uses_the_loopback_owner(

@@ -209,6 +209,42 @@ def test_start_reports_busy_api_port_override(box, monkeypatch, capsys):
     )
 
 
+@pytest.mark.parametrize("created", [True, False])
+def test_busy_metrics_port_does_not_suggest_api_override(
+    box, monkeypatch, capsys, created
+):
+    box.stamp()
+    config = "server: {api_port: 4001}\nmetrics: {enabled: true, port: 9108}\n"
+    if created:
+        (box.root / "config.example.yaml").write_text(config)
+    else:
+        box.home.mkdir()
+        (box.home / "config.yaml").write_text(config)
+    box.busy = {9108}
+    monkeypatch.setenv("TOKENAGE_API_PORT", "4100")
+
+    assert ops.start() == 1
+    output = capsys.readouterr().out
+    assert "METRICS:" in output
+    assert "TOKENAGE_API_PORT" not in output
+    assert "migrate" not in box.calls
+
+
+def test_fresh_config_keeps_api_port_when_only_metrics_is_busy(box, capsys):
+    box.stamp()
+    (box.root / "config.example.yaml").write_text(
+        "server: {api_port: 4001}\nmetrics: {enabled: true, port: 9108}\n"
+    )
+    box.busy = {9108}
+
+    assert ops.start() == 1
+    assert "METRICS:" in capsys.readouterr().out
+    assert (
+        yaml.safe_load((box.home / "config.yaml").read_text())["server"]["api_port"]
+        == 4001
+    )
+
+
 def test_stop_named_or_everything(box):
     box.home.mkdir()
     (box.home / "supervisord.conf").write_text("")
@@ -400,24 +436,21 @@ def test_listeners_ignore_an_available_bind_on_another_interface(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "host,expected",
+    "row",
     [
-        ("127.0.0.1", [ops.PortListener(42, "gunicorn")]),
-        ("0.0.0.0", [ops.PortListener(99, "other"), ops.PortListener(42, "gunicorn")]),
+        "gunicorn 42",
+        "gunicorn 42 user 2u IPv4 0 0t0 TCP 127.0.0.1:9108",
+        "gunicorn 42 user 2u IPv4 0 0t0 TCP 127.0.0.1:9108 (LISTEN)",
     ],
 )
-def test_listeners_filter_foreign_interface_owners(monkeypatch, host, expected):
+def test_listeners_preserve_owner_across_lsof_formats(monkeypatch, row):
     monkeypatch.setattr(ops, "_bindable", lambda *args: False)
     monkeypatch.setattr(ops.shutil, "which", lambda name: "lsof")
-    output = (
-        "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
-        "other 99 user 1u IPv4 0 0t0 TCP 127.0.0.2:9108 (LISTEN)\n"
-        "gunicorn 42 user 2u IPv4 0 0t0 TCP 127.0.0.1:9108 (LISTEN)\n"
-    )
+    output = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n" + row + "\n"
     monkeypatch.setattr(
         ops, "_run", lambda *args, **kw: subprocess.CompletedProcess([], 0, output)
     )
-    assert ops._listeners(9108, host) == expected
+    assert ops._listeners(9108) == [ops.PortListener(42, "gunicorn")]
 
 
 # ── update, against real git repos ──────────────────────────────────

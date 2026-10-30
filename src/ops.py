@@ -26,6 +26,7 @@ import yaml
 from src.config.merge import sync_config_file_with_defaults
 from src.config.models import get_tracker_home
 from src.config.runtime_ports import (
+    PortIssue,
     PortListener,
     detect_port_issues,
     format_bind,
@@ -34,7 +35,11 @@ from src.config.runtime_ports import (
     get_configured_service_ports,
     parse_supervisor_status,
 )
-from src.config.server_config import resolve_api_bind, resolve_server_urls
+from src.config.server_config import (
+    resolve_api_bind,
+    resolve_api_port,
+    resolve_server_urls,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ("api",)  # the OTLP collector is mounted in the API at /otlp
@@ -172,26 +177,10 @@ def _listeners(port: int, host: str = "127.0.0.1") -> list[PortListener]:
     if shutil.which("lsof"):
         r = _run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"], capture_output=True)
         if r.returncode in (0, 1):
-            try:
-                addresses = {
-                    address[0]
-                    for *_, address in socket.getaddrinfo(
-                        host.strip("[]"), port, _bind_family(host), socket.SOCK_STREAM
-                    )
-                }
-            except OSError:
-                addresses = set()
             listeners = [
                 PortListener(pid=int(p[1]), command=p[0])
                 for p in (line.split() for line in r.stdout.splitlines()[1:])
-                if len(p) >= 10
-                and (
-                    p[-2].rsplit(":", 1)[0].strip("[]")
-                    in addresses | {"*", "0.0.0.0", "::"}
-                    or host == "0.0.0.0"
-                    and p[4] == "IPv4"
-                    or host.strip("[]") == "::"
-                )
+                if len(p) > 1
             ]
             if listeners:
                 return listeners
@@ -214,7 +203,7 @@ def _bindable(host: str, port: int) -> bool:
     return True
 
 
-def _port_issues(config: dict[str, Any], strict: bool) -> list[str]:
+def _port_issues(config: dict[str, Any], strict: bool) -> list[PortIssue]:
     ports = get_configured_service_ports(config)
     states = {}
     if _conf().exists():
@@ -226,7 +215,7 @@ def _port_issues(config: dict[str, Any], strict: bool) -> list[str]:
     )
     if strict:
         issues = get_blocking_port_issues(issues)
-    return [format_port_issue(i) for i in issues]
+    return issues
 
 
 def _assign_free_ports(path: Path, config: dict[str, Any]) -> None:
@@ -343,8 +332,11 @@ def start(args: list[str] | None = None) -> int:
     sync_config()
 
     config = _load_config(path)
+    _, api_port_source = resolve_api_port(config)
     issues = _port_issues(config, strict=True)
-    if issues and created and "TOKENAGE_API_PORT" not in os.environ:
+    api_port_from_env = api_port_source == "TOKENAGE_API_PORT"
+    api_blocked = any(issue.service == "API" for issue in issues)
+    if api_blocked and created and not api_port_from_env:
         # A fresh config that collides with something already running: move it.
         _assign_free_ports(path, config)
         config = _load_config(path)
@@ -353,9 +345,9 @@ def start(args: list[str] | None = None) -> int:
             ok("Ports auto-assigned")
     if issues:
         bad("Port check failed")
-        for line in issues:
-            _say(line)
-        if "TOKENAGE_API_PORT" in os.environ:
+        for issue in issues:
+            _say(format_port_issue(issue))
+        if api_port_from_env and any(issue.service == "API" for issue in issues):
             note(
                 "TOKENAGE_API_PORT overrides server.api_port; change or unset it if the API port is blocked."
             )
@@ -489,8 +481,10 @@ def status(args: list[str] | None = None) -> int:
             note(f"{p.service}: {format_bind(p.host, p.port)}")
         issues = _port_issues(config, strict=False)
         step("Port check")
-        for line in issues or ["no issues"]:
-            _say(line if issues else f"  ✓ {line}")
+        for issue in issues:
+            _say(format_port_issue(issue))
+        if not issues:
+            _say("  ✓ no issues")
     from .shared_state import StoreUnavailable, get_shared_state
 
     step("Ingest queue")

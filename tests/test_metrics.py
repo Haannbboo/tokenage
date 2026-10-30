@@ -42,15 +42,13 @@ def collect_metrics_cycles():
         {"port": "9108"},
         {"enabled": True, "port": 4001},
         {"allowed_hosts": "host"},
+        {"allowed_hosts": [None]},
         {"allowed_hosts": ["http://host"]},
         {"allowed_hosts": ["host:9108"]},
         {"host": "127.0.0.1:9108"},
         {"host": ""},
         {"host": "."},
-        {"host": ".."},
-        {"host": ".example.com"},
         {"host": "example..com"},
-        {"host": "example.com.."},
         {"allowed_hosts": ["example..com"]},
         {"host": "host\nname"},
         {"host": None},
@@ -61,6 +59,10 @@ def collect_metrics_cycles():
 def test_metrics_config_validation(config_module, monkeypatch, tmp_path, settings):
     from src.config.server_config import load_server_config
 
+    if isinstance(settings, dict) and any(
+        key in settings for key in ("host", "allowed_hosts")
+    ):
+        settings = {"enabled": True, "port": 9108, **settings}
     config = tmp_path / "metrics.yaml"
     config.write_text(yaml.safe_dump({"metrics": settings}))
     monkeypatch.setenv("TOKENAGE_CONFIG", str(config))
@@ -120,11 +122,75 @@ def test_api_port_override_validation(config_module, monkeypatch, tmp_path, port
             loader()
 
 
-@pytest.mark.parametrize("host", ["localhost", "example.com.", "127.0.0.1", "[::1]"])
+@pytest.mark.parametrize("port", [True, 4001.9, "invalid", 0, 65536])
+def test_api_config_port_validation(config_module, monkeypatch, tmp_path, port):
+    from src.config.server_config import load_server_config
+
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({"server": {"api_port": port}}))
+    monkeypatch.setenv("TOKENAGE_CONFIG", str(config))
+    monkeypatch.delenv("TOKENAGE_API_PORT", raising=False)
+    for loader in (config_module.load_config, load_server_config):
+        with pytest.raises(ValueError, match="server.api_port.*1 to 65535"):
+            loader()
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_api_bind_normalizes_trailing_dot(monkeypatch, override):
+    from src.config.server_config import resolve_api_bind
+
+    if override:
+        monkeypatch.setenv("TOKENAGE_API_HOST", "EXAMPLE.COM.")
+    else:
+        monkeypatch.delenv("TOKENAGE_API_HOST", raising=False)
+    monkeypatch.delenv("TOKENAGE_API_PORT", raising=False)
+    host, port = resolve_api_bind({"server": {"host": "LOCALHOST."}})
+    assert host == ("example.com" if override else "localhost")
+    assert port == 4001
+
+
+@pytest.mark.parametrize(
+    "host", ["localhost.", "EXAMPLE.com.", "127.0.0.1.", "[::1]", "[::1]."]
+)
 def test_metrics_host_accepts_valid_labels(host):
     from src.config.server_config import validate_metrics
 
-    assert validate_metrics({"metrics": {"host": host}}, 4001).host == host.strip("[]")
+    config = validate_metrics(
+        {
+            "metrics": {
+                "enabled": True,
+                "port": 9108,
+                "host": host,
+                "allowed_hosts": [host],
+            }
+        },
+        4001,
+    )
+    expected = host.removesuffix(".").strip("[]").lower()
+    assert config.host == expected
+    assert config.allowed_hosts == (expected,)
+
+
+def test_disabled_metrics_skips_host_validation(config_module, monkeypatch, tmp_path):
+    from src.config.server_config import load_server_config
+
+    config = tmp_path / "metrics.yaml"
+    config.write_text(
+        "metrics: {enabled: false, host: 'example..com', allowed_hosts: ['.']}\n"
+    )
+    monkeypatch.setenv("TOKENAGE_CONFIG", str(config))
+    assert not config_module.load_config()["metrics"]["enabled"]
+    assert not load_server_config().metrics.enabled
+
+
+@pytest.mark.parametrize(
+    "settings", [{"host": None}, {"allowed_hosts": [None]}, {"port": True}]
+)
+def test_disabled_metrics_still_validates_types(settings):
+    from src.config.server_config import validate_metrics
+
+    with pytest.raises(ValueError, match="metrics"):
+        validate_metrics({"metrics": {"enabled": False, **settings}}, 4001)
 
 
 class LocalPort:
@@ -358,6 +424,38 @@ def test_consumer_status_failure_is_counted(measured_app):
 
     with pytest.raises(StoreUnavailable):
         Consumer(SimpleNamespace(status=fail)).drain()
+    assert (
+        metrics.registry.get_sample_value(
+            "tokenage_ingest_errors_total", {"kind": "store_unavailable"}
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize(
+    "methods", [("claim",), ("read",), ("ack",), ("release",), ("read", "release")]
+)
+def test_consumer_store_failures_count_once_per_cycle(
+    measured_app, monkeypatch, methods
+):
+    from src.ingest_queue import Consumer
+    from src.shared_state import StoreUnavailable, get_shared_state
+
+    _, metrics = measured_app
+    store = get_shared_state()
+    store.publish("user", [{"kind": "usage", "user_id": "user"}])
+    consumer = Consumer(store)
+    monkeypatch.setattr(consumer, "_process", lambda *args: None)
+
+    def fail(*args):
+        raise StoreUnavailable()
+
+    for method in methods:
+        monkeypatch.setattr(store, method, fail)
+    monkeypatch.setattr(
+        consumer.stop_event, "wait", lambda delay: consumer.stop_event.set()
+    )
+    consumer._run()
     assert (
         metrics.registry.get_sample_value(
             "tokenage_ingest_errors_total", {"kind": "store_unavailable"}
@@ -625,16 +723,23 @@ def test_gunicorn_two_workers_aggregate_and_isolate_ports(tmp_path):
                         )
                 finally:
                     os.kill(stopped, signal.SIGCONT)
-            response = client.get(metrics_url + "/metrics")
-            assert (
-                'tokenage_ingest_requests_total{code="401",route="otlp_logs"} 2.0'
-                in response.text
+            # Receiving the response body does not await the middleware's
+            # finally block. A worker can even be paused before it records the
+            # previous request. Wait for both resumed workers to publish all
+            # three samples before checking aggregation or killing either one.
+            expected = (
+                'tokenage_ingest_requests_total{code="401",route="otlp_logs"} 2.0',
+                'tokenage_ingest_errors_total{kind="auth"} 2.0',
+                'tokenage_ingest_duration_seconds_count{route="otlp_logs"} 2.0',
             )
-            assert 'tokenage_ingest_errors_total{kind="auth"} 2.0' in response.text
-            assert (
-                'tokenage_ingest_duration_seconds_count{route="otlp_logs"} 2.0'
-                in response.text
-            )
+            deadline = time.monotonic() + 5
+            while True:
+                response = client.get(metrics_url + "/metrics")
+                assert response.status_code == 200
+                if all(sample in response.text for sample in expected):
+                    break
+                assert time.monotonic() < deadline, response.text + log.read_text()
+                time.sleep(0.01)
             assert response.text.count("tokenage_build_info{") == 1
             # Worker exit must remove its live gauge while retaining counters.
             victim = pids[0]
@@ -686,6 +791,9 @@ def test_gunicorn_two_workers_aggregate_and_isolate_ports(tmp_path):
         ("127.0.0.1", [], "127.0.0.1:9108", 200),
         ("::1", [], "[::1]:9108", 200),
         ("localhost", [], "LOCALHOST:9108", 200),
+        ("LOCALHOST.", [], "localhost:9108", 200),
+        ("localhost", [], "localhost.:9108", 200),
+        ("0.0.0.0", ["TOKENAGE."], "tokenage:9108", 200),
         ("0.0.0.0", [], "tokenage:9108", 404),
         ("0.0.0.0", ["tokenage"], "tokenage:9108", 200),
         ("100.64.0.1", ["node.tailnet.ts.net"], "100.64.0.1:9108", 200),
@@ -696,11 +804,27 @@ def test_gunicorn_two_workers_aggregate_and_isolate_ports(tmp_path):
     ],
 )
 def test_metrics_host_validation(measured_app, bind_host, allowed, request_host, code):
+    from src.config.server_config import validate_metrics
     from src.metrics import MetricsMiddleware
 
     app, _ = measured_app
+    config = validate_metrics(
+        {
+            "metrics": {
+                "enabled": True,
+                "port": 9108,
+                "host": bind_host,
+                "allowed_hosts": allowed,
+            }
+        },
+        4001,
+    )
     gate = MetricsMiddleware(
-        app, enabled=True, port=9108, host=bind_host, allowed_hosts=allowed
+        app,
+        enabled=True,
+        port=9108,
+        host=config.host,
+        allowed_hosts=config.allowed_hosts,
     )
     client = TestClient(LocalPort(gate, 9108))
     assert (

@@ -79,6 +79,9 @@ profile. Compose mounts the entire `caddy/` directory read-only at `/etc/caddy`,
 so editors that save by rename are picked up on reload. Caddy listens on plain
 HTTP `:80`; terminate TLS in front of Caddy (for example, at Cloudflare). Automatic HTTPS
 and config persistence are disabled; no certificate storage is needed.
+The example's global `log` block keeps ingest tokens and sign-in codes out of
+Caddy's logs (a site-level access log needs the same filter); keep it when editing, and add it to a Caddyfile copied from an
+older example.
 
 Caddy uses `least_conn`: `to tokenage:4001` reaches the Compose container.
 Uncomment/add `to 192.168.x.y:<api_port>` or `to <tailscale-host>:<api_port>` for

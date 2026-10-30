@@ -3,6 +3,19 @@
 	auto_https off
 	# No saved config or certificate state is needed for this HTTP-only proxy.
 	persist_config off
+	# Error logs include request headers and the URI. Caddy redacts Authorization
+	# and Cookie itself; drop ingest tokens and one-time sign-in values too.
+	# A site-level access log bypasses this: give it the same format filter.
+	log {
+		format filter {
+			request>headers>X-Tokenage-Token delete
+			request>uri query {
+				replace code REDACTED
+				replace state REDACTED
+			}
+			wrap json
+		}
+	}
 }
 
 :80 {

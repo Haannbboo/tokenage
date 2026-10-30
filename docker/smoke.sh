@@ -331,3 +331,21 @@ with get_engine().connect() as connection:
     assert connection.execute(text("SELECT COUNT(*) FROM usage WHERE model = 'docker-smoke-model'")).scalar_one() == 7
 PYASSERT
 echo 'PASS: abrupt backend stop fails over POSTs and drains all accepted records'
+
+# Caddy logs request headers and the URI on errors: with no upstream left, the
+# ingest token and a one-time sign-in code must stay out of its logs.
+"${compose[@]}" stop tokenage second
+token=$(tail -n 1 "$scratch/token")
+[ -n "$token" ] || { echo 'FAIL: no ingest token' >&2; exit 1; }
+curl --max-time 10 --silent --output /dev/null -H @"$scratch/headers" --data-binary '{}' "$endpoint/otlp/v1/logs" || true
+curl --max-time 10 --silent --output /dev/null "$endpoint/auth/local/login?code=smoke-login-code&state=smoke-login-state" || true
+"${compose[@]}" logs caddy > "$scratch/caddy.log" 2>&1
+if ! grep -q '"uri":"/otlp/v1/logs"' "$scratch/caddy.log" || ! grep -q 'code=REDACTED&state=REDACTED' "$scratch/caddy.log"; then
+    echo 'FAIL: Caddy did not log the failed requests with redaction' >&2
+    exit 1
+fi
+if grep -q -F -e "$token" -e smoke-login-code -e smoke-login-state "$scratch/caddy.log"; then
+    echo 'FAIL: Caddy logged an ingest token or sign-in code' >&2
+    exit 1
+fi
+echo 'PASS: Caddy error logs omit ingest tokens and sign-in codes'

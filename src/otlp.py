@@ -15,8 +15,10 @@ from src.config.app import CONFIG
 from .database import init_db
 from .ingest_queue import (
     TRANSIENT_DB_ERRORS,
+    IngestQueueFull,
     consumer_lifespan,
     publish,
+    queue_full_response,
     store_unavailable_response,
 )
 from .provider_parser import parse_provider_metadata
@@ -914,6 +916,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="tokenage-otlp", lifespan=lifespan)
+app.exception_handler(IngestQueueFull)(queue_full_response)
 for error in TRANSIENT_DB_ERRORS:
     app.exception_handler(error)(store_unavailable_response)
 

@@ -2,10 +2,70 @@
 
 from __future__ import annotations
 
+import ipaddress
+import os
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import yaml
+
+
+@dataclass(frozen=True)
+class MetricsConfig:
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int | None = None
+    allowed_hosts: tuple[str, ...] = ()
+
+
+def resolve_api_bind(config: dict) -> tuple[str, int]:
+    server = config.get("server", {})
+    return (
+        os.environ.get("TOKENAGE_API_HOST", str(server.get("host", "127.0.0.1"))).strip(
+            "[]"
+        ),
+        int(os.environ.get("TOKENAGE_API_PORT", server.get("api_port", 4001))),
+    )
+
+
+def _metrics_host(host: object) -> str:
+    if not isinstance(host, str):
+        raise ValueError("metrics host must be a hostname or IP address")
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if not re.fullmatch(r"[\w.:-]+", host, re.ASCII):
+        raise ValueError("metrics host must be a hostname or IP address")
+    if ":" in host:
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError:
+            raise ValueError("metrics host must be a hostname or IP address") from None
+    return host.lower()
+
+
+def validate_metrics(config: dict, api_port: int) -> MetricsConfig:
+    raw = config.get("metrics", {})
+    if not isinstance(raw, dict):
+        raise ValueError("metrics must be a mapping")
+    enabled = raw.get("enabled", False)
+    host = _metrics_host(raw.get("host", "127.0.0.1"))
+    port = raw.get("port")
+    if type(enabled) is not bool:
+        raise ValueError("metrics.enabled must be a boolean")
+    allowed_hosts = raw.get("allowed_hosts", [])
+    if not isinstance(allowed_hosts, list):
+        raise ValueError(
+            "metrics.allowed_hosts must be a list of hostnames or IP addresses"
+        )
+    allowed_hosts = tuple(_metrics_host(value) for value in allowed_hosts)
+    if port is not None and (type(port) is not int or not 1 <= port <= 65535):
+        raise ValueError("metrics.port must be an integer from 1 to 65535")
+    if enabled and port is None:
+        raise ValueError("metrics.port is required when metrics.enabled is true")
+    if enabled and port == api_port:
+        raise ValueError("metrics.port must differ from the resolved API port")
+    return MetricsConfig(enabled, host, port, allowed_hosts)
 
 
 @dataclass(frozen=True)
@@ -14,6 +74,7 @@ class ServerConfig:
     api_port: int
     base_url: str | None = None
     workers: int = 2
+    metrics: MetricsConfig = MetricsConfig()
 
 
 def validate_workers(value: object) -> int:
@@ -78,12 +139,13 @@ def load_server_config() -> ServerConfig:
 
     resolve_server_urls(cfg)
     server = cfg.get("server", {})
-    host = str(server.get("host", "127.0.0.1"))
+    host, api_port = resolve_api_bind(cfg)
     base_url = server.get("base_url")
 
     return ServerConfig(
         host=host,
-        api_port=int(server.get("api_port", 4001)),
+        api_port=api_port,
         base_url=base_url,
         workers=validate_workers(server.get("workers", 2)),
+        metrics=validate_metrics(cfg, api_port),
     )

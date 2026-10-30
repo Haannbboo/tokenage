@@ -64,6 +64,16 @@ server:
   # Budget workers * 15 connections per node within the PostgreSQL limit.
   # workers: 2
 
+# Optional unauthenticated Prometheus listener. Never publish/proxy this port.
+# Bind loopback (same-host scraper) or a private/tailnet interface; in Docker,
+# use 0.0.0.0 for a scraper on the same network, without a compose ports mapping.
+metrics:
+  enabled: false
+  host: 127.0.0.1
+  # port: 9108  # required when enabled; must differ from the resolved API port
+  # allowed_hosts: [tokenage]  # Docker service name, or private IP/MagicDNS name
+  # Loopback binds only accept loopback Host names, regardless of this list.
+
 db: {}
   # When unset, path defaults to $TOKENAGE_HOME/usage.db.
   # path: ~/.tokenage/usage.db

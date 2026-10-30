@@ -12,9 +12,11 @@ import logging
 import threading
 import time
 import uuid
+from collections import Counter
 from contextlib import asynccontextmanager
 
 from fastapi import HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -23,6 +25,7 @@ from .shared_state import (
     Event,
     QueueFull,
     SharedState,
+    StoreUnavailable,
     defer_updates,
     get_shared_state,
 )
@@ -37,18 +40,31 @@ SQLITE_PASS_SECONDS = 0.05
 SQLITE_PAUSE_SECONDS = 0.01
 
 
+class IngestQueueFull(HTTPException):
+    def __init__(self):
+        super().__init__(
+            503, "collector is busy, retry later", headers={"Retry-After": "5"}
+        )
+
+
+async def queue_full_response(request: Request, exc: IngestQueueFull):
+    request.scope["tokenage_ingest_error"] = "queue_full"
+    return await http_exception_handler(request, exc)
+
+
 def publish(user_id: str, payloads: list[dict]) -> None:
     try:
         get_shared_state().publish(
             user_id, [{**payload, "user_id": user_id} for payload in payloads]
         )
     except QueueFull as exc:
-        raise HTTPException(
-            503, "collector is busy, retry later", headers={"Retry-After": "5"}
-        ) from exc
+        raise IngestQueueFull() from exc
 
 
 def store_unavailable_response(request: Request, exc: Exception) -> JSONResponse:
+    request.scope["tokenage_ingest_error"] = (
+        "store_unavailable" if isinstance(exc, StoreUnavailable) else "db"
+    )
     # Handled exceptions are otherwise not logged; omit sensitive error details.
     log.warning("Returning 503: %s", type(exc).__name__)
     # Clients retry 503, not 500, including DB failures before ingest is queued.
@@ -91,6 +107,9 @@ class Consumer:
             raise ValueError("unknown queue event kind")
 
     def drain(self) -> int:
+        from .metrics import committed_usage, get_metrics
+
+        metrics = get_metrics()
         done = 0
         self.retry_delay = POLL_SECONDS
         for partition in sorted(s.partition for s in self.store.status() if s.depth):
@@ -101,6 +120,7 @@ class Consumer:
             sqlite = False
             last = None
             processed = 0
+            started = time.monotonic()
             deadline = time.monotonic() + PASS_SECONDS
             try:
                 from .database import get_engine
@@ -108,6 +128,9 @@ class Consumer:
                 events = self.store.read(partition)
                 with defer_updates() as updates:
                     with Session(get_engine()) as session:
+                        counts: Counter[str] = Counter()
+                        if metrics:
+                            session.info["tokenage_usage_counts"] = counts
                         # sqlite3 legacy mode does not BEGIN for SAVEPOINT; without
                         # this, releasing the first savepoint commits that event.
                         # IMMEDIATE takes the write lock now: a read-first WAL
@@ -128,12 +151,18 @@ class Consumer:
                             if self.stop_event.is_set() or time.monotonic() >= deadline:
                                 break
                             before = updates.copy()
+                            before_counts = counts.copy() if metrics else None
                             try:
                                 with session.begin_nested():
                                     self._process(event, session)
                             except TRANSIENT_DB_ERRORS:
                                 raise
                             except Exception as exc:
+                                if before_counts is not None:
+                                    counts.clear()
+                                    counts.update(before_counts)
+                                if metrics:
+                                    metrics.errors.labels("processing").inc()
                                 updates.clear()
                                 updates.update(before)
                                 # Exception text can contain record bodies or SQL values.
@@ -147,7 +176,13 @@ class Consumer:
                             last = event.position
                             processed += 1
                         session.commit()
+                        committed_usage(counts)
             except Exception as exc:
+                if metrics:
+                    if isinstance(exc, StoreUnavailable):
+                        metrics.errors.labels("store_unavailable").inc()
+                    elif isinstance(exc, TRANSIENT_DB_ERRORS):
+                        metrics.errors.labels("db").inc()
                 self.retry_delay = 5
                 log.warning(
                     "Ingest partition unavailable partition=%s error=%s",
@@ -162,7 +197,11 @@ class Consumer:
                 if last is not None:
                     self.store.ack(partition, last)
                 done += processed
+                if metrics:
+                    metrics.consumer_rows.inc(processed)
             finally:
+                if metrics:
+                    metrics.consumer_batch.observe(time.monotonic() - started)
                 self.store.release(partition, self.owner)
                 if sqlite:
                     # SQLite has one writer for every partition and API request.

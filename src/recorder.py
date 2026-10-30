@@ -15,6 +15,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from . import metrics
 from .database.base_url import resolve_base_url_id
 from .database.errors import TRANSIENT_DB_ERRORS
 from .database.model_prices import load_model_price_overrides
@@ -177,6 +178,7 @@ def record_usage(
             for tool_use_id, tool_name in tool_calls
         ],
     )
+    metrics.stage_usage(session, client_source)
     return usage
 
 

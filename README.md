@@ -262,6 +262,16 @@ db:
 
 `tokenage server start` merges missing defaults from `config.example.yaml` into your user config without overwriting existing values.
 
+Optional Prometheus metrics use a separate, unauthenticated listener. Set
+`metrics.enabled: true` and `metrics.port` in the server config; the host defaults
+to loopback. Never publish or proxy this port. After enabling, disabling, or
+changing the metrics bind, do a full restart: `tokenage server stop tokenage-api`
+then `tokenage server start` (brief outage). `tokenage server restart` refuses
+SIGHUP when the running bind differs or is unknown. For a private interface,
+set `metrics.allowed_hosts` to the node IP or MagicDNS name used by the scraper.
+See the [metrics setup](docker/README.md#prometheus-metrics)
+for same-host and container scrapers.
+
 ## Point clients at the proxy
 
 The proxy runs in the client service (`tokenage client start`), not in the server. It binds to `127.0.0.1` only and is configured in `~/.tokenage/client.yaml` (kept mode `0600`; keys are literal). Without a `proxy:` section there is no proxy.

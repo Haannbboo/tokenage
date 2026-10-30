@@ -7,7 +7,7 @@ import yaml
 from ..utils import replace_contents as _replace_contents
 from . import merge as merge_helpers
 from .models import expand_path, get_config_path, get_tracker_home
-from .server_config import validate_workers
+from .server_config import resolve_api_bind, validate_metrics, validate_workers
 
 merge_missing_config_defaults = merge_helpers.merge_missing_config_defaults
 sync_config_file_with_defaults = merge_helpers.sync_config_file_with_defaults
@@ -26,9 +26,15 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     config.setdefault("models", {})
     config.setdefault("queue", {})
 
-    server.setdefault("host", "127.0.0.1")
-    server.setdefault("api_port", 4001)
+    server["host"], server["api_port"] = resolve_api_bind(config)
     server["workers"] = validate_workers(server.get("workers", 2))
+    metrics = validate_metrics(config, server["api_port"])
+    config["metrics"] = {
+        "enabled": metrics.enabled,
+        "host": metrics.host,
+        "port": metrics.port,
+        "allowed_hosts": list(metrics.allowed_hosts),
+    }
 
     auth = config.setdefault("auth", {})
     auth.setdefault("provider", "local")

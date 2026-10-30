@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import http.server
+import json
 import os
 import subprocess
 import threading
@@ -50,7 +51,9 @@ def box(tmp_path, monkeypatch):
     monkeypatch.setattr(
         ops,
         "_listeners",
-        lambda port: [ops.PortListener(9, "other")] if port in b.busy else [],
+        lambda port, host="127.0.0.1": (
+            [ops.PortListener(9, "other")] if port in b.busy else []
+        ),
     )
     monkeypatch.setattr(
         ops, "migrate", lambda args=None: b.calls.append("migrate") or 0
@@ -113,6 +116,10 @@ def test_restart_reloads_named_programs(box):
     (box.home / "supervisord.conf").write_text("")
     (box.home / "config.yaml").write_text("server:\n  api_port: 4001\n")
     box.states = {"tokenage-api": "RUNNING"}
+    (box.home / "run").mkdir()
+    (box.home / "run" / "api-binds.json").write_text(
+        json.dumps({"pid": 1, "bind": ["127.0.0.1:4001"]})
+    )
 
     assert ops.PROGRAMS == ("tokenage-api",)  # OTLP is mounted in the API
     assert ops.restart(["tokenage-api"]) == 0
@@ -367,3 +374,51 @@ def test_update_refuses_a_dirty_worktree(box, clone):
     with pytest.raises(SystemExit):
         ops.update()
     assert box.calls == []
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_metrics_port_preflight_and_status(box, monkeypatch, capsys, enabled):
+    box.stamp()
+    box.home.mkdir()
+    (box.home / "supervisord.conf").write_text("")
+    (box.home / "config.yaml").write_text(
+        yaml.safe_dump({"metrics": {"enabled": enabled, "host": "[::1]", "port": 9108}})
+    )
+    box.busy = {9108}
+    assert ops.start() == (1 if enabled else 0)
+    monkeypatch.setattr(
+        "src.shared_state.get_shared_state", lambda: SimpleNamespace(status=lambda: [])
+    )
+    ops.status()
+    output = capsys.readouterr().out
+    if enabled:
+        assert "METRICS: [::1]:9108" in output
+        assert "cannot bind" in output
+        assert "migrate" not in box.calls
+    else:
+        assert "METRICS" not in output
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        None,
+        {"pid": 2, "bind": ["127.0.0.1:4001"]},
+        {"pid": 1, "bind": ["127.0.0.1:4001", "127.0.0.1:9109"]},
+    ],
+)
+def test_restart_refuses_changed_or_unknown_bind(box, capsys, stamp):
+    box.home.mkdir()
+    (box.home / "supervisord.conf").write_text("")
+    (box.home / "config.yaml").write_text(
+        "server: {api_port: 4001}\nmetrics: {enabled: true, port: 9108}\n"
+    )
+    box.states = {"tokenage-api": "RUNNING"}
+    if stamp:
+        (box.home / "run").mkdir()
+        (box.home / "run" / "api-binds.json").write_text(json.dumps(stamp))
+    with pytest.raises(SystemExit):
+        ops.restart()
+    assert not ctl(box, "signal", "HUP", "tokenage-api")
+    assert "migrate" not in box.calls
+    assert "stop tokenage-api then tokenage server start" in capsys.readouterr().out

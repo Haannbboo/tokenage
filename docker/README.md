@@ -153,3 +153,43 @@ older version pins eventually expire. Set `TOKENAGE_PORT` / `NGINX_PORT` for hos
 From the repository root, build locally: `docker build --build-arg GIT_COMMIT="$(git rev-parse HEAD)" -t tokenage:local .`.
 Run `TOKENAGE_SMOKE_IMAGE=tokenage:local ./docker/smoke.sh` for isolated functional
 checks (Postgres ingest, SQLite persistence, nginx + Redis ingest, atomic config saves/reloads, and abrupt-stop POST failover).
+
+### Prometheus metrics
+
+Metrics are off by default. To enable a separate, unauthenticated listener, add
+this to the mounted server config (choose a port different from the API):
+
+```yaml
+metrics:
+  enabled: true
+  host: 0.0.0.0
+  port: 9108
+  allowed_hosts: [tokenage]  # Docker service name used by the scraper
+```
+
+Scrape `http://tokenage:9108/metrics` from Grafana Alloy or Prometheus on the same
+Docker network. **Do not add this port to compose `ports`, publish it, or proxy it
+through the public ingress.** On a VM use `127.0.0.1` for a same-host scraper, or
+bind a private/tailnet interface. Let the scraper add `instance` and `provider`
+labels; the app does not identify the node. `/metrics` returns 404 on the API
+port, and every other path returns 404 on the metrics port. Loopback binds accept
+only loopback Host names. For private binds, Host must match `metrics.host` or
+an entry in `metrics.allowed_hosts`; add the node IP or MagicDNS name for a
+central tailnet scraper. Host ports are ignored.
+
+The listener uses the same Gunicorn workers as the API, with per-run multiprocess
+counters under `TOKENAGE_HOME`. Keep Gunicorn's default `preload_app=false`.
+After enabling, disabling, or changing the metrics bind address/port, fully restart
+the container (with a brief outage); on a VM run `tokenage server stop tokenage-api`
+then `tokenage server start`.
+An ordinary `tokenage server restart` sends SIGHUP and preserves counters when
+the binds are unchanged. It refuses when the running bind differs or is unknown,
+because changing listeners via SIGHUP can terminate the Gunicorn master.
+Counter and histogram files accumulate by up to two files per retired worker
+(at most `2 * server.workers` per reload) until a full master restart;
+periodically stop/start long-lived masters. Stale
+per-master directories are cleaned at master start.
+Scrapes expose build version/commit, ingest request counts, acceptance latency and
+errors, committed usage rows by a bounded client source, consumer progress/batch
+time, and shared-store queue depth. Queue depth is omitted if its read fails or
+takes more than 200 ms; no usage-database query runs during a scrape.

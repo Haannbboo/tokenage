@@ -48,19 +48,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-  nginx:
-    profiles: [nginx]
-    image: nginx:1.28
+  caddy:
+    profiles: [caddy]
+    image: caddy:2.11.7
     depends_on:
       tokenage:
         condition: service_healthy
     restart: unless-stopped
     ports:
-      - "${NGINX_PORT:-80}:80"
+      - "${CADDY_PORT:-80}:80"
     volumes:
       - type: bind
-        source: ./nginx
-        target: /etc/nginx/conf.d
+        source: ./caddy
+        target: /etc/caddy
         read_only: true
         bind:
           create_host_path: false

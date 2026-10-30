@@ -1,0 +1,58 @@
+{
+	# Terminate TLS in front of Caddy (for example, at Cloudflare).
+	auto_https off
+	# No saved config or certificate state is needed for this HTTP-only proxy.
+	persist_config off
+}
+
+:80 {
+	request_body {
+		max_size 10MiB
+	}
+	reverse_proxy {
+		# With keepalive off below, hostnames resolve anew for every request:
+		# replacing a container needs no reload, including for ingest POSTs.
+		to tokenage:4001
+		# to 192.168.x.y:4001
+		# to <tailscale-host>:4001
+		lb_policy least_conn
+		# No per-peer "backup" flag: for ordered primary/standby failover,
+		# use lb_policy first instead, with the standby listed last.
+
+		# Caddy 2.11.7 retries dial failures for any method, regardless of this
+		# matcher. Reject ALL retries after connecting, including GET: a sent
+		# ingest POST must never be replayed. Do not broaden this matcher.
+		# https://github.com/caddyserver/caddy/blob/v2.11.7/modules/caddyhttp/reverseproxy/reverseproxy.go#L1393-L1448
+		lb_try_duration 5s
+		lb_try_interval 250ms
+		lb_retry_match expression false
+
+		fail_duration 10s
+		max_fails 1
+		health_uri /version
+		health_method GET
+		health_interval 5s
+		health_timeout 2s
+		health_status 200
+		health_fails 1
+		health_passes 1
+
+		transport http {
+			# In 2.11.7, Go's transport can still replay a sent, bodyless GET
+			# on a reused socket independently of lb_retry_match. Fresh connections
+			# also avoid stale pooled sockets to a replaced container's old IP:
+			# a POST on one would 502 because it cannot be retried. This keeps
+			# replacement without a reload working for ingest. The cost is one TCP
+			# connection per request, noticeable over LAN/Tailscale upstreams.
+			# https://github.com/caddyserver/caddy/blob/v2.11.7/modules/caddyhttp/reverseproxy/httptransport.go#L473-L492
+			keepalive off
+			dial_timeout 1s
+			response_header_timeout 60s
+		}
+		# Defaults flush SSE/unknown-length responses immediately; make this
+		# explicit for every response (also finishes work if a client disconnects).
+		flush_interval -1
+		# Host passes through. Caddy sets X-Forwarded-For/Proto/Host itself.
+		# Do not add trusted_proxies: client-supplied values must be ignored.
+	}
+}

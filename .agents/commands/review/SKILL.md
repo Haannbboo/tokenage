@@ -32,17 +32,22 @@ Determine the **intent** — what the author is trying to achieve. This is criti
 challenge whether the work *achieves the intent well*, not whether the intent is correct.
 State the intent explicitly before proceeding.
 
-Assess change size:
+Choose a tier by risk, not size: a 20-line auth change is Deep.
 
-| Size | Threshold | Reviewers |
-|------|-----------|-----------|
-| Small | < 50 lines, 1-2 files | 1 (Skeptic) |
-| Medium | 50-199 lines, 3-5 files | 2 (Skeptic + Architect) |
-| Large | 200+ lines or 5+ files | 3 (Skeptic + Architect + Minimalist) |
+| Tier | Risk | Reviewers |
+|------|------|-----------|
+| Quick | Docs, comments, tests-only, non-security config | Skeptic; no security reviewer by default |
+| Standard | Ordinary code: frontend, CLI output, dashboards, refactors | Skeptic + Minimalist + security |
+| Deep | Auth/tokens/sessions, ingest path, cost/token accounting, schema/migrations, installer/update, CI workflows, new network listeners or anything exposed, privacy-sensitive data | Skeptic + Architect + Minimalist + security |
+
+When unsure between tiers, pick the higher one and say why in the review intent.
+Deep also requires a live functional test (GCP or the test lane), with results in the
+PR body. Deep's reviewer list is extensible; add further reviewers there as needed.
 
 Read `references/reviewer-lenses.md` for lens definitions.
 
-Always add one **security** reviewer, whatever the size: same tool and path as the
+Add one **security** reviewer for Standard and Deep; for Quick, only if the diff
+touches secrets, auth, CI or installer files. Use the same tool and path as the
 lens reviewers, prompt `security.md` in this directory plus the scope and intent, report
 `$REVIEW_DIR/security.md`. Its High and Medium findings are must-fix unless the lead
 judgment shows they are false positives.

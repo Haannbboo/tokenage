@@ -24,7 +24,7 @@ request → design/spec → approval → implementation → testing
 
 This repo adds only the final landing gate:
 
-1. Before commit, run an independent code review with fresh opposite-tool reviewers (Orca orchestration workers when available, otherwise CLI processes). Every review includes a security reviewer (`.agents/commands/review/security.md`).
+1. Before commit, run an independent code review with fresh opposite-tool reviewers (Orca orchestration workers when available, otherwise CLI processes). Use the risk tiers in `.agents/commands/review/SKILL.md`: security review is required for Standard and Deep, and for Quick only if the diff touches secrets, auth, CI or installer files.
 2. Fix must-fix review findings.
 3. Commit only after approval.
 4. Push the current branch only after approval.

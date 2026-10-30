@@ -85,3 +85,13 @@ def post_fork(server, worker):
     )
     for handler in logging.getLogger("uvicorn.access").handlers:
         handler.setFormatter(formatter)
+        handler.addFilter(_drop_query)
+
+
+def _drop_query(record):
+    # Query strings can carry one-time sign-in codes; log the path only.
+    if not isinstance(record.args, tuple) or len(record.args) < 3:
+        return True
+    client, method, path, *rest = record.args
+    record.args = (client, method, path.split("?", 1)[0], *rest)
+    return True

@@ -710,6 +710,8 @@ def test_gunicorn_two_workers_aggregate_and_isolate_ports(tmp_path):
                 int(path.stem.rsplit("_", 1)[1])
                 for path in directory.glob("gauge_livemax_*.db")
             ]
+            # The real access-log handler must drop query strings (sign-in codes).
+            assert client.get(api_url + "/version?code=leak-check").status_code == 200
             for stopped in pids:
                 os.kill(stopped, signal.SIGSTOP)
                 try:
@@ -780,6 +782,8 @@ def test_gunicorn_two_workers_aggregate_and_isolate_ports(tmp_path):
             process.wait(timeout=5)
     assert process.returncode == 0, log.read_text()
     assert not list(tmp_path.glob("metrics-*"))
+    assert '"GET /version HTTP/1.1" 200' in log.read_text()
+    assert "leak-check" not in log.read_text()
 
 
 @pytest.mark.parametrize(
@@ -1035,3 +1039,30 @@ def test_failed_bind_does_not_create_metrics_directory(tmp_path):
     assert result.returncode != 0, result.stderr
     assert "Connection in use" in result.stderr, result.stderr
     assert not list(tmp_path.glob("metrics-*"))
+
+
+def test_access_log_drops_query_strings(monkeypatch):
+    import io
+    import logging
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    monkeypatch.setattr(logging.getLogger("uvicorn.access"), "handlers", [handler])
+    runpy.run_path(str(ROOT / "src/config/api.conf.py"))["post_fork"](None, None)
+
+    # Handle the record directly: other tests may disable logging globally.
+    args = (
+        "127.0.0.1:5000",
+        "GET",
+        "/auth/local/login?code=secret-code&state=s",
+        "1.1",
+        302,
+    )
+    handler.handle(
+        logging.LogRecord(
+            "uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', args, None
+        )
+    )
+    line = stream.getvalue()
+    assert '"GET /auth/local/login HTTP/1.1" 302' in line
+    assert "secret-code" not in line and "?" not in line

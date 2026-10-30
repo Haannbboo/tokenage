@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import json
 import os
 import shutil
 import socket
@@ -25,19 +26,25 @@ import yaml
 from src.config.merge import sync_config_file_with_defaults
 from src.config.models import get_tracker_home
 from src.config.runtime_ports import (
+    PortIssue,
     PortListener,
     detect_port_issues,
+    format_bind,
     format_port_issue,
     get_blocking_port_issues,
     get_configured_service_ports,
     parse_supervisor_status,
 )
-from src.config.server_config import resolve_server_urls
+from src.config.server_config import (
+    resolve_api_bind,
+    resolve_api_port,
+    resolve_server_urls,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ("api",)  # the OTLP collector is mounted in the API at /otlp
 PROGRAMS = tuple(f"tokenage-{s}" for s in SERVICES)
-PORT_KEYS = ("api_port",)
+PORT_KEYS = ("api_port",)  # Only API ports may be auto-assigned; metrics is explicit.
 _LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -105,7 +112,10 @@ def _ctl(*args: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
 
 
 def _load_config(path: Path) -> dict[str, Any]:
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    host, port = resolve_api_bind(config)
+    config.setdefault("server", {}).update(host=host, api_port=port)
+    return config
 
 
 def _set_server_keys(path: Path, values: dict[str, Any]) -> None:
@@ -138,31 +148,62 @@ def _status_of(program: str) -> str:
     return out[1] if len(out) > 1 else ""
 
 
+def _api_binds_match(config: dict[str, Any]) -> bool:
+    """Check the configured binds against the current API master's stamp."""
+    desired = [
+        format_bind(p.host, p.port) for p in get_configured_service_ports(config)
+    ]
+    stamp = _home() / "run" / "api-binds.json"
+    if not stamp.exists() and len(desired) == 1:
+        # Masters from before the stamp existed only ever bound the API port.
+        return True
+    try:
+        running = json.loads(stamp.read_text())
+        state = parse_supervisor_status(
+            _ctl("status", "tokenage-api", capture=True).stdout
+        )
+        return (
+            running["bind"] == desired and running["pid"] == state["tokenage-api"].pid
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 # ── Ports ───────────────────────────────────────────────────────────
-def _listeners(port: int) -> list[PortListener]:
+def _listeners(port: int, host: str = "127.0.0.1") -> list[PortListener]:
+    # A listener on a different interface need not conflict with this bind.
+    if _bindable(host, port):
+        return []
     if shutil.which("lsof"):
         r = _run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"], capture_output=True)
         if r.returncode in (0, 1):
-            return [
+            listeners = [
                 PortListener(pid=int(p[1]), command=p[0])
                 for p in (line.split() for line in r.stdout.splitlines()[1:])
                 if len(p) > 1
             ]
+            if listeners:
+                return listeners
     # No lsof: probe by binding.
-    return [] if _bindable("127.0.0.1", port) else [PortListener(-1, "(unknown)")]
+    return [PortListener(-1, "(unknown)")]
+
+
+def _bind_family(host: str) -> socket.AddressFamily:
+    # Gunicorn uses AF_INET for hostnames, AF_INET6 for IPv6 literals.
+    return socket.AF_INET6 if ":" in host else socket.AF_INET
 
 
 def _bindable(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind((host, port))
-        except OSError:
-            return False
+    try:
+        with socket.socket(_bind_family(host), socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host.strip("[]"), port))
+    except OSError:
+        return False
     return True
 
 
-def _port_issues(config: dict[str, Any], strict: bool) -> list[str]:
+def _port_issues(config: dict[str, Any], strict: bool) -> list[PortIssue]:
     ports = get_configured_service_ports(config)
     states = {}
     if _conf().exists():
@@ -170,17 +211,24 @@ def _port_issues(config: dict[str, Any], strict: bool) -> list[str]:
     issues = detect_port_issues(
         service_ports=ports,
         supervisor_states=states,
-        listeners_by_port={p.port: _listeners(p.port) for p in ports},
+        listeners_by_port={p.port: _listeners(p.port, p.host) for p in ports},
     )
     if strict:
         issues = get_blocking_port_issues(issues)
-    return [format_port_issue(i) for i in issues]
+    return issues
 
 
 def _assign_free_ports(path: Path, config: dict[str, Any]) -> None:
     server = config.setdefault("server", {})
     host = str(server.get("host", "127.0.0.1"))
-    free = [p for p in range(4001, 4200) if _bindable(host, p)][: len(PORT_KEYS)]
+    metrics_port = (
+        config.get("metrics", {}).get("port")
+        if config.get("metrics", {}).get("enabled")
+        else None
+    )
+    free = [p for p in range(4001, 4200) if p != metrics_port and _bindable(host, p)][
+        : len(PORT_KEYS)
+    ]
     if len(free) < len(PORT_KEYS):
         raise die(f"Could not find {len(PORT_KEYS)} free ports on {host} (4001-4199)")
     _set_server_keys(path, dict(zip(PORT_KEYS, free, strict=True)))
@@ -284,8 +332,11 @@ def start(args: list[str] | None = None) -> int:
     sync_config()
 
     config = _load_config(path)
+    _, api_port_source = resolve_api_port(config)
     issues = _port_issues(config, strict=True)
-    if issues and created:
+    api_port_from_env = api_port_source == "TOKENAGE_API_PORT"
+    api_blocked = any(issue.service == "API" for issue in issues)
+    if api_blocked and created and not api_port_from_env:
         # A fresh config that collides with something already running: move it.
         _assign_free_ports(path, config)
         config = _load_config(path)
@@ -294,8 +345,12 @@ def start(args: list[str] | None = None) -> int:
             ok("Ports auto-assigned")
     if issues:
         bad("Port check failed")
-        for line in issues:
-            _say(line)
+        for issue in issues:
+            _say(format_port_issue(issue))
+        if api_port_from_env and any(issue.service == "API" for issue in issues):
+            note(
+                "TOKENAGE_API_PORT overrides server.api_port; change or unset it if the API port is blocked."
+            )
         note("Change the configured service ports before starting tokenage.")
         return 1
     ok("Port check passed")
@@ -328,6 +383,16 @@ def start(args: list[str] | None = None) -> int:
 
     for prog in PROGRAMS:
         state = _status_of(prog)
+        if (
+            prog == "tokenage-api"
+            and state == "RUNNING"
+            and not _api_binds_match(config)
+        ):
+            bad("API bind changed or running bind is unknown.")
+            note(
+                "Run tokenage server stop tokenage-api then tokenage server start (brief outage)."
+            )
+            return 1
         if state in ("RUNNING", "STARTING"):
             ok(f"{prog}: {state.lower()}")
         else:
@@ -372,6 +437,16 @@ def restart(args: list[str] | None = None) -> int:
     if not _conf().exists():
         raise die("Not running — run tokenage server start")
 
+    if (
+        "tokenage-api" in (names or PROGRAMS)
+        and _status_of("tokenage-api") == "RUNNING"
+        and not _api_binds_match(_load_config(_config_path()))
+    ):
+        raise die(
+            "API bind changed or running bind is unknown; refusing SIGHUP.",
+            "Run tokenage server stop tokenage-api then tokenage server start (brief outage).",
+        )
+
     step("Applying schema migrations")
     migrate()
     ok("Migrations applied")
@@ -403,11 +478,13 @@ def status(args: list[str] | None = None) -> int:
         config = _load_config(path)
         step("Ports")
         for p in get_configured_service_ports(config):
-            note(f"{p.service}: {p.host}:{p.port}")
+            note(f"{p.service}: {format_bind(p.host, p.port)}")
         issues = _port_issues(config, strict=False)
         step("Port check")
-        for line in issues or ["no issues"]:
-            _say(line if issues else f"  ✓ {line}")
+        for issue in issues:
+            _say(format_port_issue(issue))
+        if not issues:
+            _say("  ✓ no issues")
     from .shared_state import StoreUnavailable, get_shared_state
 
     step("Ingest queue")
@@ -543,6 +620,16 @@ def bootstrap(args: list[str] | None = None) -> int:
         f"API running: {local}",
         f"API reachable: {local} (not responding)",
     )
+    for service in services[1:]:
+        probe_host = service.host
+        if probe_host in ("0.0.0.0", "::"):
+            probe_host = "::1" if probe_host == "::" else "127.0.0.1"
+        address = format_bind(service.host, service.port)
+        check(
+            _wait_for_port(probe_host, service.port),
+            f"{service.service} running: {address}",
+            f"{service.service}: {address} (not responding)",
+        )
 
     # src/api.py mounts frontend/dist at import time, so a build is only served
     # after the API restarts. The only command that builds is the one that restarts.

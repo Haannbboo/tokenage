@@ -73,10 +73,14 @@ from .database import (
 )
 from .ingest_queue import (
     TRANSIENT_DB_ERRORS,
+    IngestQueueFull,
     consumer_lifespan,
     publish,
+    queue_full_response,
     store_unavailable_response,
 )
+from .metrics import MetricsMiddleware
+from .metrics import configure as configure_metrics
 from .otlp import app as otlp_app
 from .pricing.costs import resolve_cost_match
 from .pricing.models import ResolvedCost
@@ -151,6 +155,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="tokenage-api", lifespan=lifespan)
+app.exception_handler(IngestQueueFull)(queue_full_response)
 for error in TRANSIENT_DB_ERRORS:
     app.exception_handler(error)(store_unavailable_response)
 app.include_router(auth_router)
@@ -1247,6 +1252,16 @@ if _frontend_dist.is_dir():
 # Registered last so the auth gate runs first (outermost): it must see the
 # original request path, before the SPA catch-all rewrites it.
 app.add_middleware(AuthGateMiddleware)
+
+# Keep this outermost: metrics sockets never enter auth, APIs or the SPA.
+configure_metrics(CONFIG["metrics"]["enabled"])
+app.add_middleware(
+    MetricsMiddleware,
+    enabled=CONFIG["metrics"]["enabled"],
+    port=CONFIG["metrics"]["port"],
+    host=CONFIG["metrics"]["host"],
+    allowed_hosts=CONFIG["metrics"]["allowed_hosts"],
+)
 
 
 def _assert_api_routes_classified() -> None:

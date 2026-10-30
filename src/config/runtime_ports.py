@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .server_config import resolve_api_bind, validate_metrics
+
 
 @dataclass(frozen=True)
 class ServicePort:
@@ -47,10 +49,17 @@ class PortIssue:
 
 def get_configured_service_ports(config: dict[str, Any]) -> list[ServicePort]:
     """Expand configured service ports (OTLP is mounted in the API)."""
-    server = config.get("server", {})
-    host = str(server.get("host", "127.0.0.1"))
-    api_port = int(server.get("api_port", 4001))
-    return [ServicePort("API", "tokenage-api", host, api_port)]
+    host, api_port = resolve_api_bind(config)
+    ports = [ServicePort("API", "tokenage-api", host, api_port)]
+    metrics = validate_metrics(config, api_port)
+    if metrics.enabled:
+        assert metrics.port is not None
+        ports.append(ServicePort("METRICS", "tokenage-api", metrics.host, metrics.port))
+    return ports
+
+
+def format_bind(host: str, port: int) -> str:
+    return f"[{host.strip('[]')}]:{port}" if ":" in host else f"{host}:{port}"
 
 
 def parse_supervisor_status(text: str) -> dict[str, SupervisorProgramState]:
@@ -144,21 +153,22 @@ def detect_port_issues(
 
 def format_port_issue(issue: PortIssue) -> str:
     """Render a short human-readable explanation for a detected port issue."""
+    address = format_bind(issue.host, issue.port)
     if issue.kind == "not_listening":
         return (
             f"  {issue.service}: expected {issue.program} pid {issue.expected_pid} to "
-            f"listen on {issue.host}:{issue.port}, but nothing is listening there."
+            f"listen on {address}, but nothing is listening there."
         )
 
     owner = f"{issue.listener_command} (pid {issue.listener_pid})"
     if issue.kind == "occupied_by_unexpected_process":
         return (
-            f"  {issue.service}: {issue.host}:{issue.port} is owned by {owner}, not "
+            f"  {issue.service}: {address} is owned by {owner}, not "
             f"{issue.program} pid {issue.expected_pid}."
         )
 
     return (
-        f"  {issue.service}: {issue.host}:{issue.port} is already owned by {owner}, "
+        f"  {issue.service}: {address} is already owned by {owner}, "
         f"so {issue.program} cannot bind to it."
     )
 

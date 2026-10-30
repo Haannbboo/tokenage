@@ -46,7 +46,7 @@ The maintainer's GCP project and zone (from private local instructions), label `
 
 Never compare numbers across different VM types; the e2-micro baseline below is superseded. Keep bench-load at e2-small for the 80 req/s ladder; check generator CPU and scheduling before attributing a limit to the server, and use e2-standard-2 if the generator cannot hold the offered rate.
 
-- Install `main` with `install.sh --server`, then the branch with `TOKENAGE_BRANCH=<branch> sh install.sh --server` (same VM; fresh DB and `$TOKENAGE_HOME/state.db` per run). VMs have no Node: copy a locally built `frontend/dist`. Use `/version` as the health check; verify the commit with `git -C ~/.tokenage/src rev-parse HEAD` on bench-server (versions may match across commits).
+- Install `main` with `install.sh --server`, then the branch with `TOKENAGE_BRANCH=<branch> sh install.sh --server` (same VM; fresh DB and `$TOKENAGE_HOME/state.db` per run). VMs have no Node: copy a locally built `frontend/dist`. Copy `.agents/benchmark/sampler.py` to bench-server and `loadgen.py` to bench-load (the scripts are not in an installed clone). Use `/version` as the health check; verify the commit with `git -C ~/.tokenage/src rev-parse HEAD` on bench-server (versions may match across commits).
 - Config: `server.host: 0.0.0.0`, `rate_limits.ingest_per_minute: 10000000` and `rate_limits.api_per_minute: 10000000`, `db.url` → a fresh lowercase database name on `bench-pg` per pass (e.g. `bench_main_1`). Keep the product default fd limit; fd exhaustion, an accept-error log storm and failure to recover are overload signatures.
 - Users: 8 ingest tokens (`tokenage server token create --email bench$i@example.test --kind ingest`), one per line in `tokens.txt`. Users map to queue partitions, so one user would test a single partition.
 
@@ -62,9 +62,9 @@ For each commit and DB, run **two fresh passes** (first-run noise was ±30%). Us
 
 ```bash
 # bench-server, using its venv; TOKENAGE_HOME and DB_URL refer to this disposable run
-python .agents/benchmark/sampler.py --db-url "$DB_URL" > samples.txt
+python sampler.py --db-url "$DB_URL" > samples.txt
 # bench-load, in another terminal; repeat at 40, 60, 80 only while passing
-uv run --no-project --with httpx python .agents/benchmark/loadgen.py --url http://<server-ip>:<api_port> --tokens tokens.txt --rates 20 --step 60 --timeout 10
+uv run --no-project --with httpx python loadgen.py --url http://<server-ip>:<api_port> --tokens tokens.txt --rates 20 --step 60 --timeout 10
 ```
 
 Sampler output every 2 s (`--interval`; drains after a passing step can last only seconds) is `unix_ts queue_depth usage_rows`; it reads queue depth directly from `$TOKENAGE_HOME/state.db`. For SQLite pass `sqlite:////absolute/path/to/usage.db` as the DB URL.
@@ -90,7 +90,7 @@ Report both passes and their range; do not infer an improvement within the obser
 
 ## Baseline
 
-Current e2-standard-2 results (two fresh passes per commit and DB; processing is the drain after the highest passing step). `main` was not run on SQLite at this size; #118 is its closest SQLite baseline.
+Current e2-standard-2 results (two fresh passes per commit and DB; processing is the drain after the highest passing step).
 
 | Date | Commit | DB | Sustained QPS | Processing rows/s | Limit |
 |---|---|---|---|---|---|

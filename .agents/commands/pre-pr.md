@@ -56,6 +56,6 @@ Broad check before commit/PR:
 - [ ] Why/context included for non-trivial behavior changes.
 - [ ] Manual QA included if behavior changed.
 - [ ] Test plan lists exact commands and results.
-- [ ] Deep review includes live functional test results (GCP or the test lane).
+- [ ] Deep review includes live functional test results (on a deployed test server, e.g. a GCP VM).
 - [ ] Risk areas called out honestly.
 - [ ] Follow-ups separated from current scope.

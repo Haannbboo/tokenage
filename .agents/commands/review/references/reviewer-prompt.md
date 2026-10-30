@@ -15,6 +15,6 @@ Each reviewer gets a single prompt containing:
    under the finding: `Same class: a.py:12, b.py:40` (or `Same class: none found`).
    Start the summary with counts of Important, Nit and Pre-existing findings; say
    plainly when nothing needs fixing. Write findings as a numbered markdown list
-   to your output file, following references/verdict-format.md."
+   to your output file, following .agents/commands/review/references/verdict-format.md."
 
 Spawn all reviewers in parallel.

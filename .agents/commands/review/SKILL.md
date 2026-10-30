@@ -41,13 +41,14 @@ Choose a tier by risk, not size: a 20-line auth change is Deep.
 | Deep | Auth/tokens/sessions, ingest path, cost/token accounting, schema/migrations, installer/update, CI workflows, new network listeners or anything exposed, privacy-sensitive data | Skeptic + Architect + Minimalist + security |
 
 When unsure between tiers, pick the higher one and say why in the review intent.
-Deep also requires a live functional test (GCP or the test lane), with results in the
+Deep also requires a live functional test (on a deployed test server, e.g. a GCP VM), with results in the
 PR body. Deep's reviewer list is extensible; add further reviewers there as needed.
 
 Read `references/reviewer-lenses.md` for lens definitions.
 
 Add one **security** reviewer for Standard and Deep; for Quick, only if the diff
-touches secrets, auth, CI or installer files. Use the same tool and path as the
+touches secrets, auth, CI or installer files (docs or comments there; code or config
+changes in those areas are Deep). Use the same tool and path as the
 lens reviewers, prompt `security.md` in this directory plus the scope and intent, report
 `$REVIEW_DIR/security.md`. Its High and Medium findings are must-fix unless the lead
 judgment shows they are false positives.

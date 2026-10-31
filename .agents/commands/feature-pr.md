@@ -58,7 +58,9 @@ Run focused checks first, then relevant full checks. Do not duplicate verificati
 If a check fails:
 
 1. Read the failure.
-2. Fix the root cause, not the symptom.
+2. Fix the root cause, not the symptom. First grep the repo for all instances of
+   the bug pattern. Fix them together, or explain in the reply why other instances
+   are unaffected.
 3. Re-run the failing check.
 4. Report unrelated pre-existing failures separately.
 
@@ -76,7 +78,9 @@ git ls-files --others --exclude-standard
 
 The reviewer must be independent: separate process, no implementation history, and no assumptions beyond the diff and repo guidance. Read and include the contents of intended untracked files because `git diff` does not show them.
 
-Fix all must-fix findings before committing.
+Fix all must-fix findings before committing. For each bug, grep the repo for all
+instances of the same pattern and fix them together, or explain in the reply why
+the other instances are unaffected.
 
 ## 4. Commit
 

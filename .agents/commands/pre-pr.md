@@ -16,7 +16,7 @@ Run this before pushing/opening a PR.
 - [ ] No API keys, tokens, cookies, auth headers, connection strings, or secrets.
 - [ ] No raw private prompts/responses/request bodies logged by default.
 - [ ] Error paths do not dump sensitive payloads.
-- [ ] Security review (`.agents/commands/review/security.md`) ran on the final diff with no open High/Medium findings. Run it again before merge if the branch changed since.
+- [ ] Security review (`.agents/commands/review/security.md`) ran on the final diff with no open High/Medium findings for Standard/Deep, or Quick touching secrets, auth, CI or installer files. Reassess the tier and repeat required reviews before merge if the branch changed since.
 - [ ] Local files such as `AGENTS.local.md`, `CLAUDE.local.md`, `.claude/*.local.md`, `.agents/private/` are not committed.
 
 ## tokenage risks
@@ -26,6 +26,7 @@ Run this before pushing/opening a PR.
 - [ ] Streaming/tool-call partial chunk behavior tested if touched: `uv run python -m pytest tests/client/test_client_proxy.py tests/test_usage_ingest.py tests/test_recorder.py -q`.
 - [ ] Schema migration/backward compatibility tested if touched: `uv run python -m pytest tests/test_database.py tests/test_api.py -q`.
 - [ ] Worker/background job DB timeout behavior considered if touched.
+- [ ] If the author is the upstream repository owner and the change is a non-trivial ingest-path change, suggest the benchmark in `.agents/commands/benchmark.md` (needs approval; never run it unasked or for other authors).
 - [ ] Frontend-used API routes added to `frontend/vite-api-proxy.js` by editing `shouldProxyApiRequest()` explicit pathname/prefix checks, with `frontend/vite-api-proxy.test.js` updated.
 
 ## Verification
@@ -55,5 +56,6 @@ Broad check before commit/PR:
 - [ ] Why/context included for non-trivial behavior changes.
 - [ ] Manual QA included if behavior changed.
 - [ ] Test plan lists exact commands and results.
+- [ ] Deep review includes live functional test results (on a deployed test server, e.g. a GCP VM).
 - [ ] Risk areas called out honestly.
 - [ ] Follow-ups separated from current scope.

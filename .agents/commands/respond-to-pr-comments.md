@@ -54,8 +54,10 @@ For each comment:
 1. Read the surrounding code, not just the diff hunk.
 2. Decide: fix code, draft reply, or mark false positive with evidence.
 3. For BLOCKERs, present the intended fix before editing unless the fix is trivial and safe.
-4. After code changes, run focused verification from `.agents/commands/verify.md`.
-5. Update the PR body if the behavior/risk/testing changed.
+4. Before fixing a bug, grep the repo for all instances of the same pattern. Fix them
+   together, or explain in the reply why the other instances are unaffected.
+5. After code changes, run focused verification from `.agents/commands/verify.md`.
+6. Update the PR body if the behavior/risk/testing changed.
 
 ## 4. Reply style
 

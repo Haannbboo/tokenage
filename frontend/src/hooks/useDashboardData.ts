@@ -45,26 +45,20 @@ export function useDashboardData({ includeDaily = true, includeHeatmap = true, i
     return map;
   }, [summary]);
 
-  const applyFilterParams = useCallback((url: URL) => {
-    const since = getSinceDate(dateRange)
-
-    if (activeFilter) {
-      if (activeFilter.provider) url.searchParams.set('provider', activeFilter.provider)
-      if (activeFilter.model) url.searchParams.set('model', activeFilter.model)
-    }
-    if (activeSource) url.searchParams.set('client_source', activeSource)
-    if (activeDevice) url.searchParams.set('device_id', activeDevice)
-    if (since) url.searchParams.set('since', since)
-    return url
-  }, [dateRange, activeFilter, activeSource, activeDevice])
-
   const dashboardFilterParams = useMemo(() => ({
     provider: activeFilter?.provider,
     model: activeFilter?.model,
     client_source: activeSource,
     device_id: activeDevice,
     since: getSinceDate(dateRange),
-  }), [activeFilter, activeSource, activeDevice, dateRange])
+  }), [activeFilter, activeSource, activeDevice, dateRange, refreshTrigger])
+
+  const applyFilterParams = useCallback((url: URL) => {
+    for (const [key, value] of Object.entries(dashboardFilterParams)) {
+      if (value) url.searchParams.set(key, value)
+    }
+    return url
+  }, [dashboardFilterParams])
 
   // Dashboard fetch
   useEffect(() => {
@@ -134,7 +128,7 @@ export function useDashboardData({ includeDaily = true, includeHeatmap = true, i
   // Sources fetch
   useEffect(() => {
     const controller = new AbortController()
-    const since = getSinceDate(dateRange)
+    const since = dashboardFilterParams.since
     const url = new URL('/usage/sources', window.location.origin)
     if (since) url.searchParams.set('since', since)
     fetch(url.toString(), { signal: controller.signal })
@@ -142,7 +136,7 @@ export function useDashboardData({ includeDaily = true, includeHeatmap = true, i
       .then((data: string[]) => setSources(data))
       .catch(() => {})
     return () => controller.abort()
-  }, [dateRange, refreshTrigger])
+  }, [dashboardFilterParams.since, refreshTrigger])
 
   const totals = useMemo(() => {
     const data = summary

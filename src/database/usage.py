@@ -999,6 +999,31 @@ def _hour_bounds(since: str | None, until: str | None) -> tuple[int | None, int 
     return since_hour, until_hour
 
 
+# ponytail: short windows read raw rows; longer ones keep the hourly rollup and
+# its partial-hour edges (at most 1h of 7d+); split edges if that ever matters.
+RAW_WINDOW_MICROS = 48 * 3_600_000_000
+
+
+def _needs_raw_window(since: str | None, until: str | None) -> bool:
+    """Partial UTC hours cannot be represented by hourly aggregates.
+
+    Only short windows switch to raw rows, so long ranges stay on the rollup.
+    """
+    if not since:
+        return False
+    start = _iso_to_micros(since)
+    end = (
+        _iso_to_micros(until) + (86_400_000_000 - 1 if len(until) == 10 else 0)
+        if until
+        else int(datetime.now(UTC).timestamp() * 1_000_000)
+    )
+    if end - start > RAW_WINDOW_MICROS:
+        return False
+    return bool(
+        start % 3_600_000_000 or (until and len(until) != 10 and end % 3_600_000_000)
+    )
+
+
 def _hourly_filters(
     *,
     user_id: str,
@@ -1338,17 +1363,21 @@ def distinct_client_sources(
     until: str | None = None,
     db_path: str | None = None,
 ) -> list[str]:
-    """Return distinct client_source values from usage_hourly."""
-    filters = _hourly_filters(user_id=user_id, since=since, until=until)
-    filters.append(UsageHourly.client_source != "")
+    """Return distinct client_source values in the window."""
+    raw = _needs_raw_window(since, until)
+    table = Usage if raw else UsageHourly
+    filters = (_raw_filters if raw else _hourly_filters)(
+        user_id=user_id, since=since, until=until
+    )
+    filters.append(table.client_source != "")
     query = (
-        select(UsageHourly.client_source)
+        select(table.client_source)
         .distinct()
         .where(and_(*filters))
-        .order_by(UsageHourly.client_source)
+        .order_by(table.client_source)
     )
     with get_engine(db_path).connect() as connection:
-        return [row[0] for row in connection.execute(query)]
+        return [row[0] for row in connection.execute(query) if row[0]]
 
 
 def distinct_tool_names(
@@ -1656,7 +1685,7 @@ def summarize_tool_calls(
     duration_ms is sparsely populated (only sources that emit tool timing),
     so total/avg are None when no timed calls exist for a tool.
     """
-    filters = _usage_filters(
+    filters = _raw_filters(
         user_id=user_id,
         provider=provider,
         model=model,
@@ -1697,8 +1726,12 @@ def summarize_usage_by_source(
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate usage totals by client_source for dashboard source chart."""
-    return _rollup(
-        UsageHourly.client_source,
+    raw = _needs_raw_window(since, until)
+    table = Usage if raw else UsageHourly
+    return (_raw_rollup if raw else _rollup)(
+        func.coalesce(table.client_source, "").label("client_source")
+        if raw
+        else table.client_source,
         user_id=user_id,
         since=since,
         until=until,
@@ -1722,8 +1755,10 @@ def summarize_usage_by_provider(
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate usage totals by provider for dashboard provider chart."""
-    return _rollup(
-        UsageHourly.provider,
+    raw = _needs_raw_window(since, until)
+    table = Usage if raw else UsageHourly
+    return (_raw_rollup if raw else _rollup)(
+        table.provider,
         user_id=user_id,
         since=since,
         until=until,
@@ -1747,9 +1782,11 @@ def summarize_usage_by_model(
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate usage totals by provider and model for dashboard summaries."""
-    return _rollup(
-        UsageHourly.provider,
-        UsageHourly.model,
+    raw = _needs_raw_window(since, until)
+    table = Usage if raw else UsageHourly
+    return (_raw_rollup if raw else _rollup)(
+        table.provider,
+        table.model,
         user_id=user_id,
         since=since,
         until=until,
@@ -1819,7 +1856,7 @@ def aggregate_usage_by_period(
     the raw rows, which the rollup cannot be split into.
     """
     size, fmt = _granularity(granularity)
-    if size < 3600:
+    if size < 3600 or _needs_raw_window(since, until):
         period = _bucket_start(size, tz_offset, Usage.ts, 1_000_000).label("period")
         rollup, scale = _raw_rollup, 1_000_000
     else:
@@ -1860,7 +1897,7 @@ def aggregate_daily_by_dimension(
     The buckets are local days unless `granularity` asks for hours or finer.
     """
     size, fmt = _granularity(granularity)
-    fine = size < 3600
+    fine = size < 3600 or _needs_raw_window(since, until)
     table = Usage if fine else UsageHourly
     name_cols: list[Any] = []
     dim_col: Any

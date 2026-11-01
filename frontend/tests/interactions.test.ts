@@ -53,9 +53,11 @@ describe('dashboard interactions', () => {
     let resolve!: (value: Response) => void
     api.holdSummary(new Promise(r => { resolve = r }))
     const previous = countCalls(api, '/usage/summary')
+    const previousModels = countCalls(api, '/usage/daily-by-dimension')
     fireEvent.click(refresh)
     await waitFor(() => expect(refresh.disabled).toBe(true))
     expect(countCalls(api, '/usage/summary')).toBe(previous + 1)
+    await waitFor(() => expect(countCalls(api, '/usage/daily-by-dimension')).toBe(previousModels + 1))
     expect(document.querySelector('.widgets-grid')).toBe(content)
     await act(async () => { resolve(response([{ provider: 'test-provider', model: 'test-model', requests: 7 }])) })
     await waitFor(() => expect(refresh.disabled).toBe(false))

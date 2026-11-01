@@ -19,6 +19,7 @@ describe('date range options', () => {
     }
     expect(hours('24h')).toBe(24)
     expect(hours('5h')).toBe(5)
+    expect(new Date(getSinceDate('5h')!).getTime() % (15 * 60_000)).toBe(0)
   })
 
   it('starts the day ranges days ago', () => {
@@ -41,7 +42,7 @@ describe('date range options', () => {
 
   it('gives the trend chart one period per bucket', () => {
     expect(rangePeriodCount('24h')).toBe(24)
-    expect(rangePeriodCount('5h')).toBe(20)
+    expect(rangePeriodCount('5h')).toBe(21)
     expect(rangePeriodCount('7d')).toBe(7)
     expect(rangePeriodCount('30d')).toBe(30)
     expect(rangePeriodCount('all')).toBeUndefined()

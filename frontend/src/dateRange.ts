@@ -15,7 +15,7 @@ export const DATE_RANGE_OPTIONS: { value: DateRangeOption; label: string }[] = [
 /** The start of the window, or null when the range has no lower bound. */
 export function getSinceDate(option: DateRangeOption): string | null {
   if (option === 'all') return null
-  if (option === '5h') return new Date(Date.now() - 5 * HOUR_MS).toISOString()
+  if (option === '5h') return new Date(Math.floor((Date.now() - 5 * HOUR_MS) / (15 * 60_000)) * (15 * 60_000)).toISOString()
   if (option === '24h') return new Date(Date.now() - 24 * HOUR_MS).toISOString()
   if (option === '7d') return new Date(Date.now() - 7 * DAY_MS).toISOString()
   return new Date(Date.now() - 30 * DAY_MS).toISOString()
@@ -35,7 +35,7 @@ export function rangeGranularity(option: DateRangeOption): PeriodGranularity {
 /** How many periods the trend chart shows; open ended for all time. */
 export function rangePeriodCount(option: DateRangeOption): number | undefined {
   if (option === '24h') return 24
-  if (option === '5h') return 20
+  if (option === '5h') return 21
   if (option === '7d') return 7
   if (option === '30d') return 30
   return undefined

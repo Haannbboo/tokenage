@@ -369,10 +369,34 @@ def test_usage_daily_endpoint_passes_the_fine_granularity(api_module, monkeypatc
     monkeypatch.setattr(api_module, "aggregate_usage_by_period", fake_aggregate)
 
     response = TestClient(api_module.app).get(
-        "/usage/daily", params={"granularity": "15m", "tz_offset": "+00:00"}
+        "/usage/daily",
+        params={
+            "granularity": "15m",
+            "tz_offset": "+05:30",
+            "since": "2026-05-07T00:00:00Z",
+            "until": "2026-05-08T00:00:00Z",
+        },
     )
     assert response.status_code == 200
     assert captured["granularity"] == "15m"
+
+
+@pytest.mark.parametrize("path", ["/usage/daily", "/usage/daily-by-dimension"])
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"granularity": "15m"},
+        {
+            "granularity": "15m",
+            "since": "2026-05-01T00:00:00Z",
+            "until": "2026-05-04T00:00:00Z",
+        },
+        {"granularity": "15m", "since": "2026-05-01T00:00:00Z", "until": "2026-05-03"},
+        {"granularity": "15m", "since": "invalid"},
+    ],
+)
+def test_fine_usage_requires_bounded_window(api_module, path, params):
+    assert TestClient(api_module.app).get(path, params=params).status_code == 400
 
 
 def test_usage_by_source_endpoint(api_module, monkeypatch):

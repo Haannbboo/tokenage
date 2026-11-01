@@ -290,6 +290,12 @@ export function formatModelName(model: string): string {
   return model
 }
 
+export function formatProviderName(provider: string): string {
+  const name = provider.toLowerCase()
+  if (name.startsWith('minimax-') || name.split('.').some(part => part === 'minimax' || part === 'minimaxi')) return 'MiniMax'
+  return provider
+}
+
 const ICON_STYLE = { width: 14, height: 14, display: 'block', objectFit: 'contain' as const }
 
 export function getModelIcon(model: string, theme: Theme = getTheme()) {

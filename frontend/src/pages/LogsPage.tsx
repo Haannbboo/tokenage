@@ -13,7 +13,7 @@ import { RequestTimeline, type TimelineTool } from '../components/RequestTimelin
 import { t } from '../i18n/index.ts'
 import {
   formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime,
-  value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, resolveTimezone, ToolBadge, getSinceDate, formatModelName, customBound,
+  value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, resolveTimezone, ToolBadge, getSinceDate, formatModelName, customBound, formatProviderName,
 } from '../utils'
 import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
 import type { DateRangeOption } from '../types'
@@ -284,7 +284,7 @@ export function LogsPage() {
               fontWeight: 600
             }}>
               {getProviderIcon(row.provider)}
-              {row.provider}
+              {formatProviderName(row.provider)}
             </div>
           </td>
         )

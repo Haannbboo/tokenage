@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import type { Theme } from '../theme'
 import type { UsageSummary } from '../types'
 import { getModelColor, getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
-import { formatModelName, getModelIcon, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getSourceBadgeBg, getSourceBadgeText, getSourceIcon, PALETTE, netThroughput, getTimezoneOffset, resolveTimezone } from '../utils'
+import { formatModelName, formatProviderName, getModelIcon, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getSourceBadgeBg, getSourceBadgeText, getSourceIcon, PALETTE, netThroughput, getTimezoneOffset, resolveTimezone } from '../utils'
 import { useApp } from '../contexts/AppContext'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
@@ -183,7 +183,7 @@ export function TopUsageChart({
         map.set(s.provider, existing)
       }
       return Array.from(map.entries()).map(([provider, v], i) => ({
-        name: provider,
+        name: formatProviderName(provider),
         icon: getProviderIcon(provider, theme),
         tokens: v.tokens,
         promptTokens: v.prompt,

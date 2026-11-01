@@ -7,7 +7,7 @@ export function getModelColor(model: string, theme: Theme = getTheme()): string 
   if (m.startsWith('stealth')) return theme === 'dark' ? '#9CA3AF' : '#D1D5DB'
   if (m.includes('claude')) return '#cc7c5e'
   if (m.includes('gemini')) return '#528af2'
-  if (m.includes('minimax')) return '#ec6b53'
+  if (m.includes('minimax')) return '#ec8f53'
   if (m.includes('mimo-')) return '#dcc496'
   if (m.includes('inclusionai') || m.includes('ling')) return '#6366f1'
   if (m.includes('poolside')) return '#f97316'

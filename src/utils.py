@@ -16,11 +16,11 @@ def normalize_model_name(model_name: str) -> str:
 def normalize_provider_name(provider_name: str) -> str:
     """Fold provider casing so names share one identity.
 
-    MiniMax names one provider however it is spelled ("MiniMax", "minimaxi",
-    "minimax-cn"), so they all share the "minimax" identity.
+    MiniMax is one provider however it is spelled: "MiniMax", "minimaxi",
+    "minimax-cn-coding-plan", or a host such as "api.minimaxi.com".
     """
     name = provider_name.strip().lower()
-    if "minimax" in name:
+    if name.startswith("minimax-") or {"minimax", "minimaxi"} & set(name.split(".")):
         return "minimax"
     return name
 

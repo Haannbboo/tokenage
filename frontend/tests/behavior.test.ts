@@ -77,9 +77,13 @@ describe('request timeline data', () => {
 
 
 describe('provider labels', () => {
-  it('shows MiniMax for any minimax provider and leaves the rest alone', () => {
+  it('shows MiniMax for recognized provider names and leaves the rest alone', () => {
     expect(formatProviderName('minimax')).toBe('MiniMax')
     expect(formatProviderName('minimaxi')).toBe('MiniMax')
+    expect(formatProviderName('MiniMax-CN')).toBe('MiniMax')
+    expect(formatProviderName('api.minimaxi.com')).toBe('MiniMax')
+    expect(formatProviderName('notminimax')).toBe('notminimax')
+    expect(formatProviderName('minimaxgateway')).toBe('minimaxgateway')
     expect(formatProviderName('openai')).toBe('openai')
   })
 })

@@ -291,7 +291,8 @@ export function formatModelName(model: string): string {
 }
 
 export function formatProviderName(provider: string): string {
-  if (provider.toLowerCase().includes('minimax')) return 'MiniMax'
+  const name = provider.toLowerCase()
+  if (name.startsWith('minimax-') || name.split('.').some(part => part === 'minimax' || part === 'minimaxi')) return 'MiniMax'
   return provider
 }
 

@@ -34,7 +34,7 @@ export function LogsPage() {
     sessionStorage.removeItem('tokenage-logs-filters')
   }, [])
 
-  const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice, dateRange, setDateRange, timezone } = useApp()
+  const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice, dateRange, setDateRange, timezone, refreshTrigger } = useApp()
   const tz = resolveTimezone(timezone)
   const {
     columns,
@@ -81,7 +81,7 @@ export function LogsPage() {
       .then(data => { if (!controller.signal.aborted) setAvailableTools(data) })
       .catch((err) => { if (err?.name !== 'AbortError') console.warn('Failed to fetch tools', err) })
     return () => controller.abort()
-  }, [dateRange])
+  }, [dateRange, refreshTrigger])
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
   const [tableWidth, setTableWidth] = useState(0)

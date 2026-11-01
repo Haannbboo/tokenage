@@ -49,7 +49,7 @@ describe('dashboard interactions', () => {
     await waitFor(() => expect(refresh.disabled).toBe(false))
     // Anchor on the content structure, not on a label: the copy can change.
     await waitFor(() => expect(document.querySelector('.widgets-grid')).toBeTruthy())
-    const content = document.querySelector('.widgets-grid')
+    const content = document.querySelector('.widgets-grid')?.firstElementChild
     let resolve!: (value: Response) => void
     api.holdSummary(new Promise(r => { resolve = r }))
     const previous = countCalls(api, '/usage/summary')
@@ -58,10 +58,10 @@ describe('dashboard interactions', () => {
     await waitFor(() => expect(refresh.disabled).toBe(true))
     expect(countCalls(api, '/usage/summary')).toBe(previous + 1)
     await waitFor(() => expect(countCalls(api, '/usage/daily-by-dimension')).toBe(previousModels + 1))
-    expect(document.querySelector('.widgets-grid')).toBe(content)
+    expect(document.querySelector('.widgets-grid')?.firstElementChild).toBe(content)
     await act(async () => { resolve(response([{ provider: 'test-provider', model: 'test-model', requests: 7 }])) })
     await waitFor(() => expect(refresh.disabled).toBe(false))
-    expect(document.querySelector('.widgets-grid')).toBe(content)
+    expect(document.querySelector('.widgets-grid')?.firstElementChild).toBe(content)
     fireEvent.click(screen.getByRole('button', { name: /all models/i }))
     expect(screen.getByText('test-provider')).toBeTruthy()
   })

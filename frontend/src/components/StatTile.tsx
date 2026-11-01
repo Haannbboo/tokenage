@@ -6,6 +6,7 @@ import { t } from '../i18n/index.ts'
 export type StatPoint = {
   value: number
   period: string
+  active?: boolean
 }
 
 type StatTileProps = {
@@ -35,10 +36,10 @@ export function StatTile({
   const shown = !point ? format(animatedValue) : (formatHover ?? format)(point.value)
 
   // Idle buckets read as 0, so they are left out of the extremes.
-  const active = points.map(p => p.value).filter(v => v !== 0)
+  const active = points.filter(p => p.active ?? p.value !== 0).map(p => p.value)
   const highest = active.length ? Math.max(...active) : null
   const lowest = active.length ? Math.min(...active) : null
-  const marker = point && point.value !== 0 && highest !== null && lowest !== null
+  const marker = point && (point.active ?? point.value !== 0) && highest !== null && lowest !== null
     ? (point.value === highest ? t('peak') : point.value === lowest ? t('lowest') : null)
     : null
 

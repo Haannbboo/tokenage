@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import type { DailyUsage, PeriodGranularity } from '../types'
-import { fillGaps, formatCostFixed, formatModelName, formatNumber, value, resolveTimezone, wallClockMs, getTimezoneOffset } from '../utils'
+import { fillGaps, formatCost, formatModelName, formatNumber, value, resolveTimezone, wallClockMs, getTimezoneOffset } from '../utils'
 import { fillPeriodGaps } from '../periodGaps'
 import { describePeriod, periodLabelText } from '../periodLabels'
 import { useApp } from '../contexts/AppContext'
@@ -21,6 +21,8 @@ type ModelBucketRow = {
 
 /** How many models get their own colour; the rest are lumped into "Other". */
 const MODEL_LEGEND_MAX = 5
+/** Stable default: the model fetch keys on the filter object's identity. */
+const NO_FILTERS = {}
 
 export function TrendChart({
   data,
@@ -28,7 +30,7 @@ export function TrendChart({
   granularity = 'day',
   periodCount,
   showDots = true,
-  filterParams = {},
+  filterParams = NO_FILTERS,
 }: {
   data: DailyUsage[],
   title: string,
@@ -115,6 +117,7 @@ export function TrendChart({
   // Model split: one row per (model, bucket) from /usage/daily-by-dimension.
   const tzOffset = getTimezoneOffset(tz);
   const [modelRows, setModelRows] = useState<ModelBucketRow[]>([]);
+  const [modelError, setModelError] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     async function fetchModelRows() {
@@ -130,12 +133,14 @@ export function TrendChart({
         url.searchParams.set('tz_offset', tzOffset);
 
         const res = await fetch(url.toString(), { signal: controller.signal });
-        if (res.ok) {
-          const rows = await res.json();
-          if (!controller.signal.aborted) setModelRows(rows);
+        if (!res.ok) throw new Error();
+        const rows = await res.json();
+        if (!controller.signal.aborted) {
+          setModelRows(rows);
+          setModelError(false);
         }
       } catch {
-        // Ignore abort errors
+        if (!controller.signal.aborted) setModelError(true);
       }
     }
     fetchModelRows();
@@ -143,6 +148,7 @@ export function TrendChart({
       controller.abort();
       // The rows belong to the old filters until the new ones land.
       setModelRows([]);
+      setModelError(false);
     };
   }, [filterParams, granularity, tzOffset]);
 
@@ -235,6 +241,7 @@ export function TrendChart({
         display: 'flex',
         flexDirection: 'column'
       }}>
+        {modelError && <div role="alert" style={{ textAlign: 'center', color: 'var(--badge-error-text)' }}>{t('Failed to load model breakdown')}</div>}
         {filled.length === 0 ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>{t('No trend data available')}</div>
         ) : (
@@ -264,8 +271,8 @@ export function TrendChart({
                   marginBottom: '4px',
                 }}>
                   {sortTrendRows(bucketSegments(hoveredData.period), metric).map(m => {
-                    const primary = metric === 'cost' ? formatCostFixed(m.cost, 3) : formatNumber(m.tokens);
-                    const secondary = metric === 'cost' ? formatNumber(m.tokens) : formatCostFixed(m.cost, 3);
+                    const primary = metric === 'cost' ? formatCost(m.cost) : formatNumber(m.tokens);
+                    const secondary = metric === 'cost' ? formatNumber(m.tokens) : formatCost(m.cost);
                     return (
                       <Fragment key={m.model || 'other'}>
                         <span style={{
@@ -285,12 +292,12 @@ export function TrendChart({
                 <TooltipDivider />
                 <TooltipRow label={metric === 'cost' ? t('Total Cost:') : t('Total Tokens:')}>
                   <span style={{ fontWeight: 800 }}>
-                    {metric === 'cost' ? formatCostFixed(hoveredData.total_cost_usd, 3) : formatNumber(value(hoveredData.total_tokens))}
+                    {metric === 'cost' ? formatCost(hoveredData.total_cost_usd) : formatNumber(value(hoveredData.total_tokens))}
                   </span>
                 </TooltipRow>
                 <TooltipRow label={metric === 'cost' ? t('Tokens:') : t('Est. Cost:')} labelColor="#f472b6">
                   <span style={{ fontWeight: 800, color: '#f472b6' }}>
-                    {metric === 'cost' ? formatNumber(value(hoveredData.total_tokens)) : formatCostFixed(hoveredData.total_cost_usd, 3)}
+                    {metric === 'cost' ? formatNumber(value(hoveredData.total_tokens)) : formatCost(hoveredData.total_cost_usd)}
                   </span>
                 </TooltipRow>
                 <TooltipRow label={t('Requests:')} labelColor="var(--color-pink)">

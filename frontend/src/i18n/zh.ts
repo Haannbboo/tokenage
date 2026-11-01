@@ -77,6 +77,7 @@ export const zh: Record<string, string> = {
   'Total': '总计',
 
   // Chart messages
+  'Failed to load model breakdown': '加载模型明细失败',
   'No trend data available': '暂无趋势数据',
   'No data available': '暂无数据',
   'No activity': '无活动',

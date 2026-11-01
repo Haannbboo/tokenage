@@ -20,6 +20,10 @@ describe('agent verdict', () => {
     expect(agentVerdict(row())).toEqual({ tone: 'badge-success', label: 'Ready', endpoints: false })
   })
 
+  it('reports an endpoint mismatch even when status is ready', () => {
+    expect(agentVerdict(row({ health: health({ endpoint_matches: false }) }))).toEqual({ tone: 'badge-error', label: 'Wrong endpoint', endpoints: true })
+  })
+
   it('shows what to fix when the endpoint is wrong', () => {
     const verdict = agentVerdict(row({
       health: health({ status: 'wrong_endpoint', endpoint_matches: false, configured_endpoint: 'http://127.0.0.1:9999/otlp/v1/logs' }),

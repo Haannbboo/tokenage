@@ -103,14 +103,15 @@ export function OverviewTab({
     hoveredPeriod ? describePeriod(hoveredPeriod, granularity, nowWallMs, LANG_LOCALES[getLang()]) : null,
   )
 
-  const costPoints = filledUsage.map(d => ({ value: value(d.total_cost_usd), period: d.period }))
-  const tokenPoints = filledUsage.map(d => ({ value: value(d.total_tokens), period: d.period }))
-  const requestPoints = filledUsage.map(d => ({ value: d.requests, period: d.period }))
+  const costPoints = filledUsage.map(d => ({ value: value(d.total_cost_usd), period: d.period, active: d.requests > 0 }))
+  const tokenPoints = filledUsage.map(d => ({ value: value(d.total_tokens), period: d.period, active: d.requests > 0 }))
+  const requestPoints = filledUsage.map(d => ({ value: d.requests, period: d.period, active: d.requests > 0 }))
   const hitRatePoints = filledUsage.map(d => ({
     value: cacheHitRate(d.cached_tokens, d.prompt_tokens, d.cache_creation_tokens),
     period: d.period,
+    active: value(d.prompt_tokens) + value(d.cache_creation_tokens) > 0,
   }))
-  const speedPoints = filledUsage.map(d => ({ value: value(d.avg_throughput), period: d.period }))
+  const speedPoints = filledUsage.map(d => ({ value: value(d.avg_throughput), period: d.period, active: d.avg_throughput != null }))
 
   return (
     <>

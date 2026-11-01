@@ -21,6 +21,7 @@ export function useSessionsData(opts: {
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null)
 
   const prevFilterKeyRef = useRef('')
+  const sinceRef = useRef<string | null>(null)
 
   const handleSessionSort = useCallback((column: string) => {
     if (sessionSortBy === column) {
@@ -37,7 +38,7 @@ export function useSessionsData(opts: {
   }, [sessions])
 
   // Filter-change keys — when any of these change, reset to page 1
-  const filterKey = `${opts.activeSource}|${opts.dateRange}|${opts.hideNoop}`
+  const filterKey = `${opts.activeSource}|${opts.dateRange}|${opts.hideNoop}|${refreshTrigger}`
 
   // Sessions fetch
   useEffect(() => {
@@ -62,7 +63,8 @@ export function useSessionsData(opts: {
       setError(null)
       setSessionsLoading(true)
       try {
-        const since = getSinceDate(opts.dateRange)
+        if (sessionPage === 1) sinceRef.current = getSinceDate(opts.dateRange)
+        const since = sinceRef.current
 
         const sessionsUrl = new URL('/sessions', window.location.origin)
         if (opts.activeSource) sessionsUrl.searchParams.set('client_source', opts.activeSource)
@@ -93,7 +95,7 @@ export function useSessionsData(opts: {
 
     void fetchSessionsData()
     return () => controller.abort()
-  }, [opts.activeSource, opts.dateRange, opts.hideNoop, refreshTrigger, sessionSortBy, sessionSortOrder, sessionPage, setError])
+  }, [opts.activeSource, opts.dateRange, opts.hideNoop, refreshTrigger, filterKey, sessionSortBy, sessionSortOrder, sessionPage, setError])
 
   return {
     sessions,

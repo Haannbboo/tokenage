@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createElement } from 'react'
-import { render } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TrendChart } from '../src/charts/TrendChart'
 import { trendDotScale } from '../src/charts/trendScale'
@@ -16,7 +16,7 @@ const row = (period: string): DailyUsage => ({
   status_5xx: 0, status_unknown: 0,
 })
 
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('usage trend request dots', () => {
   it('counter-scales the x axis so a dot keeps the same round size on every panel', () => {
@@ -38,4 +38,26 @@ describe('usage trend request dots', () => {
     expect(scaled.length).toBeGreaterThan(0)
     expect(scaled[0].querySelector('circle')).toBeTruthy()
   })
+})
+
+
+it('shows a model fetch failure and clears it after a successful retry', async () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false }).mockResolvedValue({ ok: true, json: async () => [] })
+  vi.stubGlobal('fetch', fetchMock)
+  const { rerender } = render(createElement(TrendChart, { data: [row('2026-10-26')], title: 'Trend', filterParams: { provider: 'first' } }))
+  await screen.findByRole('alert')
+  rerender(createElement(TrendChart, { data: [row('2026-10-26')], title: 'Trend', filterParams: { provider: 'second' } }))
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+})
+
+it('refetches the model split on refresh even when the filter values are unchanged', async () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  const fetchMock = vi.fn(async () => new Response('[]'))
+  vi.stubGlobal('fetch', fetchMock)
+  const props = { data: [row('2026-10-26')], title: 'Trend' }
+  const { rerender } = render(createElement(TrendChart, { ...props, filterParams: { since: null } }))
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+  rerender(createElement(TrendChart, { ...props, filterParams: { since: null } }))
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
 })

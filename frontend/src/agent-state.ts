@@ -27,6 +27,7 @@ export function agentVerdict(row: AgentRow): AgentVerdict {
   }
   switch (status) {
     case 'ready':
+      if (health?.endpoint_matches === false) return { tone: 'badge-error', label: 'Wrong endpoint', endpoints: true }
       return { tone: 'badge-success', label: 'Ready', endpoints: false }
     case 'wrong_endpoint':
       return { tone: 'badge-error', label: 'Wrong endpoint', endpoints: true }

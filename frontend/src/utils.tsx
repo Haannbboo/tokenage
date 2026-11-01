@@ -268,10 +268,10 @@ export function getTimezoneOffset(tz?: string): string {
   const get = (type: string) => parseInt(parts.find(p => p.type === type)?.value || '0', 10)
   // Build a UTC timestamp from the timezone-local parts.
   // Note: the local date may differ from ref's UTC date (e.g. UTC+7 at 2am UTC = 9pm previous day).
-  // Normalize the difference to [-720, +720] minutes to handle day-boundary crossings.
+  // Normalize the difference to [-720, +840] minutes to handle day-boundary crossings.
   const localAsUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute'), get('second'))
   let diffMin = Math.round((localAsUtc - ref.getTime()) / 60_000)
-  if (diffMin > 720) diffMin -= 1440
+  if (diffMin > 840) diffMin -= 1440
   if (diffMin < -720) diffMin += 1440
   const sign = diffMin >= 0 ? '+' : '-'
   const absMin = Math.abs(diffMin)

@@ -1238,6 +1238,30 @@
   border-color: #1e293b transparent transparent transparent;
 }
 
+/* Popovers escape ancestor stacking contexts and are positioned in the viewport. */
+.has-tooltip .tooltip-text:popover-open {
+  position: fixed;
+  inset: auto;
+  left: var(--tooltip-left, 0px);
+  top: var(--tooltip-top, 0px);
+  margin: 0 !important;
+  max-width: calc(100vw - 8px);
+  overflow: visible;
+  border: 0;
+  visibility: visible;
+  opacity: 1;
+}
+
+.has-tooltip .tooltip-text:popover-open::after {
+  left: var(--tooltip-arrow, 50%);
+}
+
+.has-tooltip .tooltip-text.tooltip-below::after {
+  top: auto;
+  bottom: 100%;
+  border-color: transparent transparent #1e293b transparent;
+}
+
 .has-tooltip:hover .tooltip-text {
   visibility: visible;
   opacity: 1;

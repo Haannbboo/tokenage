@@ -1,6 +1,7 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import './App.css'
+import { installTooltips } from './tooltip'
 import { AppProvider, useApp } from './contexts/AppContext'
 import { Navbar } from './components/Navbar'
 import { LoginGate } from './components/LoginGate'
@@ -10,6 +11,7 @@ import { SettingsPage } from './pages/SettingsPage'
 
 
 function AppLayout() {
+  useEffect(() => installTooltips(), [])
   const navigate = useNavigate()
   const location = useLocation()
 

@@ -16,7 +16,8 @@ export function ModelSelector({ activeFilter, summary, onChange }: {
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const selected = activeFilter?.models ?? []
+  const selectedProvider = activeFilter?.provider
+  const selected = selectedProvider ? Array.from(new Set(summary.filter(row => row.provider === selectedProvider).map(row => row.model))) : activeFilter?.models ?? []
   const grouped = useMemo(() => {
     const map = new Map<string, UsageSummary[]>()
     const term = search.trim().toLowerCase()
@@ -50,6 +51,13 @@ export function ModelSelector({ activeFilter, summary, onChange }: {
     const allSelected = models.every(model => selected.includes(model))
     update(allSelected ? selected.filter(model => !models.includes(model)) : Array.from(new Set([...selected, ...models])))
   }
+  const toggleProvider = (name: string, models: string[]) => {
+    if (selectedProvider === name) onChange(null)
+    else if (!activeFilter) onChange({ provider: name })
+    else if (selectedProvider) update(Array.from(new Set([...selected, ...models])))
+    else toggle(models)
+  }
+  const isSelected = (name: string, model: string) => selectedProvider ? selectedProvider === name : selected.includes(model)
   const close = () => { setOpen(false); setSearch(''); triggerRef.current?.focus() }
   const navigate = (event: React.KeyboardEvent) => {
     if (event.key === 'Escape') { event.preventDefault(); close(); return }
@@ -64,27 +72,27 @@ export function ModelSelector({ activeFilter, summary, onChange }: {
   return <div className="model-selector">
     <button ref={triggerRef} className="input-plain model-selector-trigger" aria-haspopup="menu" aria-expanded={open} onClick={() => { if (open) close(); else setOpen(true) }}>
       <span className="model-selector-trigger-label">
-        {selected.length ? <><span className="model-selector-icons">{selected.slice(0, 3).map(model => <span key={model}>{getModelIcon(model)}</span>)}</span><span>{selected.length === 1 ? formatModelName(selected[0]) : `${selected.length} models`}</span></> : <><span>🌐</span><span>{t('All Models')}</span></>}
+        {selectedProvider ? <>{getProviderIcon(selectedProvider)}<span>{formatProviderName(selectedProvider)}</span></> : selected.length ? <><span className="model-selector-icons">{selected.slice(0, 3).map(model => <span key={model}>{getModelIcon(model)}</span>)}</span><span>{selected.length === 1 ? formatModelName(selected[0]) : `${selected.length} ${t('models')}`}</span></> : <><span>🌐</span><span>{t('All Models')}</span></>}
       </span><svg className="model-selector-chevron" aria-hidden="true" width="10" height="10" viewBox="0 0 10 10"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
     </button>
     {open && <>
       <div className="model-selector-backdrop" onClick={close} />
       <div ref={popoverRef} className="model-selector-popover" onKeyDown={navigate}>
-        <div className="model-selector-search"><span aria-hidden="true">⌕</span><input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search models or providers" aria-label="Search models or providers" /></div>
-        <div className="model-selector-meta"><span>{selected.length} selected</span><button onClick={() => update([])} disabled={!selected.length}>Clear all</button></div>
-        <div ref={menuRef} role="menu" aria-label="Models" className="model-selector-list">
-          {!grouped.length && <div className="model-selector-empty">No models found</div>}
+        <div className="model-selector-search"><span aria-hidden="true">⌕</span><input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder={t('Search models or providers')} aria-label={t('Search models or providers')} /></div>
+        <div className="model-selector-meta"><span>{selected.length} {t('selected')}</span><button onClick={() => update([])} disabled={!activeFilter}>{t('Clear all')}</button></div>
+        <div ref={menuRef} role="menu" aria-label={t('Models')} className="model-selector-list">
+          {!grouped.length && <div className="model-selector-empty">{t('No models found')}</div>}
           {grouped.map(([provider, rows]) => {
             // Select all means the whole provider, including models hidden by search.
             const allModels = Array.from(new Set(summary.filter(row => row.provider === provider).map(row => row.model)))
-            const checked = allModels.every(model => selected.includes(model))
-            const partial = !checked && allModels.some(model => selected.includes(model))
+            const checked = allModels.every(model => isSelected(provider, model))
+            const partial = !checked && allModels.some(model => isSelected(provider, model))
             return <div className="model-selector-group" key={provider}>
-              <button type="button" role="menuitemcheckbox" aria-checked={partial ? 'mixed' : checked} onClick={() => toggle(allModels)} className="model-selector-row model-selector-provider">
+              <button type="button" role="menuitemcheckbox" aria-checked={partial ? 'mixed' : checked} onClick={() => toggleProvider(provider, allModels)} className="model-selector-row model-selector-provider">
                 <span className="model-selector-check" aria-hidden="true">{checked ? '✓' : partial ? '−' : ''}</span>{getProviderIcon(provider)}<span>{formatProviderName(provider)}</span>
               </button>
-              {rows.map(row => <button type="button" role="menuitemcheckbox" aria-checked={selected.includes(row.model)} key={row.model} onClick={() => toggle([row.model])} className="model-selector-row model-selector-model">
-                <span className="model-selector-check" aria-hidden="true">{selected.includes(row.model) ? '✓' : ''}</span>{getModelIcon(row.model)}<span>{formatModelName(row.model)}</span>
+              {rows.map(row => <button type="button" role="menuitemcheckbox" aria-checked={isSelected(provider, row.model)} key={row.model} onClick={() => selectedProvider && selectedProvider !== row.provider ? update(Array.from(new Set([...selected, row.model]))) : toggle([row.model])} className="model-selector-row model-selector-model">
+                <span className="model-selector-check" aria-hidden="true">{isSelected(provider, row.model) ? '✓' : ''}</span>{getModelIcon(row.model)}<span>{formatModelName(row.model)}</span>
               </button>)}
             </div>
           })}

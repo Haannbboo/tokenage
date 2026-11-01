@@ -51,6 +51,7 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
 
   const dashboardFilterParams = useMemo(() => ({
     model: activeFilter?.models,
+    provider: activeFilter?.provider,
     client_source: activeSource,
     device_id: activeDevice,
     since: getSinceDate(dateRange),
@@ -90,6 +91,7 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
         heatmapUrl.searchParams.set('tz_offset', getTimezoneOffset(tz))
         if (activeFilter) {
           appendModels(heatmapUrl.searchParams, activeFilter.models)
+          if (activeFilter.provider) heatmapUrl.searchParams.set('provider', activeFilter.provider)
         }
         if (activeSource) heatmapUrl.searchParams.set('client_source', activeSource)
         if (activeDevice) heatmapUrl.searchParams.set('device_id', activeDevice)

@@ -82,3 +82,21 @@ it('aligns the popover to the trigger and keeps it inside the viewport on resize
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
   }
 })
+
+it('keeps a provider selection scoped when model names overlap and options grow', () => {
+  const onChange = vi.fn()
+  const shared = [
+    { provider: 'openai', model: 'shared' },
+    { provider: 'anthropic', model: 'shared' },
+  ] as UsageSummary[]
+  const view = render(createElement(ModelSelector, { summary: shared, activeFilter: null, onChange, providerColors: {} }))
+  fireEvent.click(screen.getByRole('button', { name: /all models/i }))
+  fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /openai/i }))
+  expect(onChange).toHaveBeenLastCalledWith({ provider: 'openai' })
+  view.rerender(createElement(ModelSelector, { summary: [...shared, { provider: 'openai', model: 'new-model' } as UsageSummary], activeFilter: { provider: 'openai' }, onChange, providerColors: {} }))
+  const rows = screen.getAllByRole('menuitemcheckbox', { name: /shared/i })
+  expect(rows.map(row => row.getAttribute('aria-checked'))).toEqual(['false', 'true'])
+  expect(screen.getByRole('menuitemcheckbox', { name: /new-model/i }).getAttribute('aria-checked')).toBe('true')
+  fireEvent.click(rows[0])
+  expect(onChange).toHaveBeenLastCalledWith({ models: ['shared', 'new-model'] })
+})

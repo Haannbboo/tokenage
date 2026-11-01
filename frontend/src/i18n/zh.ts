@@ -178,6 +178,10 @@ export const zh: Record<string, string> = {
 
   // ModelSelector
   'All Models': '全部模型',
+  'Search models or providers': '搜索模型或提供商',
+  'selected': '已选择',
+  'Clear all': '清除全部',
+  'No models found': '未找到模型',
   'model': '个模型',
   'models': '个模型',
 

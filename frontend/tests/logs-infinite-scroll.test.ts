@@ -11,7 +11,7 @@ import { LogsPage } from '../src/pages/LogsPage'
 
 const app = vi.hoisted(() => ({
   refreshTrigger: 0, setError: vi.fn(), showToast: vi.fn(), requestUsageRefresh: vi.fn(),
-  activeFilter: null as { models: string[] } | null, activeSource: null as string | null, activeDevice: null,
+  activeFilter: null as { models?: string[]; provider?: string } | null, activeSource: null as string | null, activeDevice: null,
   dateRange: 'all', timezone: 'UTC', setActiveFilter: vi.fn(), setActiveSource: vi.fn(),
   setActiveDevice: vi.fn(), setDateRange: vi.fn(),
 }))
@@ -475,5 +475,25 @@ it('sends every selected model to dashboard and heatmap requests', async () => {
     const filtered = requests.filter(url => url.searchParams.has('model'))
     expect(filtered.map(url => url.pathname).sort()).toEqual(['/usage/daily', '/usage/daily', '/usage/summary'])
     expect(filtered.every(url => url.searchParams.getAll('model').join(',') === 'first,second')).toBe(true)
+  } finally { app.activeFilter = null }
+})
+
+
+it('sends the provider to logs, dashboard, heatmap and chart filters', async () => {
+  app.activeFilter = { provider: 'openai' }
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), window.location.origin)
+    return response(url.pathname === '/usage/count' ? { total: 0 } : [])
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    const { result } = renderHook(() => useDashboardData())
+    renderHook(() => useLogsData({ ...opts, activeFilter: { provider: 'openai' } }))
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(6))
+    const requests = fetchMock.mock.calls.map(([input]) => new URL(String(input), window.location.origin))
+    const filtered = requests.filter(url => url.searchParams.has('provider'))
+    expect(filtered.map(url => url.pathname).sort()).toEqual(['/usage', '/usage/daily', '/usage/daily', '/usage/summary'])
+    expect(filtered.every(url => url.searchParams.get('provider') === 'openai' && !url.searchParams.has('model'))).toBe(true)
+    expect(result.current.dashboardFilterParams.provider).toBe('openai')
   } finally { app.activeFilter = null }
 })

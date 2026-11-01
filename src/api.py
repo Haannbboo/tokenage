@@ -285,7 +285,7 @@ async def get_usage(
     cursor = None
     if before is not None:
         # Keep timestamps in the signed BIGINT range used by both databases.
-        match = re.fullmatch(r"(-?[0-9]+):([^:\s]+)", before)
+        match = re.fullmatch(r"(-?[0-9]+):([^:\s\x00]+)", before)
         if match is None:
             raise HTTPException(status_code=400, detail="Invalid usage cursor")
         try:

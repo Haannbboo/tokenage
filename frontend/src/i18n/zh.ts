@@ -167,6 +167,7 @@ export const zh: Record<string, string> = {
 
   // Error messages
   'Failed to fetch dashboard data': '获取仪表盘数据失败',
+  'Retry': '重试',
   'Failed to fetch log data': '获取日志数据失败',
   'Unknown error': '未知错误',
 

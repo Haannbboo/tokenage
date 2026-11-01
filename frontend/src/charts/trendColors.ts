@@ -30,7 +30,7 @@ export function variantColor(hex: string, step: number, theme: 'light' | 'dark' 
   const r = (n >> 16) & 255
   const g = (n >> 8) & 255
   const b = n & 255
-  const amount = Math.min(0.45, 0.24 * step)
+  const amount = 0.65 * (1 - Math.exp(-Math.max(0, step) * 0.45))
   const mix = (c: number) =>
     Math.round(theme === 'dark' ? c + (255 - c) * amount : c * (1 - amount))
   return `#${((mix(r) << 16) | (mix(g) << 8) | mix(b)).toString(16).padStart(6, '0')}`

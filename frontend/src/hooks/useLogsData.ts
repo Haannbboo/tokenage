@@ -45,6 +45,7 @@ export function useLogsData(opts: {
   const [usageRows, setUsageRows] = useState<UsageRow[]>([])
   const [hasMore, setHasMore] = useState(true)
   const [loadMoreFailed, setLoadMoreFailed] = useState(false)
+  const [initialLoadFailed, setInitialLoadFailed] = useState(false)
   const [scrollReset, setScrollReset] = useState(0)
   const rowsRef = useRef(usageRows)
   const requestRef = useRef<AbortController | null>(null)
@@ -158,6 +159,7 @@ export function useLogsData(opts: {
       setScrollReset(value => value + 1)
       setLogsLoading(true)
       setLoadMoreFailed(false)
+      setInitialLoadFailed(false)
       setError(null)
       try {
         const data = await fetchPage(controller)
@@ -165,7 +167,10 @@ export function useLogsData(opts: {
         setUsageRows(data)
         setHasMore(data.length === LOGS_PAGE_SIZE)
       } catch (err) {
-        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : t('Unknown error'))
+        if (!controller.signal.aborted) {
+          setInitialLoadFailed(true)
+          setError(err instanceof Error ? err.message : t('Unknown error'))
+        }
       } finally {
         if (!controller.signal.aborted) {
           busyRef.current = false
@@ -211,7 +216,7 @@ export function useLogsData(opts: {
   useEffect(() => () => requestRef.current?.abort(), [])
 
   return {
-    usageRows, setUsageRows, hasMore, loadMore, loadMoreFailed, scrollReset,
+    usageRows, setUsageRows, hasMore, loadMore, loadMoreFailed, initialLoadFailed, scrollReset,
     logsLoading, expandedRow, setExpandedRow,
     colWidths, isResizing, handleResizeStart,
   }

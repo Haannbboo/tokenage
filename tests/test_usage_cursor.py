@@ -133,6 +133,7 @@ def test_cursor_combines_with_filters(cursor_api):
         "1:",
         "1:a:b",
         "1: ",
+        "1:row\x00id",
         "9223372036854775808:row",
         "9" * 5000 + ":row",
     ],
@@ -140,6 +141,7 @@ def test_cursor_combines_with_filters(cursor_api):
 def test_bad_cursor_returns_400(api_module, before):
     response = TestClient(api_module.app).get("/usage", params={"before": before})
     assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid usage cursor"
 
 
 def test_usage_cursor_index_migration_is_idempotent(fresh_db):

@@ -61,7 +61,7 @@ export function LogsPage() {
 
   // Logs data hook
   const {
-    usageRows, setUsageRows, hasMore, loadMore, loadMoreFailed, scrollReset,
+    usageRows, setUsageRows, hasMore, loadMore, loadMoreFailed, initialLoadFailed, scrollReset,
     logsLoading, expandedRow, setExpandedRow,
     colWidths, isResizing, handleResizeStart,
   } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, deviceFilter: activeDevice })
@@ -923,7 +923,9 @@ export function LogsPage() {
               {usageRows.length === 0 && !logsLoading && (
                 <tr>
                   <td colSpan={effectiveVisibleColumns.length} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-                    {t('No requests found for the selected filters.')}
+                    {initialLoadFailed ? (
+                      <>{t('Failed to fetch log data')} <button className="btn-ghost" onClick={requestUsageRefresh}>{t('Retry')}</button></>
+                    ) : t('No requests found for the selected filters.')}
                   </td>
                 </tr>
               )}

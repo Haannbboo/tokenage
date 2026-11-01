@@ -219,6 +219,22 @@ describe('Request Logs data', () => {
 })
 
 describe('Request Logs table', () => {
+  it('shows a safe first-page error and retries the refresh', async () => {
+    const api = mockHistory([])
+    const fetchHistory = api.fetchMock.getMockImplementation()!
+    api.fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      if (new URL(String(input), window.location.origin).pathname === '/usage') throw new Error('secret detail')
+      return fetchHistory(input)
+    })
+    app.requestUsageRefresh.mockClear()
+    render(createElement(LogsPage))
+    expect(await screen.findByText('Failed to fetch log data')).toBeTruthy()
+    expect(screen.queryByText('secret detail')).toBeNull()
+    expect(screen.queryByText('No requests found for the selected filters.')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(app.requestUsageRefresh).toHaveBeenCalledOnce()
+  })
+
   it('keeps the session dropdown searchable and selectable', () => {
     const onChange = vi.fn()
     render(createElement(SessionSelector, {

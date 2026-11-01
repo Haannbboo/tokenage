@@ -2,11 +2,29 @@
 import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useDashboardData } from '../src/hooks/useDashboardData'
+import type { ActiveFilter } from '../src/types'
 
-const context = vi.hoisted(() => ({ refreshTrigger: 0, setError: () => {}, activeFilter: null, activeSource: null, activeDevice: null, dateRange: '5h', timezone: 'UTC' }))
+const context = vi.hoisted(() => ({ refreshTrigger: 0, setError: () => {}, activeFilter: null as ActiveFilter, activeSource: null, activeDevice: null, dateRange: '5h', timezone: 'UTC' }))
 vi.mock('../src/contexts/AppContext', () => ({ useApp: () => context }))
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); context.refreshTrigger = 0; context.dateRange = '5h' })
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); context.refreshTrigger = 0; context.dateRange = '5h'; context.activeFilter = null })
+
+it('sends each selected model as a separate summary and daily query parameter', async () => {
+  const models = ['gpt-4.1', 'claude-sonnet-4']
+  context.activeFilter = { models }
+  const fetchMock = vi.fn(async (_url: string) => ({ ok: true, json: async () => [] }))
+  vi.stubGlobal('fetch', fetchMock)
+  const { result } = renderHook(() => useDashboardData({ includeHeatmap: false, includeCount: false }))
+  await waitFor(() => expect(result.current.dashboardInitialLoading).toBe(false))
+
+  const urls = fetchMock.mock.calls.map(([url]) => new URL(url))
+  for (const path of ['/usage/summary', '/usage/daily']) {
+    // The selector also fetches an unfiltered summary for its available options.
+    const filteredRequests = urls.filter(url => url.pathname === path && url.searchParams.has('model'))
+    expect(filteredRequests).toHaveLength(1)
+    expect(filteredRequests[0].searchParams.getAll('model')).toEqual(models)
+  }
+})
 
 it('uses the shared summary for five-hour totals', async () => {
   const row = { provider: 'test', requests: 2, prompt_tokens: 100, completion_tokens: 50, cached_tokens: 40, cache_creation_tokens: 10, total_tokens: 150, total_cost_usd: 2, latency_sum_ms: 1000 }

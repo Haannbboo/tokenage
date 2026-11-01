@@ -41,10 +41,6 @@ type AppContextType = {
   setActiveDevice: (d: string | null) => void
   dateRange: DateRangeOption
   setDateRange: (d: DateRangeOption) => void
-  customSince: string
-  setCustomSince: (s: string) => void
-  customUntil: string
-  setCustomUntil: (s: string) => void
 
   timezone: string
   setTimezone: (tz: string) => void
@@ -82,8 +78,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeSource, setActiveSource] = useState<string | null>(null)
   const [activeDevice, setActiveDevice] = useState<string | null>(null)
   const [dateRange, setDateRange] = useState<DateRangeOption>('24h')
-  const [customSince, setCustomSince] = useState('')
-  const [customUntil, setCustomUntil] = useState('')
   const [timezone, setTimezoneState] = useState<string>(getSavedTimezone)
   const setTimezone = useCallback((tz: string) => { setTimezoneState(tz); saveTimezone(tz) }, [])
 
@@ -176,7 +170,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refreshTrigger, requestUsageRefresh,
       activeFilter, setActiveFilter, activeSource, setActiveSource,
       activeDevice, setActiveDevice,
-      dateRange, setDateRange, customSince, setCustomSince, customUntil, setCustomUntil,
+      dateRange, setDateRange,
       timezone, setTimezone,
     }}>
       {children}

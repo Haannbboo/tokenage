@@ -94,7 +94,9 @@ export type ActiveFilter = {
   provider: string;
   model: string | null;
 } | null
-export type DateRangeOption = '24h' | '7d' | '30d' | 'all' | 'custom'
+export type DateRangeOption = '24h' | '5h' | '7d' | '30d' | 'all'
+/** The bucket the time axis is drawn in. */
+export type PeriodGranularity = 'hour' | '15m' | 'day'
 
 export type SessionOutcome = 'solved' | 'partial' | 'failed' | 'stuck' | 'no_op' | 'unknown'
 export type SessionEvaluationSource = 'manual' | 'heuristic' | 'llm'
@@ -224,12 +226,14 @@ export type DailyEffectivenessReport = {
   groups: DailyEffectivenessGroup[]
 }
 
+// The client and the server release separately, so `status` is an open string:
+// a client may report a status this server has never heard of.
 export type SetupAgentHealth = {
   configured: boolean
-  endpoint_matches: boolean
+  endpoint_matches: boolean | null
   configured_endpoint: string | null
-  expected_endpoint: string
-  status: 'ready' | 'missing_config' | 'wrong_endpoint'
+  expected_endpoint: string | null
+  status: 'ready' | 'missing_config' | 'wrong_endpoint' | 'configured' | (string & {})
 }
 
 export type SetupDiagnostics = {

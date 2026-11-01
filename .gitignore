@@ -48,3 +48,4 @@ plugins/shared/src/*.js
 /docker/nginx/*
 /docker/caddy/*
 !/docker/caddy/Caddyfile.example
+.archify/

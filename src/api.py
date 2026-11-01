@@ -5,6 +5,7 @@ import re
 import shlex
 import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -467,6 +468,31 @@ def usage_by_provider(
     )
 
 
+def _validate_fine_window(granularity: str, since: str | None, until: str | None):
+    if granularity != "15m":
+        return
+    try:
+        if since is None:
+            raise ValueError
+        start = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        end = (
+            datetime.fromisoformat(until.replace("Z", "+00:00"))
+            if until
+            else datetime.now(UTC)
+        )
+        if until and len(until) == 10:
+            end += timedelta(days=1, microseconds=-1)
+        start = start.replace(tzinfo=UTC) if start.tzinfo is None else start
+        end = end.replace(tzinfo=UTC) if end.tzinfo is None else end
+        if end < start or end - start > timedelta(hours=48):
+            raise ValueError
+    except (ValueError, OverflowError):
+        raise HTTPException(
+            status_code=400,
+            detail="15m granularity requires a window of at most 48 hours",
+        )
+
+
 @app.get("/usage/daily")
 def usage_daily(
     request: Request,
@@ -479,6 +505,7 @@ def usage_daily(
     granularity: str = "day",
     tz_offset: str = "+00:00",
 ):
+    _validate_fine_window(granularity, since, until)
     return aggregate_usage_by_period(
         user_id=_request_user_id(request),
         since=since,
@@ -502,8 +529,10 @@ def usage_daily_by_dimension(
     model: str | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
+    granularity: str = "day",
     tz_offset: str = "+00:00",
 ):
+    _validate_fine_window(granularity, since, until)
     return aggregate_daily_by_dimension(
         user_id=_request_user_id(request),
         dimension=dimension,
@@ -513,6 +542,7 @@ def usage_daily_by_dimension(
         model=model,
         client_source=client_source,
         device_id=device_id,
+        granularity=granularity,
         tz_offset=tz_offset,
     )
 

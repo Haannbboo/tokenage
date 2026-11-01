@@ -9,11 +9,11 @@ export const zh: Record<string, string> = {
   'Switch to dark mode': '切换到暗色模式',
 
   // Date range
+  'Last 5 Hours': '最近 5 小时',
   'Last 24 Hours': '最近 24 小时',
   'Last 7 Days': '最近 7 天',
   'Last 30 Days': '最近 30 天',
   'All Time': '全部时间',
-  'Custom Range': '自定义范围',
 
   // Source filter
   'All Sources': '全部来源',
@@ -32,16 +32,19 @@ export const zh: Record<string, string> = {
 
   // Dashboard widget details
   'In:': '输入：',
+  'Today': '今天',
+  'Yesterday': '昨天',
+  'peak': '峰值',
+  'lowest': '最低',
   'Out:': '输出：',
   'Cached:': '缓存：',
-  'Hit)': '命中)',
   'Avg:': '平均：',
   'tokens/req': 'tokens/请求',
-  '/ req': '/ 请求',
   'Avg $/M tokens:': '平均 $/百万 tokens：',
 
   // Chart titles
   'Hourly Usage Trend': '每小时用量趋势',
+  '15-Minute Usage Trend': '每 15 分钟用量趋势',
   'Daily Usage Trend': '每日用量趋势',
   'Cache Hit Rate': '缓存命中率',
   'Tool Calls': '工具调用',
@@ -57,8 +60,7 @@ export const zh: Record<string, string> = {
   'Output Cost': '输出费用',
   'Tokens': 'Tokens',
   'Cost': '费用',
-  'Throughput': '吞吐量',
-  'Average Output': '平均输出',
+  'Avg Speed': '平均速度',
   'Speed': '速度',
   'Success': '成功率',
   'Cache': '缓存',
@@ -75,6 +77,7 @@ export const zh: Record<string, string> = {
   'Total': '总计',
 
   // Chart messages
+  'Failed to load model breakdown': '加载模型明细失败',
   'No trend data available': '暂无趋势数据',
   'No data available': '暂无数据',
   'No activity': '无活动',
@@ -114,8 +117,6 @@ export const zh: Record<string, string> = {
   'Model': '模型',
   'Source': '来源',
   'Date Range': '时间范围',
-  'Since': '开始时间',
-  'Until': '结束时间',
   'Refresh': '刷新',
   'Filter logs by session': '按会话筛选日志',
   'Clear session filter': '清除会话筛选',
@@ -208,6 +209,7 @@ export const zh: Record<string, string> = {
   'Broken': '异常',
   'OTLP Tracking Setup': 'OTLP 追踪设置',
   'OTLP configured': 'OTLP 已配置',
+  'Not installed': '未安装',
   'Expected endpoint': '预期端点',
   'Configured endpoint': '已配置端点',
   'Missing config': '缺少配置',

@@ -2545,6 +2545,226 @@ def test_aggregate_daily_by_dimension_groups_by_model(fresh_db):
     assert by_model_and_date[("gpt-4o", "2026-05-07")]["total_tokens"] == 500
 
 
+def test_aggregate_daily_by_dimension_can_bucket_by_hour(fresh_db):
+    """aggregate_daily_by_dimension buckets by local hour when asked."""
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+
+    for ts, tokens in [
+        (TS_2026_05_07_10, 1000),
+        (TS_2026_05_07_10, 500),
+        (TS_2026_05_08_10, 2000),
+    ]:
+        ingest_write(
+            database_module.log_usage,
+            database_module.Usage(
+                device_id="test-device",
+                ts=ts,
+                provider="anthropic",
+                model="claude-sonnet-4-6",
+                client_source=None,
+                session_id=None,
+                endpoint="/v1/messages",
+                prompt_tokens=tokens // 2,
+                completion_tokens=tokens // 2,
+                reasoning_tokens=None,
+                cached_tokens=None,
+                total_tokens=tokens,
+                latency_ms=500,
+                ttft_ms=None,
+                tool_tokens=None,
+                cache_creation_tokens=None,
+                input_cost_usd=0.01,
+                output_cost_usd=0.01,
+                total_cost_usd=0.02,
+                status=200,
+                base_url_id=None,
+                user_id="test-user",
+            ),
+            db_path=db_path,
+        )
+
+    result = database_module.aggregate_daily_by_dimension(
+        dimension="model",
+        since="2026-05-07T00:00:00Z",
+        until="2026-05-09T00:00:00Z",
+        user_id="test-user",
+        granularity="hour",
+    )
+
+    periods = {r["period"] for r in result}
+    assert periods == {"2026-05-07 10:00", "2026-05-08 10:00"}
+    by_period = {r["period"]: r for r in result}
+    assert by_period["2026-05-07 10:00"]["total_tokens"] == 1500
+
+
+def test_aggregate_usage_by_period_can_bucket_by_fifteen_minutes(fresh_db):
+    """A fifteen minute granularity sums the raw rows, not the hourly rollup."""
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+
+    for ts, tokens, user in [
+        (TS_2026_05_07_10, 1000, "test-user"),
+        (TS_2026_05_07_10 + 14 * 60_000_000, 500, "test-user"),
+        (TS_2026_05_07_10 + 15 * 60_000_000, 2000, "test-user"),
+        (TS_2026_05_07_10, 9000, "other-user"),
+    ]:
+        ingest_write(
+            database_module.log_usage,
+            database_module.Usage(
+                device_id="test-device",
+                ts=ts,
+                provider="anthropic",
+                model="claude-sonnet-4-6",
+                client_source=None,
+                session_id=None,
+                endpoint="/v1/messages",
+                prompt_tokens=tokens // 2,
+                completion_tokens=tokens // 2,
+                reasoning_tokens=None,
+                cached_tokens=None,
+                total_tokens=tokens,
+                latency_ms=500,
+                ttft_ms=None,
+                tool_tokens=None,
+                cache_creation_tokens=None,
+                input_cost_usd=0.01,
+                output_cost_usd=0.01,
+                total_cost_usd=0.02,
+                status=200,
+                base_url_id=None,
+                user_id=user,
+            ),
+            db_path=db_path,
+        )
+
+    result = database_module.aggregate_usage_by_period(
+        since="2026-05-07T00:00:00Z",
+        until="2026-05-08T00:00:00Z",
+        user_id="test-user",
+        granularity="15m",
+        tz_offset="+05:30",
+    )
+
+    by_period = {r["period"]: r for r in result}
+    assert set(by_period) == {"2026-05-07 15:30", "2026-05-07 15:45"}
+    assert by_period["2026-05-07 15:30"]["total_tokens"] == 1500
+    assert by_period["2026-05-07 15:30"]["requests"] == 2
+    assert by_period["2026-05-07 15:45"]["total_tokens"] == 2000
+    assert by_period["2026-05-07 15:45"]["requests"] == 1
+
+
+def test_aggregate_daily_by_dimension_can_bucket_by_fifteen_minutes(fresh_db):
+    """The per model split lands on the same quarter hour buckets."""
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+
+    for ts, model, tokens in [
+        (TS_2026_05_07_10, "claude-sonnet-4-6", 1000),
+        (TS_2026_05_07_10 + 15 * 60_000_000, "claude-sonnet-4-6", 500),
+        (TS_2026_05_07_10 + 15 * 60_000_000, "gpt-4o", 100),
+    ]:
+        ingest_write(
+            database_module.log_usage,
+            database_module.Usage(
+                device_id="test-device",
+                ts=ts,
+                provider="anthropic",
+                model=model,
+                client_source=None,
+                session_id=None,
+                endpoint="/v1/messages",
+                prompt_tokens=tokens // 2,
+                completion_tokens=tokens // 2,
+                reasoning_tokens=None,
+                cached_tokens=None,
+                total_tokens=tokens,
+                latency_ms=500,
+                ttft_ms=None,
+                tool_tokens=None,
+                cache_creation_tokens=None,
+                input_cost_usd=0.01,
+                output_cost_usd=0.01,
+                total_cost_usd=0.02,
+                status=200,
+                base_url_id=None,
+                user_id="test-user",
+            ),
+            db_path=db_path,
+        )
+
+    result = database_module.aggregate_daily_by_dimension(
+        dimension="model",
+        since="2026-05-07T00:00:00Z",
+        until="2026-05-08T00:00:00Z",
+        user_id="test-user",
+        granularity="15m",
+    )
+
+    by_key = {(r["dimension"], r["period"]): r for r in result}
+    assert by_key[("claude-sonnet-4-6", "2026-05-07 10:00")]["total_tokens"] == 1000
+    assert by_key[("claude-sonnet-4-6", "2026-05-07 10:15")]["total_tokens"] == 500
+    assert by_key[("gpt-4o", "2026-05-07 10:15")]["total_tokens"] == 100
+
+
+def test_fifteen_minute_buckets_count_failures_like_the_rollup(fresh_db):
+    """The raw rows carry the same success and failure counters."""
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+
+    for ts, status in [
+        (TS_2026_05_07_10, 200),
+        (TS_2026_05_07_10, 429),
+    ]:
+        ingest_write(
+            database_module.log_usage,
+            database_module.Usage(
+                device_id="test-device",
+                ts=ts,
+                provider="anthropic",
+                model="claude-sonnet-4-6",
+                client_source=None,
+                session_id=None,
+                endpoint="/v1/messages",
+                prompt_tokens=10,
+                completion_tokens=10,
+                reasoning_tokens=None,
+                cached_tokens=None,
+                total_tokens=20,
+                latency_ms=500,
+                ttft_ms=None,
+                tool_tokens=None,
+                cache_creation_tokens=None,
+                input_cost_usd=0.01,
+                output_cost_usd=0.01,
+                total_cost_usd=0.02,
+                status=status,
+                base_url_id=None,
+                user_id="test-user",
+            ),
+            db_path=db_path,
+        )
+
+    result = database_module.aggregate_usage_by_period(
+        since="2026-05-07T00:00:00Z",
+        until="2026-05-08T00:00:00Z",
+        user_id="test-user",
+        granularity="15m",
+    )
+
+    bucket = result[0]
+    assert bucket["requests"] == 2
+    assert bucket["successful_requests"] == 1
+    assert bucket["failed_requests"] == 1
+    assert bucket["status_429"] == 1
+    # The rollup files a 429 under status_429 only, not under status_4xx too.
+    assert bucket["status_4xx"] == 0
+
+
 def test_aggregate_daily_by_dimension_groups_by_provider(fresh_db):
     """aggregate_daily_by_dimension returns daily data grouped by provider."""
     database_module = fresh_db.database_module
@@ -5663,3 +5883,61 @@ def test_hourly_upsert_binds_fresh_values_per_row(fresh_db):
         assert rows["second"].prompt_tokens == 23
         assert rows["second"].total_cost_usd == Decimal("0.00000010")
         assert all(r.client_source == "" for r in rows.values())
+
+
+def test_partial_hour_summaries_match_fifteen_minute_series(fresh_db):
+    db = fresh_db.database_module
+    db.init_db(fresh_db.db_path)
+    for minute, provider, model, tokens, user in [
+        (5, "openai", "old-model", 1000, "test-user"),
+        (15, "anthropic", "new-model", 200, "test-user"),
+        (20, "openai", "other-model", 9000, "other-user"),
+    ]:
+        ingest_write(
+            db.log_usage,
+            db.Usage(
+                device_id="test-device",
+                ts=TS_2026_05_07_10 + minute * 60_000_000,
+                provider=provider,
+                model=model,
+                client_source="test-source",
+                session_id=None,
+                endpoint="/v1/messages",
+                prompt_tokens=tokens,
+                completion_tokens=0,
+                reasoning_tokens=None,
+                cached_tokens=None,
+                total_tokens=tokens,
+                latency_ms=500,
+                ttft_ms=None,
+                tool_tokens=None,
+                cache_creation_tokens=None,
+                input_cost_usd=0.01,
+                output_cost_usd=0,
+                total_cost_usd=0.01,
+                status=200,
+                base_url_id=None,
+                user_id=user,
+            ),
+            db_path=fresh_db.db_path,
+        )
+    params = dict(
+        user_id="test-user", since="2026-05-07T10:15:00Z", until="2026-05-07T10:45:00Z"
+    )
+    models = db.summarize_usage_by_model(**params)
+    providers = db.summarize_usage_by_provider(**params)
+    sources = db.summarize_usage_by_source(**params)
+    devices = db.aggregate_daily_by_dimension(dimension="device", **params)
+    series = db.aggregate_usage_by_period(granularity="15m", **params)
+    assert {row["model"] for row in models} == {"new-model"}
+    assert {row["provider"] for row in providers} == {"anthropic"}
+    for rows in (models, providers, sources, devices, series):
+        assert sum(row["total_tokens"] for row in rows) == 200
+        assert sum(row["requests"] for row in rows) == 1
+
+
+def test_raw_window_date_only_until_uses_end_of_day():
+    from src.database.usage import _needs_raw_window
+
+    assert _needs_raw_window("2026-05-07T10:15:00Z", "2026-05-07")
+    assert not _needs_raw_window("2026-05-07T10:15:00Z", "2026-05-10")

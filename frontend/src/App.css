@@ -93,8 +93,15 @@
 /* Data Widgets */
 .widgets-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: clamp(16px, 2vw, 24px);
+}
+
+/* Five KPI tiles only fit one row on wide screens; below that they wrap 3 + 2. */
+@media (min-width: 1600px) {
+  .widgets-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
 }
 
 .widget {
@@ -102,7 +109,7 @@
   border-radius: 12px;
   padding: 14px 16px;
   border: 1px solid var(--border-color);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-soft);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -172,6 +179,8 @@
   color: var(--text-muted);
   margin-bottom: 3px;
   font-weight: 600;
+  /* Equal-width digits, so numbers in the detail line line up. */
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-value {
@@ -179,6 +188,8 @@
   font-weight: 700;
   color: var(--text-primary);
   margin-bottom: 2px;
+  /* Equal-width digits: the value stops jittering while it counts up. */
+  font-variant-numeric: tabular-nums;
 }
 
 /* Lower Section */
@@ -1456,6 +1467,22 @@
   }
 }
 
+@keyframes trend-tooltip-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes trend-hover-pulse {
+  0% { transform: scale(0.8); opacity: 0.35; }
+  80%, 100% { transform: scale(1.8); opacity: 0; }
+}
+
+.trend-hover-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: trend-hover-pulse 1.6s ease-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .btn-refresh.is-refreshing .refresh-icon,
   .dashboard-refresh-surface.is-refreshing::after {
@@ -1468,6 +1495,10 @@
   }
 
   .evaluation-job-running-pulse {
+    animation: none;
+  }
+
+  .trend-hover-pulse {
     animation: none;
   }
 }

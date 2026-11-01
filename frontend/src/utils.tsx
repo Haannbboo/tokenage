@@ -1,5 +1,6 @@
-import type { DateRangeOption, DailyUsage } from './types'
-import type { Lang } from './i18n/index.ts'
+import type { DailyUsage, PeriodGranularity } from './types'
+import { zeroUsageRow } from './periodGaps'
+import { getLang, LANG_LOCALES, type Lang } from './i18n/index.ts'
 import { getTheme, type Theme } from './theme'
 
 const TIMEZONE_KEY = 'tokenage-timezone'
@@ -50,22 +51,51 @@ export function saveTimezone(tz: string): void {
   localStorage.setItem(TIMEZONE_KEY, tz)
 }
 
-export const numberFormatter = new Intl.NumberFormat()
-export const compactFormatter = new Intl.NumberFormat(undefined, {
-  maximumFractionDigits: 1,
-  notation: 'compact',
-})
-const costFormatters = new Map<number, Intl.NumberFormat>()
-function getCostFormatter(maxDigits: number) {
-  let fmt = costFormatters.get(maxDigits)
+// The formatters follow the language the UI is written in, not the browser
+// locale: a German browser would otherwise read 2,090 as 2.090.
+const numberFormatters = new Map<string, Intl.NumberFormat>()
+const compactFormatters = new Map<string, Intl.NumberFormat>()
+const costFormatters = new Map<string, Intl.NumberFormat>()
+
+function appLocale(): string {
+  return LANG_LOCALES[getLang()]
+}
+
+function numberFormatter(): Intl.NumberFormat {
+  const locale = appLocale()
+  let fmt = numberFormatters.get(locale)
   if (!fmt) {
-    fmt = new Intl.NumberFormat(undefined, {
+    fmt = new Intl.NumberFormat(locale)
+    numberFormatters.set(locale, fmt)
+  }
+  return fmt
+}
+
+function compactFormatter(): Intl.NumberFormat {
+  const locale = appLocale()
+  let fmt = compactFormatters.get(locale)
+  if (!fmt) {
+    fmt = new Intl.NumberFormat(locale, {
+      maximumFractionDigits: 1,
+      notation: 'compact',
+    })
+    compactFormatters.set(locale, fmt)
+  }
+  return fmt
+}
+
+function getCostFormatter(maxDigits: number) {
+  const locale = appLocale()
+  const key = `${locale}:${maxDigits}`
+  let fmt = costFormatters.get(key)
+  if (!fmt) {
+    fmt = new Intl.NumberFormat(locale, {
       style: 'currency',
       currency: 'USD',
       minimumFractionDigits: 2,
       maximumFractionDigits: maxDigits,
     })
-    costFormatters.set(maxDigits, fmt)
+    costFormatters.set(key, fmt)
   }
   return fmt
 }
@@ -87,11 +117,11 @@ export function timeAgo(input: string | number): string {
 }
 
 export function formatNumber(input: number | null | undefined) {
-  return numberFormatter.format(value(input))
+  return numberFormatter().format(value(input))
 }
 
 export function formatCompact(input: number | null | undefined) {
-  return compactFormatter.format(value(input))
+  return compactFormatter().format(value(input))
 }
 
 export function formatCost(input: number | null | undefined, maxDigits = 6) {
@@ -100,6 +130,23 @@ export function formatCost(input: number | null | undefined, maxDigits = 6) {
   if (Math.abs(v) < 0.01) return `$${v.toFixed(Math.min(4, maxDigits))}`
   if (Math.abs(v) < 0.1) return `$${v.toFixed(Math.min(3, maxDigits))}`
   return getCostFormatter(maxDigits).format(v)
+}
+
+/** Currency with a fixed number of decimals, including trailing zeros. */
+export function formatCostFixed(input: number | null | undefined, digits = 3) {
+  const locale = appLocale()
+  const key = `${locale}:fixed:${digits}`
+  let fmt = costFormatters.get(key)
+  if (!fmt) {
+    fmt = new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })
+    costFormatters.set(key, fmt)
+  }
+  return fmt.format(value(input))
 }
 
 export function formatRate(input: number | null | undefined) {
@@ -126,6 +173,18 @@ export function netThroughput(
 ): number {
   const ms = value(latencyMs)
   return ms > 0 ? (value(completionTokens) * 1000) / ms : 0
+}
+
+// cache_creation_tokens is a disjoint bucket on top of prompt_tokens (Anthropic
+// semantics), so it belongs in the denominator of a true cache hit rate.
+// A bucket without any input reads as 0%.
+export function cacheHitRate(
+  cached: number | null | undefined,
+  prompt: number | null | undefined,
+  cacheCreation: number | null | undefined,
+): number {
+  const totalInput = value(prompt) + value(cacheCreation)
+  return totalInput > 0 ? (value(cached) / totalInput) * 100 : 0
 }
 
 type DurationFormatOptions = {
@@ -167,69 +226,29 @@ export function formatTime(input: string | number, tz?: string) {
   return new Intl.DateTimeFormat(undefined, options).format(date)
 }
 
-// The custom range is datetime-local (no zone); the API reads naive bounds as UTC.
-export function customBound(local: string): string {
-  return local && new Date(local).toISOString()
-}
-
-export function getSinceDate(option: DateRangeOption): string | null {
-  if (option === 'custom' || option === 'all') return null
-  if (option === '24h') return new Date(Date.now() - 24 * 3600_000).toISOString()
-  if (option === '7d') return new Date(Date.now() - 7 * 86400_000).toISOString()
-  if (option === '30d') return new Date(Date.now() - 30 * 86400_000).toISOString()
-  return null
-}
-
-function tzDateParts(date: Date, tz?: string): { year: number; month: number; day: number; hour: number } {
+function tzDateParts(date: Date, tz?: string): { year: number; month: number; day: number; hour: number; minute: number } {
   if (!tz) {
-    return { year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate(), hour: date.getHours() }
+    return {
+      year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate(),
+      hour: date.getHours(), minute: date.getMinutes(),
+    }
   }
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', hour12: false,
+    timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', hour12: false,
   }).formatToParts(date)
   const get = (type: string) => parseInt(parts.find(p => p.type === type)?.value || '0', 10)
   const hour = get('hour') % 24
-  return { year: get('year'), month: get('month'), day: get('day'), hour }
+  return { year: get('year'), month: get('month'), day: get('day'), hour, minute: get('minute') }
 }
 
-export function fillGaps(data: DailyUsage[], granularity: 'hour' | 'day', periodCount: number, tz?: string): DailyUsage[] {
-  const effectiveTz = tz
-  const zeroRow = (period: string): DailyUsage => ({
-    period, requests: 0, prompt_tokens: 0, completion_tokens: 0,
-    cached_tokens: 0, cache_creation_tokens: 0, total_tokens: 0, input_cost_usd: 0,
-    output_cost_usd: 0, total_cost_usd: 0, avg_latency_ms: 0,
-    latency_sum_ms: 0,
-    avg_throughput: 0,
-    successful_requests: 0, failed_requests: 0,
-    status_429: 0, status_4xx: 0, status_5xx: 0, status_unknown: 0,
-  })
-
-  const map = new Map(data.map(d => [d.period, d]))
-  const result: DailyUsage[] = []
-
-  const now = new Date()
-
-  if (granularity === 'hour') {
-    // Step back from the current instant by (periodCount-1) hours
-    const startMs = now.getTime() - (periodCount - 1) * 3600_000
-    for (let i = 0; i < periodCount; i++) {
-      const d = new Date(startMs + i * 3600_000)
-      const p = tzDateParts(d, effectiveTz)
-      const key = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')} ${String(p.hour).padStart(2, '0')}:00`
-      result.push(map.get(key) ?? zeroRow(key))
-    }
-  } else {
-    // Step back from the current instant by (periodCount-1) days
-    const startMs = now.getTime() - (periodCount - 1) * 86400_000
-    for (let i = 0; i < periodCount; i++) {
-      const d = new Date(startMs + i * 86400_000)
-      const p = tzDateParts(d, effectiveTz)
-      const key = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`
-      result.push(map.get(key) ?? zeroRow(key))
-    }
-  }
-
-  return result
+/**
+ * The wall-clock time of `now` in the display timezone, in the same clock the
+ * period labels use. "3 hours ago" is only true against this, not against the
+ * browser's clock.
+ */
+export function wallClockMs(now: Date, tz?: string): number {
+  const p = tzDateParts(now, tz)
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour)
 }
 
 export function getTimezoneOffset(tz?: string): string {
@@ -249,15 +268,60 @@ export function getTimezoneOffset(tz?: string): string {
   const get = (type: string) => parseInt(parts.find(p => p.type === type)?.value || '0', 10)
   // Build a UTC timestamp from the timezone-local parts.
   // Note: the local date may differ from ref's UTC date (e.g. UTC+7 at 2am UTC = 9pm previous day).
-  // Normalize the difference to [-720, +720] minutes to handle day-boundary crossings.
+  // Normalize the difference to [-720, +840] minutes to handle day-boundary crossings.
   const localAsUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute'), get('second'))
   let diffMin = Math.round((localAsUtc - ref.getTime()) / 60_000)
-  if (diffMin > 720) diffMin -= 1440
+  if (diffMin > 840) diffMin -= 1440
   if (diffMin < -720) diffMin += 1440
   const sign = diffMin >= 0 ? '+' : '-'
   const absMin = Math.abs(diffMin)
   return `${sign}${String(Math.floor(absMin / 60)).padStart(2, '0')}:${String(absMin % 60).padStart(2, '0')}`
 }
+
+
+export function fillGaps(data: DailyUsage[], granularity: PeriodGranularity, periodCount: number, tz?: string): DailyUsage[] {
+  const effectiveTz = tz
+  const zeroRow = zeroUsageRow
+
+  const map = new Map(data.map(d => [d.period, d]))
+  const result: DailyUsage[] = []
+
+  const now = new Date()
+
+  if (granularity === 'hour') {
+    // Step back from the current instant by (periodCount-1) hours
+    const startMs = now.getTime() - (periodCount - 1) * 3600_000
+    for (let i = 0; i < periodCount; i++) {
+      const d = new Date(startMs + i * 3600_000)
+      const p = tzDateParts(d, effectiveTz)
+      const key = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')} ${String(p.hour).padStart(2, '0')}:00`
+      result.push(map.get(key) ?? zeroRow(key))
+    }
+  } else if (granularity === '15m') {
+    // Step back from the current quarter hour by (periodCount-1) quarter hours
+    const quarterMs = 900_000
+    const anchor = Math.floor(now.getTime() / quarterMs) * quarterMs
+    const startMs = anchor - (periodCount - 1) * quarterMs
+    for (let i = 0; i < periodCount; i++) {
+      const d = new Date(startMs + i * quarterMs)
+      const p = tzDateParts(d, effectiveTz)
+      const key = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')} ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`
+      result.push(map.get(key) ?? zeroRow(key))
+    }
+  } else {
+    // Step back from the current instant by (periodCount-1) days
+    const startMs = now.getTime() - (periodCount - 1) * 86400_000
+    for (let i = 0; i < periodCount; i++) {
+      const d = new Date(startMs + i * 86400_000)
+      const p = tzDateParts(d, effectiveTz)
+      const key = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`
+      result.push(map.get(key) ?? zeroRow(key))
+    }
+  }
+
+  return result
+}
+
 
 export const PALETTE = [
   '#00b578', // Emerald/Teal

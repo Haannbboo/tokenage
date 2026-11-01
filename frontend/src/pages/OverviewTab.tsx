@@ -1,15 +1,27 @@
+import { useMemo, useState } from 'react'
 import { useCountUp } from '../useCountUp'
 import { TrendChart } from '../charts/TrendChart'
 import { TopUsageChart } from '../charts/TopUsageChart'
 import { ToolCallsChart } from '../charts/ToolCallsChart'
 import { DailyHeatmap } from '../charts/DailyHeatmap'
-import { Sparkline } from '../Sparkline'
 import { CopyButton } from '../components/CopyButton'
-import { t } from '../i18n/index.ts'
+import { StatTile } from '../components/StatTile'
+import { getLang, LANG_LOCALES, t } from '../i18n/index.ts'
+import { useApp } from '../contexts/AppContext'
 import {
   formatCompact, formatCost, formatLatency, formatNumber, formatRate, formatThroughput,
-  value, getAgentDisplayName,
+  value, getAgentDisplayName, cacheHitRate, resolveTimezone, wallClockMs,
 } from '../utils'
+import { describePeriod, periodLabelText } from '../periodLabels'
+import { fillPeriodGaps } from '../periodGaps'
+import { rangeGranularity, rangePeriodCount } from '../dateRange.ts'
+import type { DateRangeOption, PeriodGranularity } from '../types'
+
+const TREND_TITLES: Record<PeriodGranularity, string> = {
+  '15m': '15-Minute Usage Trend',
+  hour: 'Hourly Usage Trend',
+  day: 'Daily Usage Trend',
+}
 
 type OverviewTabProps = {
   theme: any
@@ -18,7 +30,7 @@ type OverviewTabProps = {
   heatmapData: any[]
   dashboardInitialLoading: boolean
   dashboardRefreshing: boolean
-  dateRange: string
+  dateRange: DateRangeOption
   dashboardFilterParams: any
   totals: any
   showFirstRunOnboarding: boolean
@@ -68,6 +80,38 @@ export function OverviewTab({
   const animatedRequests = useCountUp(dashboardInitialLoading ? 0 : totals.requests)
   const animatedCost = useCountUp(dashboardInitialLoading ? 0 : totals.totalCost)
   const animatedThroughput = useCountUp(dashboardInitialLoading ? 0 : totals.avgThroughput)
+  const animatedHitRate = useCountUp(
+    dashboardInitialLoading ? 0 : cacheHitRate(totals.cachedTokens, totals.promptTokens, totals.cacheCreationTokens),
+  )
+  const totalInputTokens = (totals.promptTokens || 0) + (totals.cacheCreationTokens || 0)
+
+  // One cursor for the whole row: hovering a point shows that period in every
+  // tile, so the metrics can be read side by side.
+  const [cursorIdx, setCursorIdx] = useState<number | null>(null)
+
+  // /usage/daily only returns periods that have usage; the missing buckets are
+  // filled in so the sparklines sit on a real time axis.
+  const granularity = rangeGranularity(dateRange)
+  const filledUsage = useMemo(() => fillPeriodGaps(dailyUsage, granularity), [dailyUsage, granularity])
+
+  // The hovered period is a wall-clock label in the display timezone, so "now"
+  // has to be read in that same clock.
+  const { timezone } = useApp()
+  const nowWallMs = wallClockMs(new Date(), resolveTimezone(timezone))
+  const hoveredPeriod = cursorIdx === null ? null : filledUsage[cursorIdx]?.period
+  const hoverLabel = periodLabelText(
+    hoveredPeriod ? describePeriod(hoveredPeriod, granularity, nowWallMs, LANG_LOCALES[getLang()]) : null,
+  )
+
+  const costPoints = filledUsage.map(d => ({ value: value(d.total_cost_usd), period: d.period, active: d.requests > 0 }))
+  const tokenPoints = filledUsage.map(d => ({ value: value(d.total_tokens), period: d.period, active: d.requests > 0 }))
+  const requestPoints = filledUsage.map(d => ({ value: d.requests, period: d.period, active: d.requests > 0 }))
+  const hitRatePoints = filledUsage.map(d => ({
+    value: cacheHitRate(d.cached_tokens, d.prompt_tokens, d.cache_creation_tokens),
+    period: d.period,
+    active: value(d.prompt_tokens) + value(d.cache_creation_tokens) > 0,
+  }))
+  const speedPoints = filledUsage.map(d => ({ value: value(d.avg_throughput), period: d.period, active: d.avg_throughput != null }))
 
   return (
     <>
@@ -329,96 +373,83 @@ export function OverviewTab({
       <div className={`dashboard-refresh-surface ${dashboardRefreshing ? 'is-refreshing' : ''}`}>
       <div className="widgets-grid">
           <>
-        <div className="widget">
-          <div className="widget-body" style={{ flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div className="icon-box icon-green">$</div>
-                <div>
-                  <div className="stat-label">{t('Estimated Cost')}</div>
-                  <div className="stat-value">{formatCost(animatedCost, 2)}</div>
-                </div>
-              </div>
-              <div style={{ width: '100px' }}>
-                <Sparkline data={dailyUsage.map(d => d.requests > 0 ? value(d.total_cost_usd) / d.requests : 0)} color="var(--color-blue)" />
-              </div>
-            </div>
-            <div className="stat-label" style={{ marginTop: '-2px' }}>
-              {t('Avg:')} <span style={{ color: 'var(--color-blue)', fontWeight: 600 }}>{formatCost(totals.avgEffectivePrice, 3)} {t('/ req')}</span>
-            </div>
-            <div className="stat-label" style={{ fontSize: '11px', marginBottom: 0 }}>
-              {t('Avg $/M tokens:')} <span style={{ color: 'var(--color-green)', fontWeight: 600 }}>{formatRate(totals.avgEffectivePricePerMillion)}</span>
-            </div>
-          </div>
-        </div>
+        <StatTile
+          label={t('Estimated Cost')}
+          icon="$"
+          iconClass="icon-green"
+          color="var(--color-blue)"
+          points={costPoints}
+          animatedValue={animatedCost}
+          format={(v) => formatCost(v, 2)}
+          formatHover={(v) => formatCost(v, v < 0.1 ? 4 : 2)}
+          cursorIdx={cursorIdx}
+          hoverLabel={hoverLabel}
+          onHover={setCursorIdx}
+        >
+          {t('Avg $/M tokens:')} <span style={{ color: 'var(--color-green)', fontWeight: 600 }}>{formatRate(totals.avgEffectivePricePerMillion)}</span>
+        </StatTile>
 
-        <div className="widget">
-          <div className="widget-body" style={{ flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div className="icon-box icon-yellow">#</div>
-                <div>
-                  <div className="stat-label">{t('Token Usage')}</div>
-                  <div className="stat-value">{formatCompact(animatedTotalTokens)}</div>
-                </div>
-              </div>
-              <div style={{ width: '100px' }}>
-                {/* cache_creation_tokens is disjoint from prompt_tokens (Anthropic semantics),
-                    so it's added to the denominator for a true hit rate. */}
-                <Sparkline data={dailyUsage.map(d => (value(d.prompt_tokens) + value(d.cache_creation_tokens)) > 0 ? (value(d.cached_tokens) / (value(d.prompt_tokens) + value(d.cache_creation_tokens))) * 100 : 0)} color="var(--color-green)" />
-              </div>
-            </div>
-            <div className="stat-label" style={{ marginBottom: 0 }}>
-              {/* cache_creation_tokens folds into "In" (fresh input, billed
-                  differently from cache-read) so In + Out reconciles with
-                  the Token Usage total above. */}
-              {t('In:')} {formatCompact(totals.promptTokens + totals.cacheCreationTokens)} / {t('Out:')} {formatCompact(totals.completionTokens)}
-            </div>
-            <div className="stat-label" style={{ fontSize: '11px', marginBottom: 0 }}>
-              {t('Cached:')} {formatCompact(totals.cachedTokens)}
-              <span style={{ marginLeft: '6px', color: 'var(--color-green)', fontWeight: 600 }}>
-                ({(totals.promptTokens + totals.cacheCreationTokens) > 0 ? ((value(totals.cachedTokens) / (totals.promptTokens + totals.cacheCreationTokens)) * 100).toFixed(1) : 0}% {t('Hit)')}
-              </span>
-            </div>
-          </div>
-        </div>
+        <StatTile
+          label={t('Token Usage')}
+          icon="#"
+          iconClass="icon-yellow"
+          color="var(--color-yellow)"
+          points={tokenPoints}
+          animatedValue={animatedTotalTokens}
+          format={(v) => formatCompact(v)}
+          cursorIdx={cursorIdx}
+          hoverLabel={hoverLabel}
+          onHover={setCursorIdx}
+        >
+          {/* cache_creation_tokens folds into "In" (fresh input, billed
+              differently from cache-read) so In + Out reconciles with
+              the Token Usage total above. */}
+          {t('In:')} {formatCompact(totalInputTokens)} / {t('Out:')} {formatCompact(totals.completionTokens)}
+        </StatTile>
 
-        <div className="widget">
-          <div className="widget-body" style={{ flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div className="icon-box icon-green">↑</div>
-                <div>
-                  <div className="stat-label">{t('Requests')}</div>
-                  <div className="stat-value">{formatNumber(animatedRequests)}</div>
-                </div>
-              </div>
-              <div style={{ width: '100px' }}>
-                <Sparkline data={dailyUsage.map(d => d.requests)} color="var(--color-pink)" />
-              </div>
-            </div>
-            <div className="stat-label" style={{ marginTop: '-2px' }}>
-              {t('Avg:')} <span style={{ color: 'var(--color-purple)', fontWeight: 600 }}>{formatCompact(totals.avgTokensPerRequest)} {t('tokens/req')}</span>
-            </div>
-          </div>
-        </div>
+        <StatTile
+          label={t('Requests')}
+          icon="↑"
+          iconClass="icon-green"
+          color="var(--color-pink)"
+          points={requestPoints}
+          animatedValue={animatedRequests}
+          format={(v) => formatNumber(v)}
+          cursorIdx={cursorIdx}
+          hoverLabel={hoverLabel}
+          onHover={setCursorIdx}
+        >
+          {t('Avg:')} <span style={{ color: 'var(--color-purple)', fontWeight: 600 }}>{formatCompact(totals.avgTokensPerRequest)} {t('tokens/req')}</span>
+        </StatTile>
 
-        <div className="widget">
-          <div className="widget-body" style={{ flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div className="icon-box icon-purple">🚀</div>
-                <div>
-                  <div className="stat-label">{t('Average Output')}</div>
-                  <div className="stat-value">{formatThroughput(animatedThroughput)}</div>
-                </div>
-              </div>
-              <div style={{ width: '100px' }}>
-                <Sparkline data={dailyUsage.map(d => value(d.avg_throughput))} color="var(--color-purple)" />
-              </div>
-            </div>
-          </div>
-        </div>
+        <StatTile
+          label={t('Cache Hit Rate')}
+          icon="⚡"
+          iconClass="icon-green"
+          color="var(--color-green)"
+          points={hitRatePoints}
+          animatedValue={animatedHitRate}
+          format={(v) => `${v.toFixed(1)}%`}
+          scale="relative"
+          cursorIdx={cursorIdx}
+          hoverLabel={hoverLabel}
+          onHover={setCursorIdx}
+        >
+          {t('Cached:')} {formatCompact(totals.cachedTokens)} {t('of')} {formatCompact(totalInputTokens)} {t('tokens')}
+        </StatTile>
+
+        <StatTile
+          label={t('Avg Speed')}
+          icon="🚀"
+          iconClass="icon-purple"
+          color="var(--color-purple)"
+          points={speedPoints}
+          animatedValue={animatedThroughput}
+          format={(v) => v > 0 ? formatThroughput(v) : '0.0 t/s'}
+          cursorIdx={cursorIdx}
+          hoverLabel={hoverLabel}
+          onHover={setCursorIdx}
+        />
           </>
       </div>
 
@@ -439,9 +470,10 @@ export function OverviewTab({
         <div style={{ flex: '1 1 0', minWidth: 0 }}>
           <TrendChart
             data={dailyUsage}
-            title={`${dateRange === '24h' ? t('Hourly Usage Trend') : t('Daily Usage Trend')}`}
-            granularity={dateRange === '24h' ? 'hour' : 'day'}
-            periodCount={dateRange === '24h' ? 24 : dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : 365}
+            title={t(TREND_TITLES[granularity])}
+            filterParams={dashboardFilterParams}
+            granularity={granularity}
+            periodCount={rangePeriodCount(dateRange)}
             showDots={dateRange !== 'all'}
           />
         </div>

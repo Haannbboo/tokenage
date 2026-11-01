@@ -13,8 +13,9 @@ import { RequestTimeline, type TimelineTool } from '../components/RequestTimelin
 import { t } from '../i18n/index.ts'
 import {
   formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime,
-  value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, resolveTimezone, ToolBadge, getSinceDate, formatModelName, customBound, formatProviderName,
+  value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, resolveTimezone, ToolBadge, formatModelName, formatProviderName,
 } from '../utils'
+import { DATE_RANGE_OPTIONS, getSinceDate } from '../dateRange.ts'
 import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
 import type { DateRangeOption } from '../types'
 
@@ -33,7 +34,7 @@ export function LogsPage() {
     sessionStorage.removeItem('tokenage-logs-filters')
   }, [])
 
-  const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice, dateRange, setDateRange, customSince, setCustomSince, customUntil, setCustomUntil, timezone } = useApp()
+  const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice, dateRange, setDateRange, timezone, refreshTrigger } = useApp()
   const tz = resolveTimezone(timezone)
   const {
     columns,
@@ -63,26 +64,24 @@ export function LogsPage() {
     limit, setLimit, page, setPage, jumpPage, setJumpPage, resetPage,
     logsLoading, expandedRow, setExpandedRow,
     colWidths, resizedColumns, handleResizeStart,
-  } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, deviceFilter: activeDevice, dateRange, customSince, customUntil })
+  } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, deviceFilter: activeDevice, dateRange })
 
   // Sessions data for the session filter dropdown
-  const { sessions } = useSessionSelectorData({ activeSource, dateRange, customSince, customUntil })
+  const { sessions } = useSessionSelectorData({ activeSource, dateRange })
 
   // Distinct tool names for the tool filter dropdown (fetched from API, filtered by time range)
   const [availableTools, setAvailableTools] = useState<string[]>([])
   useEffect(() => {
     const controller = new AbortController()
-    const since = dateRange === 'custom' ? customBound(customSince) : getSinceDate(dateRange)
-    const until = dateRange === 'custom' ? customBound(customUntil) : null
+    const since = getSinceDate(dateRange)
     const url = new URL('/usage/tools', window.location.origin)
     if (since) url.searchParams.set('since', since)
-    if (until) url.searchParams.set('until', until)
     fetch(url.toString(), { signal: controller.signal })
       .then(r => r.ok ? r.json() : [])
       .then(data => { if (!controller.signal.aborted) setAvailableTools(data) })
       .catch((err) => { if (err?.name !== 'AbortError') console.warn('Failed to fetch tools', err) })
     return () => controller.abort()
-  }, [dateRange, customSince, customUntil])
+  }, [dateRange, refreshTrigger])
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
   const [tableWidth, setTableWidth] = useState(0)
@@ -689,34 +688,11 @@ export function LogsPage() {
             value={dateRange}
             onChange={(e) => setDateRange(e.target.value as DateRangeOption)}
           >
-            <option value="24h">{t('Last 24 Hours')}</option>
-            <option value="7d">{t('Last 7 Days')}</option>
-            <option value="30d">{t('Last 30 Days')}</option>
-            <option value="all">{t('All Time')}</option>
-            <option value="custom">{t('Custom Range')}</option>
+            {DATE_RANGE_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>{t(o.label)}</option>
+            ))}
           </select>
         </div>
-
-        {dateRange === 'custom' && (
-          <>
-            <div className="filter-group">
-              <div className="filter-label">{t('Since')}</div>
-              <input
-                type="datetime-local"
-                className="input-plain"
-                value={customSince.split('.')[0]}
-                onChange={(e) => { setCustomSince(new Date(e.target.value).toISOString()); resetPage(); }}
-                />                    </div>
-            <div className="filter-group">
-              <div className="filter-label">{t('Until')}</div>
-              <input
-                type="datetime-local"
-                className="input-plain"
-                value={customUntil.split('.')[0]}
-                onChange={(e) => { setCustomUntil(new Date(e.target.value).toISOString()); resetPage(); }}
-                />                    </div>
-          </>
-        )}
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', alignSelf: 'flex-end' }}>
            <RequestLogColumnsControl
@@ -742,8 +718,6 @@ export function LogsPage() {
               setSessionFilter(null)
               setToolFilter(null)
               setDateRange('24h')
-              setCustomSince('')
-              setCustomUntil('')
               setPage(1)
             }}
            >

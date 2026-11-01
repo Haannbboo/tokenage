@@ -5,6 +5,8 @@ import { useOnboarding } from '../hooks/useOnboarding'
 import { useDashboardAgents } from '../hooks/useDashboardAgents'
 import { ModelSelector } from '../ModelSelector'
 import { DeviceSelect } from '../components/DeviceSelect'
+import { DATE_RANGE_OPTIONS } from '../dateRange.ts'
+import type { DateRangeOption } from '../types'
 import { OverviewTab } from './OverviewTab'
 import { SessionsTab } from './SessionsTab'
 import { t } from '../i18n/index.ts'
@@ -58,13 +60,11 @@ export function DashboardPage({ onNavigateToLogs }: Props) {
             aria-label={t('Date Range')}
             className="input-plain"
             value={dateRange}
-            onChange={(e) => { setDateRange(e.target.value as any) }}
+            onChange={(e) => { setDateRange(e.target.value as DateRangeOption) }}
           >
-            <option value="24h">{t('Last 24 Hours')}</option>
-            <option value="7d">{t('Last 7 Days')}</option>
-            <option value="30d">{t('Last 30 Days')}</option>
-            <option value="all">{t('All Time')}</option>
-            <option value="custom">{t('Custom Range')}</option>
+            {DATE_RANGE_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>{t(o.label)}</option>
+            ))}
           </select>
           <ModelSelector
             activeFilter={activeFilter}

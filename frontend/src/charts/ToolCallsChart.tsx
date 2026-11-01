@@ -22,7 +22,6 @@ export function ToolCallsChart({
     client_source?: string | null
     device_id?: string | null
     since?: string | null
-    until?: string | null
   }
 }) {
   const [rows, setRows] = useState<ToolCallRow[]>([])
@@ -38,7 +37,6 @@ export function ToolCallsChart({
         if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source)
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
-        if (filterParams.until) url.searchParams.set('until', filterParams.until)
 
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (res.ok) {

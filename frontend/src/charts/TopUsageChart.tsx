@@ -61,7 +61,6 @@ export function TopUsageChart({
     client_source?: string | null
     device_id?: string | null
     since?: string | null
-    until?: string | null
   }
 }) {
   const [dimension, setDimension] = useState<Dimension>('model')
@@ -82,7 +81,6 @@ export function TopUsageChart({
         if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source)
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
-        if (filterParams.until) url.searchParams.set('until', filterParams.until)
 
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (res.ok) {
@@ -109,7 +107,6 @@ export function TopUsageChart({
         if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source)
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
-        if (filterParams.until) url.searchParams.set('until', filterParams.until)
         url.searchParams.set('tz_offset', tzOffset)
 
         const res = await fetch(url.toString(), { signal: controller.signal })

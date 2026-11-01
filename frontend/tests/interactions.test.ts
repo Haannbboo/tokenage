@@ -47,17 +47,21 @@ describe('dashboard interactions', () => {
     render(createElement(App))
     const refresh = await screen.findByRole('button', { name: /refresh/i }) as HTMLButtonElement
     await waitFor(() => expect(refresh.disabled).toBe(false))
-    const content = await screen.findByRole('button', { name: /cache hit rate/i })
+    // Anchor on the content structure, not on a label: the copy can change.
+    await waitFor(() => expect(document.querySelector('.widgets-grid')).toBeTruthy())
+    const content = document.querySelector('.widgets-grid')?.firstElementChild
     let resolve!: (value: Response) => void
     api.holdSummary(new Promise(r => { resolve = r }))
     const previous = countCalls(api, '/usage/summary')
+    const previousModels = countCalls(api, '/usage/daily-by-dimension')
     fireEvent.click(refresh)
     await waitFor(() => expect(refresh.disabled).toBe(true))
     expect(countCalls(api, '/usage/summary')).toBe(previous + 1)
-    expect(screen.getByRole('button', { name: /cache hit rate/i })).toBe(content)
+    await waitFor(() => expect(countCalls(api, '/usage/daily-by-dimension')).toBe(previousModels + 1))
+    expect(document.querySelector('.widgets-grid')?.firstElementChild).toBe(content)
     await act(async () => { resolve(response([{ provider: 'test-provider', model: 'test-model', requests: 7 }])) })
     await waitFor(() => expect(refresh.disabled).toBe(false))
-    expect(screen.getByRole('button', { name: /cache hit rate/i })).toBe(content)
+    expect(document.querySelector('.widgets-grid')?.firstElementChild).toBe(content)
     fireEvent.click(screen.getByRole('button', { name: /all models/i }))
     expect(screen.getByText('test-provider')).toBeTruthy()
   })

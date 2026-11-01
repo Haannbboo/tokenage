@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildSessionInsights, customBound, fillGaps, formatProviderName, getSinceDate, netThroughput, resolveTimezone } from '../src/utils'
+import { buildSessionInsights, fillGaps, formatProviderName, netThroughput, resolveTimezone } from '../src/utils'
+import { getSinceDate } from '../src/dateRange'
 import { overrideBody, pricingSourceOrder } from '../src/hooks/usePricingData'
 import { buildTimelineData } from '../src/components/RequestTimeline'
 import type { DailyUsage, SessionSummary } from '../src/types'
 
-vi.mock('../src/i18n/index.ts', () => ({ t: (value: string) => value, useLang: () => 'en' }))
+vi.mock('../src/i18n/index.ts', () => ({
+  t: (value: string) => value,
+  useLang: () => 'en',
+  getLang: () => 'en',
+  LANG_LOCALES: { en: 'en-US', zh: 'zh-CN' },
+}))
 
 afterEach(() => vi.useRealTimers())
 
@@ -14,10 +20,8 @@ describe('date ranges and usage gaps', () => {
     expect(Date.parse(getSinceDate('24h')!)).toBe(Date.parse('2025-04-14T12:00:00Z'))
     expect(Date.parse(getSinceDate('7d')!)).toBe(Date.parse('2025-04-08T12:00:00Z'))
     expect(Date.parse(getSinceDate('30d')!)).toBe(Date.parse('2025-03-16T12:00:00Z'))
+    expect(Date.parse(getSinceDate('5h')!)).toBe(Date.parse('2025-04-15T07:00:00Z'))
     expect(getSinceDate('all')).toBeNull()
-    expect(getSinceDate('custom')).toBeNull()
-    expect(Date.parse(customBound('2025-04-15T12:30'))).toBe(new Date(2025, 3, 15, 12, 30).getTime())
-    expect(customBound('')).toBe('')
   })
   it('preserves existing rows and fills missing daily and hourly buckets in the requested timezone', () => {
     vi.useFakeTimers().setSystemTime(new Date('2025-01-02T01:30:00Z'))

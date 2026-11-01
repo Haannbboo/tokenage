@@ -31,9 +31,7 @@ export const DEFAULT_COL_WIDTHS: Record<RequestLogColumnId, number> = {
 }
 
 export const LOGS_PAGE_SIZE = 100
-const REFRESH_PAGE_LIMIT = 5
 const cursorFor = (row: UsageRow) => `${row.ts}:${row.id}`
-const newerThan = (row: UsageRow, head: UsageRow) => row.ts > head.ts || (row.ts === head.ts && row.id > head.id)
 
 export function useLogsData(opts: {
   activeFilter: ActiveFilter
@@ -147,52 +145,25 @@ export function useLogsData(opts: {
     requestRef.current?.abort()
     const controller = new AbortController()
     requestRef.current = controller
-    const reset = filterRef.current !== query
     filterRef.current = query
-    const head = reset ? undefined : rowsRef.current[0]
     busyRef.current = true
     async function refresh() {
       // Yield before publishing loading state; cleanup can cancel a superseded
       // refresh before any of its state updates become visible.
       await Promise.resolve()
       if (controller.signal.aborted) return
-      if (reset) {
-        setUsageRows([])
-        setHasMore(true)
-        setExpandedRow(null)
-        setScrollReset(value => value + 1)
-      }
+      setUsageRows([])
+      setHasMore(true)
+      setExpandedRow(null)
+      setScrollReset(value => value + 1)
       setLogsLoading(true)
       setLoadMoreFailed(false)
       setError(null)
       try {
-        let before: string | undefined
-        const newRows: UsageRow[] = []
-        for (let page = 0; page < REFRESH_PAGE_LIMIT; page++) {
-          const data = await fetchPage(controller, before)
-          if (controller.signal.aborted) return
-          if (!head) {
-            setUsageRows(data)
-            setHasMore(data.length === LOGS_PAGE_SIZE)
-            return
-          }
-          const newer = data.filter(row => newerThan(row, head))
-          newRows.push(...newer)
-          if (newer.length < data.length || data.length < LOGS_PAGE_SIZE) {
-            // Keep existing rows (including in-place cost patches) and the
-            // history cursor; late client timestamps appear after a reset.
-            setUsageRows(rows => {
-              const ids = new Set(rows.map(row => row.id))
-              return [...newRows.filter(row => !ids.has(row.id)), ...rows]
-            })
-            return
-          }
-          before = cursorFor(data[data.length - 1])
-        }
-        setUsageRows(newRows)
-        setHasMore(true)
-        setExpandedRow(null)
-        setScrollReset(value => value + 1)
+        const data = await fetchPage(controller)
+        if (controller.signal.aborted) return
+        setUsageRows(data)
+        setHasMore(data.length === LOGS_PAGE_SIZE)
       } catch (err) {
         if (!controller.signal.aborted) setError(err instanceof Error ? err.message : t('Unknown error'))
       } finally {

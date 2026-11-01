@@ -155,3 +155,24 @@ def test_usage_cursor_index_migration_is_idempotent(fresh_db):
     )
     assert index["column_names"] == ["user_id", "ts", "id"]
     assert fresh_db.schema_migrations_module.migrate_database(fresh_db.db_path) == []
+
+
+def test_postgres_cursor_index_repairs_invalid_index():
+    from unittest.mock import MagicMock
+
+    from src.schema_migrations import _ensure_postgres_usage_cursor_index
+
+    engine = MagicMock()
+    connection = engine.connect.return_value.execution_options.return_value.__enter__.return_value
+    connection.execute.return_value.scalar.return_value = False
+    assert _ensure_postgres_usage_cursor_index(engine)
+    engine.connect.return_value.execution_options.assert_called_once_with(
+        isolation_level="AUTOCOMMIT"
+    )
+    statements = [str(call.args[0]) for call in connection.execute.call_args_list]
+    assert "i.indisvalid" in statements[0]
+    assert statements[1] == "DROP INDEX CONCURRENTLY IF EXISTS ix_usage_user_ts_id"
+    assert statements[2] == (
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_usage_user_ts_id "
+        "ON usage (user_id, ts, id)"
+    )

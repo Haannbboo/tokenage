@@ -189,56 +189,19 @@ describe('Request Logs data', () => {
     expect(usageCalls(api.fetchMock).every(url => !url.searchParams.has('since'))).toBe(true)
   })
 
-  it('refresh prepends a 250-row gap in three requests and preserves loaded rows and cost patches', async () => {
-    const history = rows(1000, 300)
-    const api = mockHistory(history)
-    const { result, rerender } = renderHook(() => useLogsData(opts))
-    await waitFor(() => expect(result.current.usageRows.length).toBe(100))
-    await act(async () => { await result.current.loadMore() })
-    act(() => result.current.setUsageRows(data => data.map(r => r.id === row(999).id ? { ...r, total_cost_usd: 12 } : r)))
-    const reset = result.current.scrollReset
-    api.setHistory([...rows(1250, 250), ...history])
-    const count = usageCalls(api.fetchMock).length
-    app.refreshTrigger++
-    rerender()
-    await waitFor(() => expect(result.current.usageRows.length).toBe(450))
-    expect(usageCalls(api.fetchMock).length - count).toBe(3)
-    expect(result.current.usageRows[0].id).toBe(row(1250).id)
-    expect(result.current.usageRows.find(r => r.id === row(999).id)?.total_cost_usd).toBe(12)
-    expect(result.current.scrollReset).toBe(reset)
-    await act(async () => { await result.current.loadMore() })
-    expect(result.current.usageRows.length).toBe(550)
-    expect(usageCalls(api.fetchMock).at(-1)!.searchParams.get('before')).toBe(`${row(801).ts}:${row(801).id}`)
-  })
-
-  it('replaces and resets to the top after five entirely new pages', async () => {
-    const history = rows(1000, 300)
-    const api = mockHistory(history)
-    const { result, rerender } = renderHook(() => useLogsData(opts))
-    await waitFor(() => expect(result.current.usageRows.length).toBe(100))
-    const reset = result.current.scrollReset
-    api.setHistory([...rows(1600, 600), ...history])
-    const count = usageCalls(api.fetchMock).length
-    app.refreshTrigger++
-    rerender()
-    await waitFor(() => expect(result.current.usageRows.length).toBe(500))
-    expect(usageCalls(api.fetchMock).length - count).toBe(5)
-    expect(result.current.usageRows).toEqual(rows(1600, 500))
-    expect(result.current.scrollReset).toBeGreaterThan(reset)
-    expect(result.current.hasMore).toBe(true)
-  })
-
-  it('leaves existing rows alone when a refresh has no new head, including late timestamps', async () => {
+  it('refresh reloads from the head and includes rows arriving behind it', async () => {
     const history = rows(1000, 100)
     const api = mockHistory(history)
     const { result, rerender } = renderHook(() => useLogsData(opts))
     await waitFor(() => expect(result.current.usageRows.length).toBe(100))
-    api.setHistory([history[0], { ...row(999), id: 'late' }, ...history.slice(1)])
+    const reset = result.current.scrollReset
+    const late = { ...row(999), id: 'late' }
+    api.setHistory([history[0], late, ...history.slice(1)])
     app.refreshTrigger++
     rerender()
-    await waitFor(() => expect(usageCalls(api.fetchMock).length).toBe(2))
-    await waitFor(() => expect(result.current.logsLoading).toBe(false))
-    expect(result.current.usageRows).toEqual(history)
+    await waitFor(() => expect(result.current.usageRows).toContainEqual(late))
+    expect(result.current.scrollReset).toBeGreaterThan(reset)
+    expect(usageCalls(api.fetchMock).at(-1)!.searchParams.has('before')).toBe(false)
   })
 
   it('deduplicates simultaneous load requests and permits retry after failure', async () => {
@@ -461,37 +424,14 @@ describe('Request Logs table', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
   })
 
-  it.each([0, 124, 300, 339])('preserves page position on refresh when scrollY=%i is before the first row', async (position) => {
-    const history = rows(1000, 300)
-    const api = mockHistory(history)
+  it('resets the scroll position on refresh', async () => {
+    mockHistory()
     const view = render(createElement(LogsPage))
     await waitFor(() => expect(intersections.size).toBe(1))
-    // The first row starts at table top 300 + header height 40.
-    scrollWindowTo(position)
-    const scrollTo = vi.spyOn(window, 'scrollTo')
-    api.setHistory([...rows(1010, 10).map(r => ({ ...r, model: 'new-model' })), ...history])
+    scrollWindowTo(1040)
     app.refreshTrigger++
     view.rerender(createElement(LogsPage))
-    await waitFor(() => expect(document.querySelector('tbody[data-index="0"]')!.textContent).toContain('new-model'))
-    expect(window.scrollY).toBe(position)
-    expect(scrollTo).not.toHaveBeenCalled()
+    await waitFor(() => expect(window.scrollY).toBe(124))
   })
 
-  it.each([340, 1040])('keeps the visible row anchored at scrollY=%i during a refresh prepend and resets on filter change', async (position) => {
-    const history = rows(1000, 300)
-    const api = mockHistory(history)
-    const view = render(createElement(LogsPage))
-    await waitFor(() => expect(intersections.size).toBe(1))
-    scrollWindowTo(position)
-    api.setHistory([...rows(1010, 10), ...history])
-    app.refreshTrigger++
-    view.rerender(createElement(LogsPage))
-    await waitFor(() => expect(window.scrollY).toBe(position + 520))
-    app.activeSource = 'codex'
-    view.rerender(createElement(LogsPage))
-    // The table (document top 300) lands right under the sticky navbar and
-    // filter bar (12 + 56 + 8 + 100).
-    await waitFor(() => expect(window.scrollY).toBe(124))
-    expect(usageCalls(api.fetchMock).at(-1)!.searchParams.has('before')).toBe(false)
-  })
 })

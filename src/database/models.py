@@ -145,6 +145,7 @@ class UserModelPrice(Base):
 
 class Usage(Base):
     __tablename__ = "usage"
+    __table_args__ = (Index("ix_usage_user_ts_id", "user_id", "ts", "id"),)
 
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: str(uuid4())

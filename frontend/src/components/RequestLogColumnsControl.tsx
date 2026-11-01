@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from 'react'
+import { useState } from 'react'
 import type { RequestLogColumnId } from '../hooks/useRequestLogColumns'
 import { t } from '../i18n/index.ts'
 
@@ -10,27 +10,21 @@ type RequestLogColumn = {
 type Props = {
   columns: RequestLogColumn[]
   selectedColumnIds: RequestLogColumnId[]
-  setSelectedColumnIds: Dispatch<SetStateAction<RequestLogColumnId[]>>
+  displayedColumnIds: RequestLogColumnId[]
+  setColumnVisible: (columnId: RequestLogColumnId, visible: boolean) => void
   resetColumns: () => void
+  showAllColumns: () => void
 }
 
 export function RequestLogColumnsControl({
   columns,
   selectedColumnIds,
-  setSelectedColumnIds,
+  displayedColumnIds,
+  setColumnVisible,
   resetColumns,
+  showAllColumns,
 }: Props) {
   const [isOpen, setIsOpen] = useState(false)
-
-  const toggleColumn = (columnId: RequestLogColumnId) => {
-    setSelectedColumnIds((current) => {
-      if (current.includes(columnId)) {
-        return current.filter((id) => id !== columnId)
-      }
-
-      return [...current, columnId]
-    })
-  }
 
   return (
     <div className="request-log-columns">
@@ -50,10 +44,13 @@ export function RequestLogColumnsControl({
               <label key={column.id} className="request-log-columns-option">
                 <input
                   type="checkbox"
-                  checked={selectedColumnIds.includes(column.id)}
-                  onChange={() => toggleColumn(column.id)}
+                  checked={displayedColumnIds.includes(column.id)}
+                  onChange={(event) => setColumnVisible(column.id, event.target.checked)}
                 />
                 <span>{t(column.label)}</span>
+                {selectedColumnIds.includes(column.id) && !displayedColumnIds.includes(column.id) && (
+                  <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{t('hidden: narrow window')}</span>
+                )}
               </label>
             ))}
           </div>
@@ -69,7 +66,7 @@ export function RequestLogColumnsControl({
             <button
               type="button"
               className="btn-ghost request-log-columns-action"
-              onClick={() => setSelectedColumnIds(columns.map((column) => column.id))}
+              onClick={showAllColumns}
             >
               {t('All columns')}
             </button>

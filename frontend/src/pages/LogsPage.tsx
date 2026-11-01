@@ -1,4 +1,5 @@
-import { Fragment, useState, useEffect, useRef, useMemo, type CSSProperties } from 'react'
+import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type CSSProperties } from 'react'
+import { useWindowVirtualizer } from '@tanstack/react-virtual'
 import { useApp } from '../contexts/AppContext'
 import { useDashboardData } from '../hooks/useDashboardData'
 import { useLogsData } from '../hooks/useLogsData'
@@ -15,9 +16,7 @@ import {
   formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime,
   value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, resolveTimezone, ToolBadge, formatModelName, formatProviderName,
 } from '../utils'
-import { DATE_RANGE_OPTIONS, getSinceDate } from '../dateRange.ts'
 import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
-import type { DateRangeOption } from '../types'
 
 export function LogsPage() {
   // Read session filter from sessionStorage (set by Dashboard/Sessions tab navigation)
@@ -34,20 +33,22 @@ export function LogsPage() {
     sessionStorage.removeItem('tokenage-logs-filters')
   }, [])
 
-  const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice, dateRange, setDateRange, timezone, refreshTrigger } = useApp()
+  const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice, timezone, refreshTrigger } = useApp()
   const tz = resolveTimezone(timezone)
   const {
     columns,
     visibleColumns,
     visibleColumnIds: selectedColumnIds,
-    setVisibleColumnIds: setSelectedColumnIds,
+    pinnedColumnIds,
+    setColumnVisible,
     resetColumns,
+    showAllColumns,
   } = useRequestLogColumns()
 
-  // Dashboard data for summary/sources/providerColors
+  // Filter options cover the full log history, independent of the dashboard range.
   const {
     summary, sources, providerColors,
-  } = useDashboardData({ includeDaily: false, includeHeatmap: false, includeCount: false })
+  } = useDashboardData({ dateRange: 'all', includeDaily: false, includeHeatmap: false, includeCount: false })
 
   // Session filter state (local to logs view)
   const [sessionFilter, setSessionFilter] = useState<string | null>(storedSessionFilter)
@@ -60,31 +61,106 @@ export function LogsPage() {
 
   // Logs data hook
   const {
-    usageRows, setUsageRows, totalLogs, totalPages,
-    limit, setLimit, page, setPage, jumpPage, setJumpPage, resetPage,
+    usageRows, setUsageRows, hasMore, loadMore, loadMoreFailed, initialLoadFailed, scrollReset,
     logsLoading, expandedRow, setExpandedRow,
-    colWidths, resizedColumns, handleResizeStart,
-  } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, deviceFilter: activeDevice, dateRange })
+    colWidths, isResizing, handleResizeStart,
+  } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, deviceFilter: activeDevice })
 
   // Sessions data for the session filter dropdown
-  const { sessions } = useSessionSelectorData({ activeSource, dateRange })
+  const { sessions } = useSessionSelectorData({ activeSource, dateRange: 'all' })
 
-  // Distinct tool names for the tool filter dropdown (fetched from API, filtered by time range)
+  // Distinct tool names across the full log history.
   const [availableTools, setAvailableTools] = useState<string[]>([])
   useEffect(() => {
     const controller = new AbortController()
-    const since = getSinceDate(dateRange)
     const url = new URL('/usage/tools', window.location.origin)
-    if (since) url.searchParams.set('since', since)
     fetch(url.toString(), { signal: controller.signal })
       .then(r => r.ok ? r.json() : [])
       .then(data => { if (!controller.signal.aborted) setAvailableTools(data) })
       .catch((err) => { if (err?.name !== 'AbortError') console.warn('Failed to fetch tools', err) })
     return () => controller.abort()
-  }, [dateRange, refreshTrigger])
+  }, [refreshTrigger])
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
+  const tableRef = useRef<HTMLTableElement>(null)
+  const filterBarRef = useRef<HTMLDivElement>(null)
   const [tableWidth, setTableWidth] = useState(0)
+  // Document offset of the table: the window scrolls, so the virtualizer
+  // needs to know where the list starts inside the document.
+  const [tableTop, setTableTop] = useState(0)
+  const [tableHeaderHeight, setTableHeaderHeight] = useState(0)
+  const [filterHeight, setFilterHeight] = useState(0)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const rowVirtualizer = useWindowVirtualizer({
+    count: usageRows.length,
+    estimateSize: () => 52,
+    getItemKey: useCallback((index: number) => usageRows[index].id, [usageRows]),
+    overscan: 8,
+    paddingStart: tableHeaderHeight,
+    scrollMargin: tableTop,
+  })
+  const virtualRows = rowVirtualizer.getVirtualItems()
+  const anchorRef = useRef<{ id: string; offset: number } | null>(null)
+  const previousList = useRef({ head: '', scrollReset: -1 })
+  const rememberAnchor = useCallback(() => {
+    const scrollY = window.scrollY
+    const item = rowVirtualizer.getVirtualItemForOffset(scrollY)
+    // Before the list (including its header), the virtualizer still returns row 0.
+    // Preserve the page position there so a prepend leaves new requests in view.
+    anchorRef.current = item && scrollY >= item.start ? { id: String(item.key), offset: item.start - scrollY } : null
+  }, [rowVirtualizer])
+  // Scroll the table back under the sticky filter bar after a filter change.
+  const scrollTableIntoView = useCallback(() => {
+    const table = tableRef.current
+    if (!table) return
+    const styles = getComputedStyle(document.documentElement)
+    const size = (name: string) => parseFloat(styles.getPropertyValue(name)) || 0
+    const navBottom = size('--navbar-top') + size('--navbar-height')
+    const top = table.getBoundingClientRect().top + window.scrollY
+    window.scrollTo({ top: Math.max(0, top - navBottom - filterHeight - size('--sticky-gap')) })
+  }, [filterHeight])
+  useLayoutEffect(() => {
+    const table = tableRef.current
+    if (!table) return
+    const top = table.getBoundingClientRect().top + window.scrollY
+    setTableTop(prev => (Math.abs(prev - top) < 1 ? prev : top))
+    setTableHeaderHeight(table.tHead?.offsetHeight ?? 0)
+  })
+  useLayoutEffect(() => {
+    const head = usageRows[0]?.id ?? ''
+    if (previousList.current.scrollReset !== scrollReset) {
+      scrollTableIntoView()
+    } else if (previousList.current.head !== head && anchorRef.current) {
+      const anchor = anchorRef.current
+      const index = usageRows.findIndex(row => row.id === anchor.id)
+      const offset = index < 0 ? undefined : rowVirtualizer.getOffsetForIndex(index, 'start')
+      if (offset) rowVirtualizer.scrollToOffset(offset[0] - anchor.offset)
+    }
+    previousList.current = { head, scrollReset }
+    rememberAnchor()
+  })
+  useEffect(() => {
+    const filter = filterBarRef.current
+    if (!filter) return
+    const update = () => setFilterHeight(prev => (prev === filter.offsetHeight ? prev : filter.offsetHeight))
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(filter)
+    return () => observer.disconnect()
+  }, [])
+  useEffect(() => {
+    window.addEventListener('scroll', rememberAnchor, { passive: true })
+    return () => window.removeEventListener('scroll', rememberAnchor)
+  }, [rememberAnchor])
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel || !hasMore || logsLoading || loadMoreFailed) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) void loadMore()
+    }, { rootMargin: '300px' })
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMore, logsLoading, loadMore, loadMoreFailed])
 
   // Tool calls for expanded row
   const [expandedToolCalls, setExpandedToolCalls] = useState<TimelineTool[] | null>(null)
@@ -148,6 +224,9 @@ export function LogsPage() {
 
   const effectiveVisibleColumns = useMemo(() => {
     if (tableWidth === 0) return visibleColumns
+    // Dropping a column mid-drag moves the handle away from the cursor, so
+    // keep the set stable while a column is being resized.
+    if (isResizing) return visibleColumns
 
     const hidePriority: RequestLogColumnId[] = [
       'speed', 'session', 'device', 'source', 'cost', 'status',
@@ -161,7 +240,7 @@ export function LogsPage() {
     const toRemove = new Set<RequestLogColumnId>()
     let remaining = totalWidth
     for (const col of hidePriority) {
-      if (!visibleIds.includes(col)) continue
+      if (!visibleIds.includes(col) || pinnedColumnIds.includes(col)) continue
       if (toRemove.size >= visibleIds.length - 1) break
       toRemove.add(col)
       remaining -= colWidths[col] ?? 100
@@ -169,41 +248,11 @@ export function LogsPage() {
     }
 
     return visibleColumns.filter(c => !toRemove.has(c.id))
-  }, [visibleColumns, colWidths, tableWidth])
+  }, [visibleColumns, pinnedColumnIds, colWidths, tableWidth, isResizing])
 
-  const getHeaderStyle = (columnId: RequestLogColumnId): CSSProperties => {
-    if (resizedColumns.has(columnId)) {
-      return { width: colWidths[columnId], position: 'relative' }
-    }
-    switch (columnId) {
-      case 'time':
-        return { width: colWidths.time, position: 'relative' }
-      case 'model':
-        return { width: colWidths.model, position: 'relative' }
-      case 'provider':
-        return { width: colWidths.provider, position: 'relative' }
-      case 'source':
-        return { width: colWidths.source, position: 'relative' }
-      case 'device':
-        return { width: colWidths.device, position: 'relative' }
-      case 'session':
-        return { width: colWidths.session, position: 'relative' }
-      case 'input':
-        return { minWidth: colWidths.input, position: 'relative' }
-      case 'output':
-        return { minWidth: colWidths.output, position: 'relative' }
-      case 'cost':
-        return { minWidth: colWidths.cost, position: 'relative' }
-      case 'speed':
-        return { position: 'relative' }
-      case 'status':
-        return { width: colWidths.status, position: 'relative' }
-      case 'tool':
-        return { width: '12%', position: 'relative' }
-      default:
-        return { position: 'relative' }
-    }
-  }
+  const getHeaderStyle = (columnId: RequestLogColumnId): CSSProperties => ({
+    width: colWidths[columnId],
+  })
 
   const renderLoadingCell = (columnId: RequestLogColumnId) => {
     switch (columnId) {
@@ -331,7 +380,7 @@ export function LogsPage() {
                     className={`request-log-session-filter${hoveredSession === sessionId ? ' session-hover-active' : ''}`}
                     title={sessionId}
                     aria-label={`${t('Filter logs by session')}: ${sessionId}`}
-                    onClick={(e) => { e.stopPropagation(); setSessionFilter(sessionId); resetPage() }}
+                    onClick={(e) => { e.stopPropagation(); setSessionFilter(sessionId) }}
                   >
                     {shortSessionId(sessionId)}
                   </button>
@@ -626,15 +675,15 @@ export function LogsPage() {
   }
 
   return (
-    <div className="logs-page">
-      <div className="filter-bar">
+    <div className="logs-page" style={{ '--logs-filter-height': `${filterHeight}px` } as CSSProperties}>
+      <div className="filter-bar" ref={filterBarRef}>
         <div className="filter-group">
           <div className="filter-label">{t('Model')}</div>
           <ModelSelector
             activeFilter={activeFilter}
             summary={summary}
             providerColors={providerColors}
-            onChange={(f) => { setActiveFilter(f); resetPage(); }}
+            onChange={(f) => { setActiveFilter(f); }}
           />
           </div>
 
@@ -643,7 +692,7 @@ export function LogsPage() {
           <select
             className="input-plain"
             value={activeSource || ''}
-            onChange={(e) => { setActiveSource(e.target.value || null); resetPage(); }}
+            onChange={(e) => { setActiveSource(e.target.value || null); }}
           >
             <option value="">{t('All Sources')}</option>
             {sources.map(source => (
@@ -657,14 +706,14 @@ export function LogsPage() {
           <SessionSelector
             sessions={sessions}
             sessionFilter={sessionFilter}
-            onChange={(id) => { setSessionFilter(id); resetPage(); }}
+            onChange={(id) => { setSessionFilter(id); }}
             sourceColors={providerColors}
           />
         </div>
 
         <div className="filter-group">
           <div className="filter-label">{t('Device')}</div>
-          <DeviceSelect value={activeDevice} onChange={(id) => { setActiveDevice(id); resetPage(); }} />
+          <DeviceSelect value={activeDevice} onChange={(id) => { setActiveDevice(id); }} />
         </div>
 
         <div className="filter-group">
@@ -672,7 +721,7 @@ export function LogsPage() {
           <select
             className="input-plain"
             value={toolFilter || ''}
-            onChange={(e) => { setToolFilter(e.target.value || null); resetPage(); }}
+            onChange={(e) => { setToolFilter(e.target.value || null); }}
           >
             <option value="">{t('All Tools')}</option>
             {availableTools.map(name => (
@@ -681,25 +730,14 @@ export function LogsPage() {
           </select>
         </div>
 
-        <div className="filter-group">
-          <div className="filter-label">{t('Date Range')}</div>
-          <select
-            className="input-plain"
-            value={dateRange}
-            onChange={(e) => setDateRange(e.target.value as DateRangeOption)}
-          >
-            {DATE_RANGE_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{t(o.label)}</option>
-            ))}
-          </select>
-        </div>
-
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', alignSelf: 'flex-end' }}>
            <RequestLogColumnsControl
             columns={columns}
             selectedColumnIds={selectedColumnIds}
-            setSelectedColumnIds={setSelectedColumnIds}
+            displayedColumnIds={effectiveVisibleColumns.map(column => column.id)}
+            setColumnVisible={setColumnVisible}
             resetColumns={resetColumns}
+            showAllColumns={showAllColumns}
            />
            <button
             className="btn-ghost btn-refresh"
@@ -717,8 +755,6 @@ export function LogsPage() {
               setActiveDevice(null)
               setSessionFilter(null)
               setToolFilter(null)
-              setDateRange('24h')
-              setPage(1)
             }}
            >
              {t('Reset')}
@@ -733,7 +769,7 @@ export function LogsPage() {
             <button
               className="btn-ghost"
               aria-label={t('Clear session filter')}
-              onClick={() => { setSessionFilter(null); resetPage() }}
+              onClick={() => { setSessionFilter(null) }}
               style={{ padding: '2px 6px', fontSize: '11px' }}
             >
               &times;
@@ -743,8 +779,13 @@ export function LogsPage() {
       )}
 
       <div className="panel">
-          <div ref={tableContainerRef} className="panel-body" style={{ padding: 0 }}>
-            <table className="table" data-request-log-column-count={effectiveVisibleColumns.length}>
+          <div ref={tableContainerRef} className="panel-body" style={{ padding: 0, overflowAnchor: 'none' }}>
+            <table
+              ref={tableRef}
+              className="table"
+              style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0 }}
+              data-request-log-column-count={effectiveVisibleColumns.length}
+            >
             <thead>
               <tr>
                 {effectiveVisibleColumns.map((column) => (
@@ -759,7 +800,7 @@ export function LogsPage() {
               </tr>
             </thead>
             <tbody>
-              {logsLoading ? (
+              {logsLoading && usageRows.length === 0 ? (
                 Array.from({ length: 5 }, (_, i) => (
                   <tr key={`skeleton-${i}`}>
                     {effectiveVisibleColumns.map((column) => (
@@ -767,8 +808,15 @@ export function LogsPage() {
                     ))}
                   </tr>
                 ))
-              ) : usageRows.map(row => (
-                <Fragment key={row.id}>
+              ) : null}
+              {virtualRows.length > 0 && (
+                <tr aria-hidden="true"><td colSpan={effectiveVisibleColumns.length} style={{ height: Math.max(0, virtualRows[0].start - tableTop - tableHeaderHeight), padding: 0, border: 0 }} /></tr>
+              )}
+            </tbody>
+              {virtualRows.map(virtualRow => {
+                const row = usageRows[virtualRow.index]
+                return (
+                <tbody key={row.id} data-index={virtualRow.index} ref={rowVirtualizer.measureElement}>
                   <tr
                     className={`expandable-row${expandedRow === row.id ? ' expanded' : ''}`}
                     onMouseEnter={() => setHoveredSession(row.session_id ?? null)}
@@ -864,143 +912,30 @@ export function LogsPage() {
                       </td>
                     </tr>
                   )}
-                </Fragment>
-              ))}
+                </tbody>
+                )
+              })}
+            <tbody>
+              {/* Item offsets include scrollMargin; total size is table-relative. */}
+              {virtualRows.length > 0 && (
+                <tr aria-hidden="true"><td colSpan={effectiveVisibleColumns.length} style={{ height: Math.max(0, rowVirtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1].end - tableTop)), padding: 0, border: 0 }} /></tr>
+              )}
               {usageRows.length === 0 && !logsLoading && (
                 <tr>
                   <td colSpan={effectiveVisibleColumns.length} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-                    {t('No requests found for the selected filters.')}
+                    {initialLoadFailed ? (
+                      <>{t('Failed to fetch log data')} <button className="btn-ghost" onClick={requestUsageRefresh}>{t('Retry')}</button></>
+                    ) : t('No requests found for the selected filters.')}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
-        </div>
-
-        <div style={{
-          padding: '16px 24px',
-          borderTop: '1px solid var(--border-color)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          background: 'var(--surface-hover)'
-        }}>
-          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            {t('Showing')} <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{Math.min(totalLogs, (page - 1) * limit + 1)}-{Math.min(totalLogs, page * limit)}</span> {t('of')} <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{totalLogs}</span> {t('logs')}
-          </div>
-
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <button
-              disabled={page === 1}
-              onClick={() => setPage(p => Math.max(1, p - 1))}
-              className="pagination-btn"
-              style={{
-                cursor: page === 1 ? 'not-allowed' : 'pointer',
-                opacity: page === 1 ? 0.5 : 1
-              }}
-            >
-              &#x25c0; {t('Prev')}
-            </button>
-
-            <div style={{ display: 'flex', gap: '4px' }}>
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                let pageNum = i + 1;
-                if (totalPages > 5 && page > 3) {
-                  pageNum = page - 3 + i + 1;
-                  if (pageNum > totalPages) pageNum = totalPages - (4 - i);
-                }
-                return (
-                  <button
-                    key={pageNum}
-                    onClick={() => setPage(pageNum)}
-                    style={{
-                      width: '32px',
-                      height: '32px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      fontWeight: 700,
-                      background: page === pageNum ? 'var(--color-blue)' : 'var(--input-bg)',
-                      color: page === pageNum ? '#fff' : 'var(--text-primary)',
-                      border: '1px solid var(--border-color)',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {pageNum}
-                  </button>
-                );
-              })}
-            </div>
-
-            <button
-              disabled={page === totalPages || totalPages === 0}
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-              className="pagination-btn"
-              style={{
-                cursor: (page === totalPages || totalPages === 0) ? 'not-allowed' : 'pointer',
-                opacity: (page === totalPages || totalPages === 0) ? 0.5 : 1
-              }}
-            >
-              {t('Next')} &#x25b6;
-            </button>
-
-            <div style={{ marginLeft: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{t('Jump:')}</span>
-              <input
-                type="text"
-                value={jumpPage}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val === '' || /^\d+$/.test(val)) {
-                    setJumpPage(val);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const p = parseInt(jumpPage);
-                    if (!isNaN(p) && p >= 1 && p <= totalPages) {
-                      setPage(p);
-                      setJumpPage('');
-                    }
-                  }
-                }}
-                placeholder={String(page)}
-                style={{
-                  width: '40px',
-                  height: '28px',
-                  padding: '0 4px',
-                  borderRadius: '4px',
-                  border: '1px solid var(--border-color)',
-                  fontSize: '12px',
-                  textAlign: 'center',
-                  outline: 'none'
-                }}
-              />
-            </div>
-
-            <div style={{ marginLeft: '12px', height: '16px', width: '1px', background: 'var(--border-color)' }} />
-
-            <select
-              value={limit}
-              onChange={(e) => { setLimit(Number(e.target.value)); resetPage(); }}                      style={{
-                border: 'none',
-                background: 'transparent',
-                fontWeight: 700,
-                fontSize: '13px',
-                color: 'var(--text-primary)',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              <option value={10}>10 {t('/ page')}</option>
-              <option value={25}>25 {t('/ page')}</option>
-              <option value={50}>50 {t('/ page')}</option>
-              <option value={100}>100 {t('/ page')}</option>
-            </select>
+          <div ref={sentinelRef} data-testid="logs-sentinel" role="status" style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>
+            {logsLoading ? t('Loading...') : loadMoreFailed ? <button className="btn-ghost" onClick={() => void loadMore()}>{t('Retry')}</button> : !hasMore ? t('No more logs') : null}
           </div>
         </div>
+
       </div>
     </div>
   )

@@ -1,4 +1,5 @@
 export const zh: Record<string, string> = {
+  'No more logs': '没有更多日志',
   // Navigation
   'Dashboard': '仪表盘',
   'Request Logs': '请求日志',
@@ -123,6 +124,7 @@ export const zh: Record<string, string> = {
   'Columns': '列',
   'Reset columns': '重置列',
   'All columns': '全部列',
+  'hidden: narrow window': '已隐藏：窗口较窄',
 
   // Table headers
   'Time': '时间',
@@ -165,6 +167,7 @@ export const zh: Record<string, string> = {
 
   // Error messages
   'Failed to fetch dashboard data': '获取仪表盘数据失败',
+  'Retry': '重试',
   'Failed to fetch log data': '获取日志数据失败',
   'Unknown error': '未知错误',
 

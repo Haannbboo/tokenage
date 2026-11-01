@@ -58,16 +58,16 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <div
-        onClick={() => setIsOpen(true)}
+        className="input-plain"
+        onClick={() => { setIsOpen(true); ref.current?.querySelector('input')?.focus() }}
         style={{
+          position: 'relative',
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
-          padding: '0 10px',
-          height: 32,
-          borderRadius: '6px',
-          background: 'var(--input-bg)',
-          border: isOpen ? '1px solid var(--color-blue)' : '1px solid var(--border-color)',
+          height: 35,
+          paddingRight: '28px',
+          borderColor: isOpen ? 'var(--color-blue)' : undefined,
           cursor: 'text'
         }}
       >
@@ -95,16 +95,11 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
               ×
             </button>
           </>
-        ) : (
-          <>
-            <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{t('Search session ID…')}</span>
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginLeft: 'auto' }}>▼</span>
-          </>
-        )}
+        ) : null}
         <input
-          className="input-plain"
           type="text"
-          placeholder=""
+          aria-label={t('Search session ID…')}
+          placeholder={sessionFilter && selected ? '' : t('Search session ID…')}
           value={search}
           onChange={e => { setSearch(e.target.value); setIsOpen(true) }}
           onFocus={() => setIsOpen(true)}
@@ -115,11 +110,14 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
             background: 'transparent',
             border: 'none',
             outline: 'none',
-            fontSize: '12px',
+            font: 'inherit',
             color: 'var(--text-primary)',
             padding: 0
           }}
         />
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+          <path d="m4 6 4 4 4-4" />
+        </svg>
       </div>
 
       {isOpen && (

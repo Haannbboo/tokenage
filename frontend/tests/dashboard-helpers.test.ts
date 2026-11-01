@@ -3,8 +3,10 @@ import { fillPeriodGaps } from '../src/periodGaps'
 import { describePeriod, periodLabelText } from '../src/periodLabels'
 import { sparklineScale } from '../src/sparklineScale'
 import { sortTrendRows, trendTooltipX } from '../src/charts/trendTooltip'
-import { trendBrandColor, vibrantColor } from '../src/charts/trendColors'
+import { trendBrandColor, trendModelColors, vibrantColor } from '../src/charts/trendColors'
 import type { DailyUsage } from '../src/types'
+import { DEFAULT_COL_WIDTHS } from '../src/hooks/useLogsData'
+import { DEFAULT_REQUEST_LOG_COLUMNS, REQUEST_LOG_COLUMNS } from '../src/hooks/useRequestLogColumns'
 
 // The i18n module reads the saved language from localStorage on import.
 vi.mock('../src/i18n/index.ts', () => ({ t: (value: string) => value }))
@@ -172,5 +174,57 @@ describe('trend colours', () => {
     for (const base of ['#cc7c5e', '#475569', '#dcc496', '#4d7cff']) {
       expect(chroma(vibrantColor(base))).toBeGreaterThan(chroma(base))
     }
+  })
+
+  it('gives two spellings of one model shades of the same brand hue', () => {
+    const models = ['minimax/minimax-m3.1-flash', 'minimax-m3.1-flash']
+    for (const theme of ['light', 'dark'] as const) {
+      const colors = trendModelColors(models, theme)
+      const a = colors.get(models[0])!
+      const b = colors.get(models[1])!
+      expect(a).not.toBe(b)
+      // Both stay in the brand's red family: red dominates, green and blue stay close.
+      const rgb = (hex: string) => {
+        const n = parseInt(hex.slice(1), 16)
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+      }
+      for (const hex of [a, b]) {
+        const [r, g, bl] = rgb(hex)
+        expect(r).toBeGreaterThan(g)
+        expect(r).toBeGreaterThan(bl)
+        expect(Math.abs(g - bl)).toBeLessThan(6)
+      }
+    }
+  })
+})
+
+describe('request log column widths', () => {
+  it('gives every column an explicit width', () => {
+    // `table-layout: fixed` ignores min-width and splits the leftover space
+    // equally among the columns that have no width, so every column needs one.
+    for (const [column, width] of Object.entries(DEFAULT_COL_WIDTHS)) {
+      expect(width, column).toBeGreaterThan(0)
+    }
+    expect(Object.keys(DEFAULT_COL_WIDTHS).sort()).toEqual(
+      [...REQUEST_LOG_COLUMNS.map(c => c.id)].sort())
+  })
+
+  it('gives the dense columns more room than the number-only ones', () => {
+    expect(DEFAULT_COL_WIDTHS.input).toBeGreaterThan(DEFAULT_COL_WIDTHS.cost)
+    expect(DEFAULT_COL_WIDTHS.input).toBeGreaterThan(DEFAULT_COL_WIDTHS.speed)
+    expect(DEFAULT_COL_WIDTHS.output).toBeGreaterThan(DEFAULT_COL_WIDTHS.cost)
+    expect(DEFAULT_COL_WIDTHS.output).toBeGreaterThan(DEFAULT_COL_WIDTHS.speed)
+    expect(DEFAULT_COL_WIDTHS.output).toBeGreaterThan(DEFAULT_COL_WIDTHS.status)
+  })
+
+  it('keeps the total within the panel budget so columns are not dropped at once', () => {
+    const total = Object.values(DEFAULT_COL_WIDTHS).reduce((sum, w) => sum + w, 0)
+    expect(total).toBeLessThanOrEqual(1500)
+    expect(total).toBeGreaterThan(1400)
+  })
+
+  it('leaves the device column off by default but still offers it', () => {
+    expect(DEFAULT_REQUEST_LOG_COLUMNS).not.toContain('device')
+    expect(REQUEST_LOG_COLUMNS.map(c => c.id)).toContain('device')
   })
 })

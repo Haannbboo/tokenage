@@ -1280,6 +1280,7 @@ def fetch_recent_usage(
     user_id: str,
     limit: int,
     offset: int = 0,
+    before: tuple[int, str] | None = None,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
@@ -1302,15 +1303,27 @@ def fetch_recent_usage(
         since=since,
         until=until,
     )
-    # Subquery: aggregate tool names per usage_id into a comma-separated string.
+    if before is not None:
+        before_ts, before_id = before
+        # Postgres otherwise treats the OR as a filter and walks newer rows
+        # from the start of the user's index. This equivalent bound seeks to ts.
+        filters.append(Usage.ts <= before_ts)
+        filters.append(
+            or_(Usage.ts < before_ts, and_(Usage.ts == before_ts, Usage.id < before_id))
+        )
+    # Correlate by the page row's id: aggregating the whole user's tool history
+    # before LIMIT dominates page latency even with the usage cursor index.
     dialect = get_engine(db_path).dialect.name
     if dialect == "postgresql":
         tool_names_expr = func.string_agg(ToolCall.tool_name, ",").label("tool_names")
     else:
         tool_names_expr = func.group_concat(ToolCall.tool_name, ",").label("tool_names")
-    tool_query = select(ToolCall.usage_id, tool_names_expr).group_by(ToolCall.usage_id)
-    tool_query = tool_query.where(ToolCall.user_id == user_id)
-    tool_agg = tool_query.subquery()
+    tool_names = (
+        select(tool_names_expr)
+        .where(ToolCall.usage_id == Usage.id, ToolCall.user_id == user_id)
+        .correlate(Usage)
+        .scalar_subquery()
+    )
 
     query = (
         select(
@@ -1340,13 +1353,12 @@ def fetch_recent_usage(
             Usage.base_url_id,
             Usage.price_snapshot_id,
             BaseUrl.base_url.label("base_url"),
-            tool_agg.c.tool_names.label("tool_names"),
+            tool_names.label("tool_names"),
         )
         .select_from(Usage)
         .outerjoin(BaseUrl, Usage.base_url_id == BaseUrl.id)
         .outerjoin(Device, Usage.device_id == Device.id)
-        .outerjoin(tool_agg, tool_agg.c.usage_id == Usage.id)
-        .order_by(Usage.ts.desc())
+        .order_by(Usage.ts.desc(), Usage.id.desc())
         .limit(limit)
         .offset(offset)
     )

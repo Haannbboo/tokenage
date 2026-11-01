@@ -86,6 +86,32 @@ def _nullable_user_id_tables(insp) -> list[str]:
     )
 
 
+def _ensure_postgres_usage_cursor_index(engine) -> bool:
+    """Build or repair the potentially large usage index without a table lock."""
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        valid = connection.execute(
+            text(
+                "SELECT i.indisvalid FROM pg_index i "
+                "JOIN pg_class idx ON idx.oid = i.indexrelid "
+                "WHERE i.indrelid = 'usage'::regclass "
+                "AND idx.relname = 'ix_usage_user_ts_id'"
+            )
+        ).scalar()
+        if valid is True:
+            return False
+        if valid is False:
+            connection.execute(
+                text("DROP INDEX CONCURRENTLY IF EXISTS ix_usage_user_ts_id")
+            )
+        connection.execute(
+            text(
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_usage_user_ts_id "
+                "ON usage (user_id, ts, id)"
+            )
+        )
+        return True
+
+
 def migrate_database(db_path: str | None = None) -> list[str]:
     """Bring a database up to the models: create missing indexes, replace the
     daily rollup with the hourly one, and make user_id NOT NULL (Postgres).
@@ -148,9 +174,20 @@ def migrate_database(db_path: str | None = None) -> list[str]:
         for (_, table), indexes in insp.get_multi_indexes().items()
     }
 
-    # create_all skips indexes of tables that already exist.
+    if engine.dialect.name == "postgresql" and _ensure_postgres_usage_cursor_index(
+        engine
+    ):
+        applied.append("usage.ix_usage_user_ts_id")
+
+    # create_all skips indexes of tables that already exist, including
+    # ix_usage_user_ts_id for Request Logs keyset pagination.
     for table in metadata.sorted_tables:
         for index in table.indexes:
+            if (
+                engine.dialect.name == "postgresql"
+                and index.name == "ix_usage_user_ts_id"
+            ):
+                continue
             if index.name not in existing.get(table.name, ()):
                 index.create(engine, checkfirst=True)
                 applied.append(f"{table.name}.{index.name}")

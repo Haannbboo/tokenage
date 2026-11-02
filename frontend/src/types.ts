@@ -91,8 +91,8 @@ export type DailyUsage = {
 }
 
 export type ActiveFilter = {
-  provider: string;
-  model: string | null;
+  models?: string[];
+  provider?: string;
 } | null
 export type DateRangeOption = '24h' | '5h' | '7d' | '30d' | 'all'
 /** The bucket the time axis is drawn in. */

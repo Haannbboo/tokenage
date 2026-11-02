@@ -267,6 +267,12 @@ async def usage_read_cors(request: Request, call_next):
     return response
 
 
+def _model_filter(request: Request, model: str | None) -> str | list[str] | None:
+    """Preserve single-value callers while accepting repeated model parameters."""
+    values = request.query_params.getlist("model") if request is not None else []
+    return values if len(values) > 1 else model
+
+
 @app.get("/usage")
 async def get_usage(
     request: Request,
@@ -306,7 +312,7 @@ async def get_usage(
                 offset=offset,
                 before=cursor,
                 provider=provider,
-                model=model,
+                model=_model_filter(request, model),
                 client_source=client_source,
                 device_id=device_id,
                 session_id=session_id,
@@ -334,7 +340,7 @@ def get_usage_count(
         "total": count_usage(
             user_id=_request_user_id(request),
             provider=provider,
-            model=model,
+            model=_model_filter(request, model),
             client_source=client_source,
             device_id=device_id,
             session_id=session_id,
@@ -396,7 +402,7 @@ def usage_run_summary(
         device_id=device_id,
         session_id=session_id,
         provider=provider,
-        model=model,
+        model=_model_filter(request, model),
         include_rows=include_rows,
     )
 
@@ -416,7 +422,7 @@ def usage_summary(
         since=since,
         until=until,
         provider=provider,
-        model=model,
+        model=_model_filter(request, model),
         client_source=client_source,
         device_id=device_id,
     )
@@ -437,7 +443,7 @@ def usage_by_source(
         since=since,
         until=until,
         provider=provider,
-        model=model,
+        model=_model_filter(request, model),
         client_source=client_source,
         device_id=device_id,
     )
@@ -458,7 +464,7 @@ def usage_by_tool(
         since=since,
         until=until,
         provider=provider,
-        model=model,
+        model=_model_filter(request, model),
         client_source=client_source,
         device_id=device_id,
     )
@@ -479,7 +485,7 @@ def usage_by_provider(
         since=since,
         until=until,
         provider=provider,
-        model=model,
+        model=_model_filter(request, model),
         client_source=client_source,
         device_id=device_id,
     )
@@ -528,7 +534,7 @@ def usage_daily(
         since=since,
         until=until,
         provider=provider,
-        model=model,
+        model=_model_filter(request, model),
         client_source=client_source,
         device_id=device_id,
         granularity=granularity,
@@ -556,7 +562,7 @@ def usage_daily_by_dimension(
         since=since,
         until=until,
         provider=provider,
-        model=model,
+        model=_model_filter(request, model),
         client_source=client_source,
         device_id=device_id,
         granularity=granularity,

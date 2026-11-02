@@ -1,3 +1,4 @@
+import { appendModels } from '../modelFilter'
 import { useState, useMemo, useEffect } from 'react'
 import type { Theme } from '../theme'
 import type { UsageSummary } from '../types'
@@ -57,7 +58,7 @@ export function TopUsageChart({
   theme: Theme
   filterParams?: {
     provider?: string
-    model?: string | null
+    model?: string[] | null
     client_source?: string | null
     device_id?: string | null
     since?: string | null
@@ -77,7 +78,7 @@ export function TopUsageChart({
       try {
         const url = new URL('/usage/by-source', window.location.origin)
         if (filterParams.provider) url.searchParams.set('provider', filterParams.provider)
-        if (filterParams.model) url.searchParams.set('model', filterParams.model)
+        appendModels(url.searchParams, filterParams.model)
         if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source)
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
@@ -103,7 +104,7 @@ export function TopUsageChart({
         const url = new URL('/usage/daily-by-dimension', window.location.origin)
         url.searchParams.set('dimension', 'device')
         if (filterParams.provider) url.searchParams.set('provider', filterParams.provider)
-        if (filterParams.model) url.searchParams.set('model', filterParams.model)
+        appendModels(url.searchParams, filterParams.model)
         if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source)
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)

@@ -24,7 +24,7 @@ export function DashboardPage({ onNavigateToLogs }: Props) {
 
   // Dashboard data hook
   const {
-    summary, dailyUsage, heatmapData, totalTrackedEvents, sources,
+    summary, selectorSummary, dailyUsage, heatmapData, totalTrackedEvents, sources,
     dashboardInitialLoading, dashboardRefreshing,
     providerColors, dashboardFilterParams, totals,
   } = useDashboardData()
@@ -68,7 +68,7 @@ export function DashboardPage({ onNavigateToLogs }: Props) {
           </select>
           <ModelSelector
             activeFilter={activeFilter}
-            summary={summary}
+            summary={selectorSummary}
             providerColors={providerColors}
             onChange={(f) => { setActiveFilter(f) }}
           />

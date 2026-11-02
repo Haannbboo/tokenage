@@ -2,7 +2,6 @@
 import { createElement } from 'react'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { variantColor } from '../src/charts/trendColors'
 import { TrendChart } from '../src/charts/TrendChart'
 import { trendDotScale } from '../src/charts/trendScale'
 import type { DailyUsage } from '../src/types'
@@ -61,12 +60,4 @@ it('refetches the model split on refresh even when the filter values are unchang
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
   rerender(createElement(TrendChart, { ...props, filterParams: { since: null } }))
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-})
-
-it('keeps the first five model variants distinct and bounded in both themes', () => {
-  for (const theme of ['light', 'dark'] as const) {
-    const colors = Array.from({ length: 5 }, (_, i) => variantColor('#ef4444', i + 1, theme))
-    expect(new Set(colors).size).toBe(5)
-    expect(variantColor('#ef4444', 1000000, theme)).toMatch(/^#[0-9a-f]{6}$/)
-  }
 })

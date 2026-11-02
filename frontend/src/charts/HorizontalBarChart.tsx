@@ -61,11 +61,11 @@ export function HorizontalBarChart({
   const hovered = hoveredItem ? sorted.find((item) => item.name === hoveredItem) ?? null : null
 
   return (
-    <div className="widget" style={{ flex: 1, height: '100%' }}>
+    <div className="widget" style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div className="widget-header">
         <span>{icon} {title}</span>
       </div>
-      <div style={{ position: 'relative' }}>
+      <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column' }}>
         {metric === 'tokens' && hovered && (
           <ChartTooltip left="50%">
             <div style={{ fontWeight: 600, marginBottom: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', fontSize: '13px' }}>
@@ -137,7 +137,8 @@ export function HorizontalBarChart({
           }
           </div>
         )}
-      {children}
+      {/* Pinned to the card's bottom edge when the list is shorter than the card. */}
+      {children && <div style={{ marginTop: 'auto' }}>{children}</div>}
     </div>
     </div>
   )

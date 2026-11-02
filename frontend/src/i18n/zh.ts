@@ -27,6 +27,8 @@ export const zh: Record<string, string> = {
   // Dashboard widgets
   'Token Usage': 'Token 用量',
   'Requests': '请求数',
+  'Hide requests': '隐藏请求数',
+  'Show requests': '显示请求数',
   'Estimated Cost': '预估费用',
   'Performance': '性能',
   'Success Rate:': '成功率：',
@@ -84,6 +86,11 @@ export const zh: Record<string, string> = {
   'No activity': '无活动',
   'No requests': '无请求',
 
+  // Model families
+  'Hunyuan': '混元',
+  'Xiaomi MiMo': '小米 MiMo',
+  'Doubao': '豆包',
+
   // TrendChart tooltips
   'Input:': '输入：',
   'Output:': '输出：',
@@ -134,8 +141,6 @@ export const zh: Record<string, string> = {
 
   // Table body
   'tokens': 'tokens',
-  '(Prompt:': '（提示词：',
-  ' chars)': ' 字符）',
   'Cache read': '缓存读取',
   'Cache write': '缓存写入',
   'Reasoning': '推理',
@@ -173,6 +178,10 @@ export const zh: Record<string, string> = {
 
   // ModelSelector
   'All Models': '全部模型',
+  'Search models or providers': '搜索模型或提供商',
+  'selected': '已选择',
+  'Clear all': '清除全部',
+  'No models found': '未找到模型',
   'model': '个模型',
   'models': '个模型',
 

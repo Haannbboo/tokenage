@@ -176,10 +176,20 @@ import sys
 from pathlib import Path
 Path(sys.argv[1]).write_bytes(b" " * (10 * 1024 * 1024) + sys.argv[2].encode())
 PY
-status=$(curl --max-time 30 --silent --output /dev/null --write-out '%{http_code}' \
-    -H @"$scratch/headers" -H 'Content-Type: application/json' \
-    --data-binary @"$scratch/oversized.json" "$endpoint/otlp/v1/logs")
-[ "$status" = 413 ]
+# Caddy may reset the connection mid-upload once it has rejected the body, so
+# curl can exit 55 or 56 without reading the 413. Retry those: only a 413 passes.
+for attempt in 1 2 3 4 5; do
+    curl_exit=0
+    status=$(curl --max-time 30 --silent --show-error --output /dev/null --write-out '%{http_code}' \
+        -H @"$scratch/headers" -H 'Content-Type: application/json' \
+        --data-binary @"$scratch/oversized.json" "$endpoint/otlp/v1/logs") || curl_exit=$?
+    case "$status:$curl_exit" in
+        413:0|413:55|413:56) break ;;
+        000:55|000:56) [ "$attempt" -lt 5 ] && continue ;;
+    esac
+    echo "FAIL: oversized body got HTTP $status, curl exit $curl_exit" >&2
+    exit 1
+done
 rm -f "$scratch/oversized.json"
 echo 'PASS: Caddy rejects ingest bodies larger than 10 MiB'
 # Installer origin is operator-configured, never taken from request headers.

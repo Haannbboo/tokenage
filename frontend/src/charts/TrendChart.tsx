@@ -51,6 +51,7 @@ export function TrendChart({
   const [metric, setMetric] = useState<'tokens' | 'cost'>('tokens');
   const [showRequests, setShowRequests] = useState(true);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const [highlightedModel, setHighlightedModel] = useState<string | null>(null);
   const chartAreaRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const tooltipXRef = useRef(268);
@@ -208,6 +209,9 @@ export function TrendChart({
       return stat.tokens > 0 || stat.cost > 0 ? [{ model: entry.model, label: entry.label, models, ...stat }] : [];
     });
   };
+  const activeHighlight = highlightedModel !== null && filled.some(d =>
+    bucketSegments(d.period).some(m => m.model === highlightedModel && (metric === 'cost' ? m.cost : m.tokens) > 0)
+  ) ? highlightedModel : null;
   const modelColor = (model: string) => modelColors.get(model) ?? TREND_NEUTRAL[theme];
   const nowWallMs = wallClockMs(new Date(), tz);
   const hoveredPeriod = hoveredData ? describePeriod(hoveredData.period, granularity, nowWallMs, LANG_LOCALES[getLang()]) : null;
@@ -419,7 +423,7 @@ export function TrendChart({
                             key={m.model || 'other'}
                             d={roundedRect(x, y, barW, h, isTop ? radius : 0, isBottom ? radius : 0)}
                             fill={modelColor(m.model)}
-                            opacity={0.9}
+                            className={`trend-segment${activeHighlight === m.model ? ' is-highlighted' : activeHighlight !== null ? ' is-dimmed' : ''}`}
                             stroke="var(--chart-dot-fill)"
                             strokeWidth={1}
                           />
@@ -441,13 +445,14 @@ export function TrendChart({
                 return (
                   <>
                     <polyline
+                      className={activeHighlight !== null ? 'trend-requests is-softened' : 'trend-requests'}
                       points={points}
                       fill="none"
                       stroke="var(--color-pink)"
                       strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.45 : 0.22, transition: 'opacity 160ms ease' }}
+                      style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.45 : 0.22 }}
                     />
                     {showDots && filled.map((d, i) => {
                       const x = paddingX + (i + 0.5) / filled.length * chartWidth;
@@ -457,11 +462,12 @@ export function TrendChart({
                         // dot stays a circle on any panel width.
                         <g key={i} style={{ transform: `translate(${x}px, ${y}px) scale(${dotScale}, 1)`, transformOrigin: '0 0', pointerEvents: 'none' }}>
                           <circle
+                            className={activeHighlight !== null ? 'trend-requests is-softened' : 'trend-requests'}
                             cx={0} cy={0} r={hoveredIdx === i ? "5" : "3"}
                             fill="var(--chart-dot-fill)"
                             stroke="var(--color-pink)"
                             strokeWidth={hoveredIdx === i ? "3" : "2"}
-                            style={{ transition: 'all 160ms ease', opacity: hoveredIdx === null || hoveredIdx === i ? 0.45 : 0.22 }}
+                            style={{ opacity: hoveredIdx === null || hoveredIdx === i ? 0.45 : 0.22 }}
                           />
                         </g>
                       );
@@ -540,7 +546,7 @@ export function TrendChart({
               })}
             </div>
 
-            <div style={{
+            <div className="trend-legend" onMouseLeave={() => setHighlightedModel(null)} style={{
               display: 'flex',
               flexWrap: 'wrap',
               alignItems: 'center',
@@ -549,10 +555,10 @@ export function TrendChart({
               marginTop: '10px',
             }}>
               {legendModels.map(m => (
-                <div key={m.model} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <div style={{ width: '12px', height: '12px', background: modelColor(m.model), borderRadius: '2px' }} />
+                <div key={m.model} className={`trend-legend-entry${activeHighlight === m.model ? ' is-highlighted' : activeHighlight !== null ? ' is-dimmed' : ''}`} onMouseEnter={() => setHighlightedModel(m.model)} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div className="trend-legend-swatch" style={{ width: '12px', height: '12px', background: modelColor(m.model), borderRadius: '2px' }} />
                   {familyMode && getModelIcon(m.iconModel, theme)}
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>{familyMode ? t(m.label) : m.label}</span>
+                  <span style={{ fontSize: '11px', fontWeight: 600 }}>{familyMode ? t(m.label) : m.label}</span>
                 </div>
               ))}
             </div>

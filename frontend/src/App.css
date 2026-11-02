@@ -1526,6 +1526,21 @@
   animation: trend-hover-pulse 1.6s ease-out infinite;
 }
 
+.trend-segment {
+  opacity: 0.9;
+  transition: opacity 240ms ease, filter 240ms ease;
+}
+
+.trend-segment.is-dimmed { opacity: 0.29; filter: saturate(0.55); }
+.trend-segment.is-highlighted { opacity: 1; filter: brightness(1.08); }
+.trend-requests { transition: opacity 240ms ease, filter 240ms ease, r 160ms ease, stroke-width 160ms ease; }
+.trend-requests.is-softened { opacity: 0.14 !important; filter: saturate(0.55); }
+.trend-legend-entry { color: var(--text-secondary); transition: opacity 240ms ease, color 240ms ease; }
+.trend-legend-entry.is-dimmed { opacity: 0.45; }
+.trend-legend-entry.is-highlighted { color: var(--text-primary); }
+.trend-legend-swatch { transition: transform 240ms ease; }
+.trend-legend-entry.is-highlighted .trend-legend-swatch { transform: scale(1.15); }
+
 @media (prefers-reduced-motion: reduce) {
   .btn-refresh.is-refreshing .refresh-icon,
   .dashboard-refresh-surface.is-refreshing::after {
@@ -1543,6 +1558,10 @@
 
   .trend-hover-pulse {
     animation: none;
+  }
+
+  .trend-segment, .trend-requests, .trend-legend-entry, .trend-legend-swatch {
+    transition: none;
   }
 }
 

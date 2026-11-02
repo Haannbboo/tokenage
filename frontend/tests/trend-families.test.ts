@@ -60,9 +60,9 @@ function colorOf(model: string, theme: 'light' | 'dark'): string {
   return trendSeriesColors([{ key: model, model }], theme).get(model)!
 }
 
-async function chart(names: string[]) {
+async function chart(names: string[], zeroCost?: string) {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
-  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => names.map((dimension, i) => ({ dimension, period, total_tokens: (i + 1) * 100, total_cost_usd: 0.1, requests: i + 1 })) })))
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => names.map((dimension, i) => ({ dimension, period, total_tokens: (i + 1) * 100, total_cost_usd: dimension === zeroCost ? 0 : 0.1, requests: i + 1 })) })))
   const result = render(createElement(TrendChart, { data, title: 'Trend' }))
   await waitFor(() => expect(result.container.querySelectorAll('path')).toHaveLength(names.length > 8 ? 8 : names.length))
   return result
@@ -71,6 +71,50 @@ async function chart(names: string[]) {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('trend model families', () => {
+  it.each([
+    ['model', models.slice(0, 3), 'claude-one'],
+    ['family', models, 'Claude'],
+  ])('highlights and restores a %s legend series', async (_mode, names, label) => {
+    const { container } = await chart(names)
+    const legend = within(container).getByText(label).parentElement!
+    const color = (legend.firstElementChild as HTMLElement).style.background
+    const paths = [...container.querySelectorAll('path')]
+    const matchesColor = (path: SVGPathElement) => {
+      const swatch = document.createElement('div')
+      swatch.style.background = path.getAttribute('fill') ?? ''
+      return swatch.style.background === color
+    }
+    const selected = paths.filter(matchesColor)
+    const others = paths.filter(path => !matchesColor(path))
+    expect(selected.length).toBeGreaterThan(0)
+    expect(others.length).toBeGreaterThan(0)
+    const shapes = paths.map(path => path.getAttribute('d'))
+    fireEvent.mouseEnter(legend)
+    expect(selected.every(path => path.classList.contains('is-highlighted'))).toBe(true)
+    expect(others.every(path => path.classList.contains('is-dimmed'))).toBe(true)
+    expect(paths.map(path => path.getAttribute('d'))).toEqual(shapes)
+    expect(container.querySelector('polyline')).toBeTruthy()
+    fireEvent.mouseLeave(legend.parentElement!)
+    fireEvent.click(within(container).getByRole('button', { name: 'Cost' }))
+    fireEvent.mouseEnter(legend)
+    expect([...container.querySelectorAll('path.is-dimmed')].length).toBeGreaterThan(0)
+    fireEvent.mouseLeave(legend.parentElement!)
+    expect(container.querySelectorAll('path.is-dimmed, path.is-highlighted')).toHaveLength(0)
+  })
+
+  it('does not dim cost bars for a series with no painted cost segment', async () => {
+    const { container } = await chart(models.slice(0, 3), 'claude-one')
+    fireEvent.click(within(container).getByRole('button', { name: 'Cost' }))
+    fireEvent.mouseEnter(within(container).getByText('claude-one').parentElement!)
+    expect(container.querySelectorAll('path')).toHaveLength(2)
+    expect(container.querySelectorAll('path.is-dimmed, path.is-highlighted')).toHaveLength(0)
+    expect(container.querySelectorAll('.trend-legend-entry.is-dimmed, .trend-legend-entry.is-highlighted')).toHaveLength(0)
+    fireEvent.mouseLeave(container.querySelector('.trend-legend')!)
+    fireEvent.mouseEnter(within(container).getByText('gpt-one').parentElement!)
+    expect(container.querySelectorAll('path.is-highlighted')).toHaveLength(1)
+    expect(container.querySelectorAll('path.is-dimmed')).toHaveLength(1)
+  })
+
   it('toggles the requests line and tooltip row', async () => {
     const { container } = await chart(models.slice(0, 1))
     const chartArea = container.querySelector('svg')!.parentElement!

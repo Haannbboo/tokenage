@@ -144,9 +144,9 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
     fetch(url.toString(), { signal: controller.signal })
       .then(r => r.ok ? r.json() : Promise.reject(r))
       .then(data => { if (!controller.signal.aborted) setSelectorSummary(data) })
-      .catch(() => {})
+      .catch(() => { if (!controller.signal.aborted) setError(t('Failed to fetch dashboard data')) })
     return () => controller.abort()
-  }, [dateRange, activeSource, activeDevice, refreshTrigger, !!activeFilter])
+  }, [dateRange, activeSource, activeDevice, refreshTrigger, !!activeFilter, setError])
 
   // Sources fetch
   useEffect(() => {

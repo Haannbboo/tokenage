@@ -246,6 +246,14 @@ describe('trend colours', () => {
     }
   })
 
+  it('gives identical-badge series different colours', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      const series = Array.from({ length: 5 }, (_, i) => ({ key: `series-${i}`, model: 'mystery' }))
+      const colours = [...trendSeriesColors(series, theme).values()]
+      expect(new Set(colours).size, theme).toBe(colours.length)
+    }
+  })
+
   it('gives a family the colour of the model in it', () => {
     for (const theme of ['light', 'dark'] as const) {
       for (const [brand, model] of Object.entries(BRANDS)) {

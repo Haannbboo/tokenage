@@ -4396,7 +4396,7 @@ def test_init_db_creates_tenancy_shapes(fresh_db):
 
     engine = database_module.get_engine(db_path)
     inspector = inspect(engine)
-    for table in ("usage", "usage_hourly", "sessions", "tool_calls", "evaluation_jobs"):
+    for table in ("usage", "usage_hourly", "sessions", "tool_calls"):
         assert "user_id" in {c["name"] for c in inspector.get_columns(table)}
 
     hourly_indexes = {i["name"]: i for i in inspector.get_indexes("usage_hourly")}

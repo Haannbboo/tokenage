@@ -81,7 +81,7 @@ def test_fresh_migrate_creates_tenancy_shapes(pg_db, pg_engine):
 
     migrate_database(pg_db)
 
-    for table in ("usage", "usage_hourly", "sessions", "tool_calls", "evaluation_jobs"):
+    for table in ("usage", "usage_hourly", "sessions", "tool_calls"):
         columns = {c["name"]: c for c in inspect(pg_engine).get_columns(table)}
         assert columns["user_id"]["nullable"] is False
 
@@ -114,7 +114,6 @@ def test_migrate_tightens_a_nullable_tenancy_schema(pg_db, pg_engine):
             "usage_hourly",
             "sessions",
             "tool_calls",
-            "evaluation_jobs",
         ):
             connection.execute(
                 text(f"ALTER TABLE {table} ALTER COLUMN user_id DROP NOT NULL")
@@ -129,7 +128,7 @@ def test_migrate_tightens_a_nullable_tenancy_schema(pg_db, pg_engine):
 
     assert "sessions.user_id_fk" in changes
     assert "usage.user_id_not_null" in changes
-    for table in ("usage", "usage_hourly", "sessions", "tool_calls", "evaluation_jobs"):
+    for table in ("usage", "usage_hourly", "sessions", "tool_calls"):
         columns = {c["name"]: c for c in inspect(pg_engine).get_columns(table)}
         assert columns["user_id"]["nullable"] is False
     assert migrate_database(pg_db) == []

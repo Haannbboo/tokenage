@@ -332,17 +332,6 @@ class SessionRecord(Base):
     )
     last_usage_id: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
-    # Evaluation columns (NULL = not evaluated)
-    outcome: Mapped[str | None] = mapped_column(String, nullable=True)
-    source: Mapped[str | None] = mapped_column(String, nullable=True)
-    confidence: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
-    task_title: Mapped[str | None] = mapped_column(String, nullable=True)
-    task_title_zh: Mapped[str | None] = mapped_column(String, nullable=True)
-    summary: Mapped[str | None] = mapped_column(String, nullable=True)
-    evidence_json: Mapped[str | None] = mapped_column(String, nullable=True)
-    failure_reason: Mapped[str | None] = mapped_column(String, nullable=True)
-    evaluated_at: Mapped[str | None] = mapped_column(String, nullable=True)
-    project: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 Index("ix_sessions_started_desc", SessionRecord.started.desc())
@@ -351,37 +340,6 @@ Index(
     SessionRecord.client_source,
     SessionRecord.started.desc(),
 )
-
-VALID_OUTCOMES = {"solved", "partial", "failed", "stuck", "no_op", "unknown"}
-VALID_SOURCES = {"manual", "heuristic", "llm"}
-
-
-class EvaluationJob(Base):
-    """One client-reported evaluation run. Metadata only: the result itself
-    lives on the session row, so a job never stores a result snapshot."""
-
-    __tablename__ = "evaluation_jobs"
-
-    job_id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
-    # NULL only for legacy rows written before evaluation moved to the client.
-    device_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("devices.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    kind: Mapped[str] = mapped_column(String, nullable=False)
-    session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    client_source: Mapped[str | None] = mapped_column(String, nullable=True)
-    trigger: Mapped[str] = mapped_column(
-        String, nullable=False, server_default=text("'auto'")
-    )
-    evaluator_type: Mapped[str] = mapped_column(
-        String, nullable=False, server_default=text("'codex'")
-    )
-    status: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[str] = mapped_column(String, nullable=False)
-    started_at: Mapped[str | None] = mapped_column(String, nullable=True)
-    finished_at: Mapped[str | None] = mapped_column(String, nullable=True)
-    error: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ToolCall(Base):

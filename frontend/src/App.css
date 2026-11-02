@@ -617,38 +617,6 @@
 }
 
 
-
-
-
-/* Per-outcome gradient colors (inactive state) */
-
-
-
-
-
-
-
-
-
-/* Active state — brighter variant with stronger glow */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @media (max-width: 1100px) {
   .session-detail-expanded {
     grid-template-columns: 1fr;

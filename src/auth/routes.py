@@ -29,6 +29,7 @@ from .tokens import (
     revoke_device,
     revoke_token,
     update_user_name,
+    update_user_picture,
 )
 
 logger = logging.getLogger(__name__)
@@ -222,6 +223,7 @@ def auth_me(request: Request):
             "id": user.id,
             "email": user.email,
             "name": user.name,
+            "picture": user.picture if auth_provider() == "google" else None,
             "created_at": user.created_at,
         },
         "token": (
@@ -368,12 +370,27 @@ async def auth_google_callback(request: Request):
     if normalized_allowlist and email not in normalized_allowlist:
         # No user/token row is created for a rejected email.
         return _frontend_redirect(origin, auth_error="not_allowlisted")
+    picture = claims.get("picture")
+    if not isinstance(picture, str) or len(picture) > 2048:
+        picture = None
+    else:
+        try:
+            parsed_picture = urlparse(picture)
+            if (
+                parsed_picture.scheme != "https"
+                or not parsed_picture.hostname
+                or any(c.isspace() or ord(c) < 32 for c in picture)
+            ):
+                picture = None
+        except ValueError:
+            picture = None
     cli_flow = data.get("cli")
     if isinstance(cli_flow, dict):
         # CLI paste-back flow: no web session is minted — the code page
         # renders the one-time code and the CLI redeems it at exchange.
         user = get_or_create_user(email)
         update_user_name(user.id, str(claims.get("name") or "").strip() or None)
+        update_user_picture(user.id, picture)
         device = _sanitize_device_name(str(cli_flow.get("device_name") or ""))
         code = await asyncio.to_thread(
             _mint_cli_code, user, device, str(cli_flow.get("code_challenge") or "")
@@ -387,6 +404,7 @@ async def auth_google_callback(request: Request):
         email, kind="web", device_name=_browser_label(request)
     )
     update_user_name(user.id, str(claims.get("name") or "").strip() or None)
+    update_user_picture(user.id, picture)
     response = _frontend_redirect(origin)
     response.set_cookie(
         SESSION_COOKIE_NAME,

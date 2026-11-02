@@ -57,6 +57,7 @@ def _mock_google_flow(
     email="a@example.com",
     email_verified=True,
     name="Alice",
+    picture=None,
     raise_oauth_failed=False,
 ):
     async def fake_exchange(redirect_uri, code):
@@ -69,6 +70,7 @@ def _mock_google_flow(
             "email": email,
             "email_verified": email_verified,
             "name": name,
+            "picture": picture,
             "sub": "google-123",
         }
 
@@ -196,6 +198,35 @@ def test_google_callback_happy_path(api_module, monkeypatch, fresh_db):
     assert body["user"]["email"] == "a@example.com"
     assert body["user"]["name"] == "Alice"
     assert body["token"] == {"kind": "web", "device_name": "browser"}
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "http://example.com/a",
+        "https:///missing",
+        "https://example.com/" + "a" * 2048,
+        123,
+        None,
+    ],
+)
+def test_google_picture_refresh_and_invalid_claim(
+    api_module, monkeypatch, fresh_db, invalid
+):
+    _enable_auth(monkeypatch)
+    client = TestClient(api_module.app)
+    for picture, expected in [
+        ("https://example.com/first", "https://example.com/first"),
+        ("https://example.com/second", "https://example.com/second"),
+        (invalid, None),
+    ]:
+        _mock_google_flow(api_module, monkeypatch, picture=picture)
+        state = _start_login(api_module, monkeypatch, client)
+        response = client.get(
+            f"/auth/google/callback?code=code&state={state}", follow_redirects=False
+        )
+        assert response.status_code == 302
+        assert client.get("/auth/me").json()["user"]["picture"] == expected
 
 
 def test_second_login_keeps_the_previous_web_session(api_module, monkeypatch, fresh_db):
@@ -1074,3 +1105,15 @@ def test_only_ingest_activity_updates_machine_last_seen(api_module, fresh_db):
     assert last_seen() == 1
     assert tokens.resolve_token(ingest, fresh_db.db_path) is not None
     assert last_seen() > 1
+
+
+def test_picture_write_failure_does_not_raise(api_module, monkeypatch, fresh_db):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from src.auth import tokens
+
+    def fail(_db_path=None):
+        raise SQLAlchemyError("down")
+
+    monkeypatch.setattr(tokens, "get_engine", fail)
+    tokens.update_user_picture("missing", "https://example.com/a.png")

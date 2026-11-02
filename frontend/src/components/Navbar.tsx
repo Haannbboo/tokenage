@@ -1,5 +1,6 @@
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
+import { UserAvatar } from './UserAvatar'
 
 type View = 'dashboard' | 'logs' | 'settings'
 
@@ -25,9 +26,7 @@ export function Navbar({ currentView, onNavigate }: { currentView: View; onNavig
         <button className={`nav-item nav-item-settings ${currentView === 'settings' ? 'active' : ''}`} onClick={() => onNavigate('settings')}>
           {auth.provider === 'google' && auth.user ? (
             <>
-              <span className="user-avatar">
-                {(auth.user.name || auth.user.email).charAt(0).toUpperCase()}
-              </span>
+              <UserAvatar user={auth.user} />
               <span className="user-email" title={auth.user.email}>
                 {auth.user.name || auth.user.email}
               </span>

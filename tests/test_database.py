@@ -4904,6 +4904,32 @@ def test_migrate_database_replaces_usage_daily_with_hourly_backfill(fresh_db):
     assert hourly_rows() == expected
 
 
+def test_migrate_database_adds_user_picture_idempotently(fresh_db):
+    from sqlalchemy import inspect, text
+
+    engine = fresh_db.database_module.get_engine(fresh_db.db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO users (id, email, created_at) VALUES ('old', 'old@example.com', 1)"
+            )
+        )
+        conn.execute(text("ALTER TABLE users DROP COLUMN picture"))
+    migrate = fresh_db.schema_migrations_module.migrate_database
+    assert "users.picture" in migrate(fresh_db.db_path)
+    assert next(
+        c for c in inspect(engine).get_columns("users") if c["name"] == "picture"
+    )["nullable"]
+    with engine.connect() as conn:
+        assert (
+            conn.execute(
+                text("SELECT picture FROM users WHERE id = 'old'")
+            ).scalar_one()
+            is None
+        )
+    assert migrate(fresh_db.db_path) == []
+
+
 def test_migrate_database_creates_missing_model_indexes(fresh_db):
     schema_migrations = fresh_db.schema_migrations_module
     database_module = fresh_db.database_module

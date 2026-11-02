@@ -25,7 +25,7 @@ export function SettingsPage() {
   } = useApp()
   const versionData = useVersion()
   const authDevicesActive = activeSection === 'devices'
-  const { devices, refresh: refreshDevices } = useDevices(authDevicesActive)
+  const { devices, webSessions, refresh: refreshDevices } = useDevices(authDevicesActive)
   const { statuses } = useDeviceStatuses(authDevicesActive)
   const [expandedDeviceId, setExpandedDeviceId] = useState<string | null>(null)
   const [revokingDeviceId, setRevokingDeviceId] = useState<string | null>(null)
@@ -113,10 +113,11 @@ export function SettingsPage() {
       )}
 
       {activeSection === 'devices' && (
+        <>
         <div className="panel">
             <div className="panel-tabs" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="tab active"><span>💻</span> {t('Devices')}</div>
-              {auth.provider === 'google' && auth.user && (
+              <div className="tab active"><span>💻</span> {t('Machines')}</div>
+              {auth.user && (auth.provider === 'google' || webSessions?.some(session => session.current)) && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span className="user-avatar">
                     {(auth.user.name || auth.user.email).charAt(0).toUpperCase()}
@@ -132,7 +133,7 @@ export function SettingsPage() {
             </div>
             <div className="panel-body" style={{ padding: '0' }}>
               <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                {t('Installed machines and browser sessions. Revoking a machine stops tracking immediately.')}
+                {t('Installed machines. Revoking a machine stops tracking immediately.')}
               </div>
               <table className="table">
                 <thead>
@@ -212,6 +213,30 @@ export function SettingsPage() {
               </table>
             </div>
           </div>
+        <div className="panel" style={{ marginTop: '24px' }}>
+            <div className="panel-tabs">
+              <div className="tab active"><span>🌐</span> {t('Web sessions')}</div>
+            </div>
+            <div className="panel-body" style={{ padding: '0' }}>
+              <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                {t('Browsers signed in to this account. A session idle for 30 days signs out automatically.')}
+              </div>
+              <table className="table">
+                <thead><tr><th>{t('Browser')}</th><th>{t('Signed in')}</th><th>{t('Last active')}</th><th></th></tr></thead>
+                <tbody>
+                  {webSessions && webSessions.length > 0 ? webSessions.map(session => (
+                    <tr key={session.id}>
+                      <td style={{ fontWeight: 700 }}>{session.device_name} {session.current && <span className="badge badge-success">{t('This session')}</span>}</td>
+                      <td>{formatTime(session.created_at)}</td>
+                      <td>{session.last_used_at != null ? formatTime(session.last_used_at) : '—'}</td>
+                      <td style={{ textAlign: 'right' }}>{!session.current && <button type="button" className="btn-danger" disabled={revokingDeviceId !== null} onClick={() => void handleRevokeDevice(session.id)}>{revokingDeviceId === session.id ? `${t('Revoke')}…` : t('Revoke')}</button>}</td>
+                    </tr>
+                  )) : <tr><td colSpan={4} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>{webSessions ? t('No web sessions found.') : t('Loading...')}</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
     </div>
   )

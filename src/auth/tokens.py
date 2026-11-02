@@ -24,6 +24,7 @@ TOKEN_KINDS = ("cli", "ingest", "web")
 LOCAL_OWNER_EMAIL = "owner@localhost"
 AUTH_STATEMENT_TIMEOUT_MILLISECONDS = 10_000
 ACTIVITY_UPDATE_INTERVAL_MICROS = 30 * 1_000_000
+WEB_IDLE_TIMEOUT_MICROS = 30 * 24 * 60 * 60 * 1_000_000
 
 
 def _now_micros() -> int:
@@ -175,15 +176,22 @@ def resolve_token(
                 or device_user_id != user.id
             ):
                 return None
+            now = _now_micros()
+            if (
+                auth_token.kind == "web"
+                and (auth_token.last_used_at or auth_token.created_at)
+                <= now - WEB_IDLE_TIMEOUT_MICROS
+            ):
+                return None
             # Detach before bookkeeping: rollback after a failed refresh must not
             # expire the already validated identity or trigger another SELECT.
             session.expunge_all()
-            now = _now_micros()
             cutoff = now - ACTIVITY_UPDATE_INTERVAL_MICROS
             if auth_token.last_used_at is None or auth_token.last_used_at < cutoff:
                 activity_started = True
                 # Device before token: mint_device_tokens locks in that order.
-                if auth_token.device_id is not None:
+                # Only ingest counts as machine use, not the client's heartbeat.
+                if auth_token.kind == "ingest" and auth_token.device_id is not None:
                     session.execute(
                         sa_update(Device)
                         .where(
@@ -269,7 +277,12 @@ def list_user_tokens(user_id: str, db_path: str | None = None) -> list[AuthToken
             .all()
         )
         session.expunge_all()
-        return list(rows)
+        cutoff = _now_micros() - WEB_IDLE_TIMEOUT_MICROS
+        return [
+            row
+            for row in rows
+            if row.kind != "web" or (row.last_used_at or row.created_at) > cutoff
+        ]
 
 
 def list_user_devices(

@@ -243,10 +243,87 @@ chmod 755 "$LAUNCHER_TMP"
 mv -f "$LAUNCHER_TMP" "$LAUNCHER"
 
 # Replace current via a same-directory rename so a failed install keeps the old version active.
+PREVIOUS_VERSION=$(readlink "$TRACKER_HOME/current" 2>/dev/null || true)
 CURRENT_TMP=$TRACKER_HOME/.current-$$
 ln -s "versions/$COMMIT" "$CURRENT_TMP"
 "$VERSION_DIR/.venv/bin/python" -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' \
   "$CURRENT_TMP" "$TRACKER_HOME/current"
+
+# Work from the versions directory and only remove plain immediate children.
+# rm does not follow symlinks inside a removed tree; never pass it a symlink
+# child (or traverse a symlink used as the versions directory itself).
+prune_versions() (
+  [ ! -L "$VERSIONS_DIR" ] || return 1
+  configs=$(PYTHONPATH=$VERSION_DIR "$VERSION_DIR/.venv/bin/python" -P -c \
+    'from client.setup import plugin_configs; print("\n".join(str(p) for p in plugin_configs().values()))') || return 1
+  cd -P "$VERSIONS_DIR" || return 1
+  previous=
+  case "$PREVIOUS_VERSION" in
+    versions/*) previous=${PREVIOUS_VERSION#versions/} ;;
+    "$VERSIONS_DIR"/*) previous=${PREVIOUS_VERSION#"$VERSIONS_DIR"/} ;;
+    "$PWD"/*) previous=${PREVIOUS_VERSION#"$PWD"/} ;;
+  esac
+  previous=${previous%/}
+  case "$previous" in
+    */*|.|..) previous= ;;
+  esac
+  prune_rc=0
+  removed=0
+  for version in * .[!.]* ..?*; do
+    [ -d "$version" ] && [ ! -L "$version" ] || continue
+    [ "$version" != "$COMMIT" ] && [ "$version" != "$previous" ] || continue
+    case "$version" in
+      .install-*) continue ;; # another installer's staging directory
+    esac
+    # Another installer may have swapped current or still be preparing a
+    # snapshot. Re-read current and leave recent directories alone so neither
+    # installer deletes the other's version; a later update can retire them.
+    current=$(readlink "$TRACKER_HOME/current" 2>/dev/null) || return 1
+    current=${current%/}
+    case "$current" in
+      "versions/$version"|"$VERSIONS_DIR/$version"|"$PWD/$version") continue ;;
+    esac
+    young=$(find "./$version" -maxdepth 0 -mmin -60) || continue
+    [ -z "$young" ] || continue
+    # Agents off PATH during update are not re-wired, and a failed plugin build
+    # can also leave a config pointing more than one update back. Match the SHA
+    # rather than a JSON-escaped absolute path to preserve those references.
+    referenced=0
+    case "$version" in
+      *[!0-9a-f]*) ;;
+      *)
+        if [ "${#version}" -eq 40 ]; then
+          while IFS= read -r config; do
+            [ -f "$config" ] || continue
+            grep -F -q -e "$version" "$config" && config_rc=0 || config_rc=$?
+            [ "$config_rc" = 1 ] || referenced=1
+          done <<EOF
+$configs
+EOF
+        fi
+        ;;
+    esac
+    if [ "$referenced" = 1 ]; then
+      printf 'tokenage: warning: retaining client version %s referenced by an agent configuration (or configuration unreadable)\n' "$version" >&2
+      continue
+    fi
+    # A partial delete must not leave a directory a reinstall of this commit
+    # would reuse, so rename first. A failed delete retries on a later update.
+    case "$version" in
+      .removing-*) doomed=$version ;;
+      *) doomed=.removing-$version ;;
+    esac
+    if { [ "$doomed" = "$version" ] || mv -- "./$version" "./$doomed"; } && rm -rf "./$doomed"; then
+      removed=$((removed + 1))
+    else
+      prune_rc=1
+    fi
+  done
+  if [ "$removed" -gt 0 ]; then
+    say "Removed $removed old client version(s)."
+  fi
+  return "$prune_rc"
+)
 
 # Restart the new snapshot immediately after the swap.
 INSTALL_RC=0
@@ -282,6 +359,14 @@ if [ "$WANT_SERVER" = 1 ]; then
   TOKENAGE_CLIENT_COMMIT=$COMMIT PYTHONPATH=$VERSION_DIR \
     "$VERSION_DIR/.venv/bin/python" -P -m client client start ||
     say 'Client service not started; see: tokenage client start'
+fi
+
+# Retire snapshots only after the service and agent refresh have completed.
+# On failure an older process or agent configuration may still need its files.
+if [ "$INSTALL_RC" = 0 ]; then
+  prune_versions || printf '%s\n' 'tokenage: warning: could not clean up old client versions' >&2
+else
+  printf '%s\n' 'tokenage: warning: old client versions retained after an incomplete refresh' >&2
 fi
 
 # Compare with the user's original PATH, before adding uv's installation directory.

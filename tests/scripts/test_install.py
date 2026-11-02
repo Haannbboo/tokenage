@@ -19,17 +19,26 @@ SHARED_LAUNCHER = REPO_ROOT / "client" / "bin" / "tokenage"
 CLIENT_PYPROJECT = REPO_ROOT / "client" / "pyproject.toml"
 COMMIT = "a" * 40
 NEXT_COMMIT = "b" * 40
-# The installer runs the snapshot's interpreter twice: as `python -c <code> A B`
-# to swap the `current` symlink, and as `python -m client <subcommand>` for the
-# pre-flight and the sign-in. The interpreter is a script, so it is handed the
-# flags verbatim: argv[1:] is ['-c', <code>, A, B] or ['-m', 'client', ...].
+# The snapshot interpreter swaps current, lists plugin configs, and runs client
+# commands. This shim receives the interpreter flags verbatim.
 FAKE_PYTHON = """#!/usr/bin/env python3
+import json
 import os
 import sys
 
 args = sys.argv[1:]
 if args[0] == '-c':
     os.replace(args[2], args[3])
+    raise SystemExit(0)
+if args[:2] == ['-P', '-c']:
+    assert 'from client.setup import plugin_configs' in args[2]
+    if os.environ.get('TOKENAGE_FAKE_CONFIGS_FAIL') == '1':
+        raise SystemExit(1)
+    configs = json.loads(os.environ.get('TOKENAGE_FAKE_PLUGIN_CONFIGS', 'null'))
+    if configs is None:
+        configs = [os.path.join(os.environ['HOME'], '.config', agent, 'opencode.json')
+                   for agent in ('opencode', 'kilo')]
+    print('\\n'.join(configs))
     raise SystemExit(0)
 with open(os.environ['TOKENAGE_FAKE_PYTHON_LOG'], 'a') as log:
     log.write(f"{' '.join(args)} tty={'yes' if sys.stdin.isatty() else 'no'}\\n")
@@ -51,6 +60,11 @@ def _write_snapshot(source: Path) -> None:
     (source / "client" / "bin").mkdir()
     # The installer copies the shared launcher out of the snapshot.
     (source / "client" / "bin" / "tokenage").write_text(SHARED_LAUNCHER.read_text())
+
+
+def _age_directory(path: Path) -> None:
+    old = time.time() - 7200
+    os.utime(path, (old, old))
 
 
 def _render_installer(
@@ -169,6 +183,209 @@ def test_installs_sha_snapshot_and_preserves_user_state(tmp_path: Path) -> None:
     assert credentials.read_text() == '{"token":"keep"}\n'
 
 
+@pytest.mark.parametrize(
+    "previous", [None, "", "relative", "absolute", "trailing", "outside", "nested"]
+)
+def test_prunes_only_plain_version_children(tmp_path: Path, previous) -> None:
+    home, fake_bin, archive = _fixture(tmp_path)
+    tracker = home / ".tokenage"
+    versions = tracker / "versions"
+    versions.mkdir()
+    old = versions / NEXT_COMMIT
+    old.mkdir()
+    stale = versions / ".stale"
+    stale.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("untouched")
+    (versions / "linked").symlink_to(outside, target_is_directory=True)
+    (versions / "dangling").symlink_to(tmp_path / "missing")
+    (stale / "nested-link").symlink_to(outside, target_is_directory=True)
+    staging = versions / ".install-other-1"
+    staging.mkdir()
+    failed_delete = versions / ".removing-failed"
+    failed_delete.mkdir()
+    _age_directory(old)
+    _age_directory(stale)
+    _age_directory(staging)
+    _age_directory(failed_delete)
+    (versions / "plain-file").write_text("untouched")
+    if previous is not None:
+        target = {
+            "": "versions/missing",
+            "relative": f"versions/{NEXT_COMMIT}",
+            "absolute": str(old),
+            "trailing": f"versions/{NEXT_COMMIT}/",
+            "outside": str(outside),
+            "nested": f"versions/{NEXT_COMMIT}/nested",
+        }[previous]
+        (tracker / "current").symlink_to(target)
+    script = tmp_path / "install.sh"
+    script.write_text(_render_installer())
+    result = subprocess.run(
+        ["/bin/sh", str(script)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "TOKENAGE_HOME": str(tracker),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "TOKENAGE_FIXTURE_ARCHIVE": str(archive),
+            "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
+            "TOKENAGE_FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tracker / "current").resolve() == versions / COMMIT
+    assert old.exists() == (previous in {"relative", "absolute", "trailing"})
+    assert not stale.exists()
+    assert staging.is_dir()
+    assert not failed_delete.exists()
+    removed = 2 if old.exists() else 3
+    assert result.stdout.count(f"Removed {removed} old client version(s).") == 1
+    assert (versions / "linked").is_symlink()
+    assert (versions / "dangling").is_symlink()
+    assert (versions / "plain-file").read_text() == "untouched"
+    assert (outside / "keep").read_text() == "untouched"
+
+
+def test_prune_does_not_traverse_a_symlinked_versions_directory(tmp_path: Path) -> None:
+    installer = INSTALLER.read_text().replace(
+        "# Replace current via",
+        'mv "$VERSIONS_DIR" "$TRACKER_HOME/external"\n'
+        'ln -s "$TRACKER_HOME/external" "$VERSIONS_DIR"\n'
+        'mkdir "$VERSIONS_DIR/stale"\n# Replace current via',
+    )
+    result, home, _ = _run_install(tmp_path, installer_text=installer)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "warning:" in result.stderr
+    assert (home / ".tokenage" / "external" / "stale").is_dir()
+
+
+@pytest.mark.parametrize("pinned_agent", [None, "opencode", "kilo", "custom"])
+def test_two_updates_keep_only_current_and_previous(
+    tmp_path: Path, pinned_agent: str | None, monkeypatch
+) -> None:
+    first, home, fake_bin = _run_install(tmp_path)
+    assert first.returncode == 0, first.stdout + first.stderr
+    tracker = home / ".tokenage"
+    versions = tracker / "versions"
+    if pinned_agent:
+        config = home / ".config" / pinned_agent / "opencode.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            json.dumps(
+                {
+                    "plugin": [
+                        [
+                            str(versions / COMMIT / "plugins" / pinned_agent / "dist"),
+                            {"endpoint": "https://host.example/otlp/v1/logs"},
+                        ]
+                    ]
+                }
+            )
+        )
+        if pinned_agent == "custom":
+            monkeypatch.setenv(
+                "TOKENAGE_FAKE_PLUGIN_CONFIGS", json.dumps([str(config)])
+            )
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "TOKENAGE_HOME": str(tracker),
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
+        "TOKENAGE_FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
+        "TOKENAGE_SKIP_LOGIN": "1",
+    }
+    for sha, previous in [(NEXT_COMMIT, COMMIT), ("c" * 40, NEXT_COMMIT)]:
+        for existing in versions.iterdir():
+            _age_directory(existing)
+        # Already downloaded snapshots still exercise the swap and cleanup.
+        root = versions / sha
+        _write_snapshot(root)
+        python = root / ".venv" / "bin" / "python"
+        python.parent.mkdir(parents=True)
+        python.write_text(FAKE_PYTHON)
+        python.chmod(0o755)
+        script = tmp_path / "install.sh"
+        script.write_text(_render_installer(commit=sha))
+        result = subprocess.run(
+            ["/bin/sh", str(script)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (tracker / "current").resolve() == root
+        kept = {sha, previous}
+        if pinned_agent:
+            kept.add(COMMIT)
+        assert {path.name for path in versions.iterdir()} == kept
+        if pinned_agent and sha == "c" * 40:
+            assert "referenced by an agent" in result.stderr
+            assert "could not clean up" not in result.stderr
+            assert "Removed " not in result.stdout
+
+
+def test_prune_failure_warns_and_still_restarts(tmp_path: Path) -> None:
+    # Fail only snapshot deletion; the installer's temporary cleanup still runs.
+    installer = INSTALLER.read_text().replace('rm -rf "./$doomed"', "(exit 1)")
+    # The injected failure needs a stale child to attempt to remove.
+    installer = installer.replace(
+        "# Replace current via",
+        'mkdir "$VERSIONS_DIR/stale"\n'
+        "python3 -c 'import os, sys; os.utime(sys.argv[1], (0, 0))' "
+        '"$VERSIONS_DIR/stale"\n'
+        "# Replace current via",
+    )
+    result, home, _ = _run_install(tmp_path, installer_text=installer)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "warning:" in result.stderr
+    assert (home / ".tokenage" / "versions" / ".removing-stale").is_dir()
+    assert "client client restart --if-running" in (tmp_path / "python.log").read_text()
+
+
+@pytest.mark.parametrize(
+    "mode", ["normal", "configs-fail", "find-fail", "current-changed"]
+)
+def test_prune_preserves_in_flight_versions(
+    tmp_path: Path, monkeypatch, mode: str
+) -> None:
+    old = "c" * 40
+    young = "d" * 40
+    installer = INSTALLER.read_text().replace(
+        "# Replace current via",
+        f'mkdir "$VERSIONS_DIR/{old}" "$VERSIONS_DIR/{young}"\n'
+        "python3 -c 'import os, sys; os.utime(sys.argv[1], (0, 0))' "
+        f'"$VERSIONS_DIR/{old}"\n# Replace current via',
+    )
+    if mode == "configs-fail":
+        monkeypatch.setenv("TOKENAGE_FAKE_CONFIGS_FAIL", "1")
+    elif mode == "find-fail":
+        installer = installer.replace(
+            'find "./$version" -maxdepth 0 -mmin -60', "false"
+        )
+    elif mode == "current-changed":
+        installer = installer.replace(
+            "  prune_versions ||",
+            f'  rm "$TRACKER_HOME/current"\n'
+            f'  ln -s "versions/{old}/" "$TRACKER_HOME/current"\n'
+            "  prune_versions ||",
+        )
+    result, home, _ = _run_install(tmp_path, installer_text=installer)
+    assert result.returncode == 0, result.stdout + result.stderr
+    versions = home / ".tokenage" / "versions"
+    assert (versions / young).is_dir()
+    assert (versions / old).exists() == (mode != "normal")
+    assert (home / ".tokenage" / "current").resolve().is_dir()
+    assert ("Removed 1 old client version(s)." in result.stdout) == (mode == "normal")
+    assert ("could not clean up" in result.stderr) == (mode == "configs-fail")
+
+
 def test_preview_uses_pinned_commit_without_looking_up_main(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -262,6 +479,9 @@ def test_reinstall_checks_protocol_before_replacing_current_symlink(
     tracker_home = home / ".tokenage"
     current = tracker_home / "current"
     original_version = current.resolve()
+    stale = tracker_home / "versions" / "stale"
+    stale.mkdir()
+    _age_directory(stale)
 
     next_source = tmp_path / "source" / f"tokenage-{NEXT_COMMIT}"
     _write_snapshot(next_source)
@@ -297,6 +517,7 @@ def test_reinstall_checks_protocol_before_replacing_current_symlink(
     )
     assert incompatible.returncode != 0
     assert current.resolve() == original_version
+    assert stale.is_dir()
 
     env.pop("TOKENAGE_FAKE_PROTOCOL_FAIL")
     updated = subprocess.run(
@@ -306,6 +527,7 @@ def test_reinstall_checks_protocol_before_replacing_current_symlink(
     assert current.is_symlink()
     assert current.resolve() == tracker_home / "versions" / NEXT_COMMIT
     assert original_version.is_dir()
+    assert not stale.exists()
     assert not list(original_version.glob(".current-*"))
     assert (tracker_home / "config.yaml").read_text() == "provider: keep\n"
     assert (tracker_home / "credentials.json").read_text() == '{"token":"keep"}\n'
@@ -419,6 +641,9 @@ def test_updater_skip_login_mode_preserves_existing_credentials(
     restart_fails: bool,
 ) -> None:
     home, fake_bin, archive = _fixture(tmp_path)
+    stale = home / ".tokenage" / "versions" / "stale"
+    stale.mkdir(parents=True)
+    _age_directory(stale)
     script = tmp_path / "install.sh"
     script.write_text(_render_installer())
     env = {
@@ -448,6 +673,7 @@ def test_updater_skip_login_mode_preserves_existing_credentials(
     assert "-m client check-server --server https://host.example" in log
     assert "-P -m client setup" in log
     assert "-P -m client client restart --if-running" in log
+    assert stale.exists() == restart_fails
     if restart_fails:
         assert "service restart failed" in result.stderr
         return

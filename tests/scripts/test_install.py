@@ -201,8 +201,14 @@ def test_prunes_only_plain_version_children(tmp_path: Path, previous) -> None:
     (versions / "linked").symlink_to(outside, target_is_directory=True)
     (versions / "dangling").symlink_to(tmp_path / "missing")
     (stale / "nested-link").symlink_to(outside, target_is_directory=True)
+    staging = versions / ".install-other-1"
+    staging.mkdir()
+    failed_delete = versions / ".removing-failed"
+    failed_delete.mkdir()
     _age_directory(old)
     _age_directory(stale)
+    _age_directory(staging)
+    _age_directory(failed_delete)
     (versions / "plain-file").write_text("untouched")
     if previous is not None:
         target = {
@@ -235,7 +241,9 @@ def test_prunes_only_plain_version_children(tmp_path: Path, previous) -> None:
     assert (tracker / "current").resolve() == versions / COMMIT
     assert old.exists() == (previous in {"relative", "absolute", "trailing"})
     assert not stale.exists()
-    removed = 1 if old.exists() else 2
+    assert staging.is_dir()
+    assert not failed_delete.exists()
+    removed = 2 if old.exists() else 3
     assert result.stdout.count(f"Removed {removed} old client version(s).") == 1
     assert (versions / "linked").is_symlink()
     assert (versions / "dangling").is_symlink()
@@ -325,7 +333,7 @@ def test_two_updates_keep_only_current_and_previous(
 
 def test_prune_failure_warns_and_still_restarts(tmp_path: Path) -> None:
     # Fail only snapshot deletion; the installer's temporary cleanup still runs.
-    installer = INSTALLER.read_text().replace('rm -rf "./$version"', "(exit 1)")
+    installer = INSTALLER.read_text().replace('rm -rf "./$doomed"', "(exit 1)")
     # The injected failure needs a stale child to attempt to remove.
     installer = installer.replace(
         "# Replace current via",
@@ -337,7 +345,7 @@ def test_prune_failure_warns_and_still_restarts(tmp_path: Path) -> None:
     result, home, _ = _run_install(tmp_path, installer_text=installer)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "warning:" in result.stderr
-    assert (home / ".tokenage" / "versions" / "stale").is_dir()
+    assert (home / ".tokenage" / "versions" / ".removing-stale").is_dir()
     assert "client client restart --if-running" in (tmp_path / "python.log").read_text()
 
 

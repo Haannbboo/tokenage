@@ -272,6 +272,9 @@ prune_versions() (
   for version in * .[!.]* ..?*; do
     [ -d "$version" ] && [ ! -L "$version" ] || continue
     [ "$version" != "$COMMIT" ] && [ "$version" != "$previous" ] || continue
+    case "$version" in
+      .install-*) continue ;; # another installer's staging directory
+    esac
     # Another installer may have swapped current or still be preparing a
     # snapshot. Re-read current and leave recent directories alone so neither
     # installer deletes the other's version; a later update can retire them.
@@ -304,7 +307,13 @@ EOF
       printf 'tokenage: warning: retaining client version %s referenced by an agent configuration (or configuration unreadable)\n' "$version" >&2
       continue
     fi
-    if rm -rf "./$version"; then
+    # A partial delete must not leave a directory a reinstall of this commit
+    # would reuse, so rename first. A failed delete retries on a later update.
+    case "$version" in
+      .removing-*) doomed=$version ;;
+      *) doomed=.removing-$version ;;
+    esac
+    if { [ "$doomed" = "$version" ] || mv -- "./$version" "./$doomed"; } && rm -rf "./$doomed"; then
       removed=$((removed + 1))
     else
       prune_rc=1

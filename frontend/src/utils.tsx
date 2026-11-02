@@ -155,6 +155,7 @@ export function formatRate(input: number | null | undefined) {
 }
 
 export function formatLatency(input: number | null | undefined) {
+  if (input == null) return '—'
   const latency = value(input)
   return latency >= 1000 ? `${(latency / 1000).toFixed(2)}s` : `${Math.round(latency)}ms`
 }

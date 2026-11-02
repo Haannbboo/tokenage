@@ -1374,7 +1374,6 @@
 .session-lane-tick:last-child { transform: translateX(-100%); }
 .session-gap::before { content: '╱╱'; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); color: var(--text-primary); font-weight: bold; }
 .session-tools-more { border: 0; padding: 0; }
-.session-tools-more summary { cursor: pointer; list-style: none; }
-.session-tools-more summary::-webkit-details-marker { display: none; }
-.session-tools-more:focus-within .tooltip-text, .session-tools-more[open] .tooltip-text { visibility: visible; opacity: 1; }
+.session-tools-more button { cursor: pointer; border: 0; padding: 0; background: none; color: inherit; font: inherit; }
+.session-tools-more:focus-within .tooltip-text:not([popover]) { visibility: visible; opacity: 1; }
 .session-tool-extra { display: block; white-space: nowrap; }

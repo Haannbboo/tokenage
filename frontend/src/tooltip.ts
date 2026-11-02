@@ -47,8 +47,7 @@ export function installTooltips() {
     tooltip = null
   }
 
-  function onMouseOver(event: MouseEvent) {
-    const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.has-tooltip') : null
+  function show(target: HTMLElement | null) {
     if (!target || target === trigger) return
     const content = target.querySelector<HTMLElement>(':scope > .tooltip-text')
     if (!content) return
@@ -65,6 +64,21 @@ export function installTooltips() {
     }
   }
 
+  function onMouseOver(event: MouseEvent) {
+    show(event.target instanceof Element ? event.target.closest<HTMLElement>('.has-tooltip') : null)
+  }
+
+  function onFocusOrClick(event: Event) {
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.session-tools-more') : null
+    if (target) show(target)
+    else if (event.type === 'click' && trigger?.classList.contains('session-tools-more')) close()
+  }
+
+  function onFocusOut(event: FocusEvent) {
+    if (trigger?.classList.contains('session-tools-more') &&
+        !(event.relatedTarget instanceof Node && trigger.contains(event.relatedTarget))) close()
+  }
+
   function onWheel(event: WheelEvent) {
     if (!trigger || !tooltip || !(event.target instanceof Node) || !trigger.contains(event.target)) return
     if (tooltip.scrollHeight <= tooltip.clientHeight) return
@@ -79,6 +93,9 @@ export function installTooltips() {
 
   document.addEventListener('mouseover', onMouseOver)
   document.addEventListener('mouseout', onMouseOut)
+  document.addEventListener('focusin', onFocusOrClick)
+  document.addEventListener('focusout', onFocusOut)
+  document.addEventListener('click', onFocusOrClick, true)
   document.addEventListener('wheel', onWheel, { passive: false })
   window.addEventListener('scroll', position, true)
   window.addEventListener('resize', position)
@@ -86,6 +103,9 @@ export function installTooltips() {
     close()
     document.removeEventListener('mouseover', onMouseOver)
     document.removeEventListener('mouseout', onMouseOut)
+    document.removeEventListener('focusin', onFocusOrClick)
+    document.removeEventListener('focusout', onFocusOut)
+    document.removeEventListener('click', onFocusOrClick, true)
     document.removeEventListener('wheel', onWheel)
     window.removeEventListener('scroll', position, true)
     window.removeEventListener('resize', position)

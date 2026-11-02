@@ -102,3 +102,14 @@ it('formats unattributed tool timestamps in milliseconds', async () => {
   render(createElement(SessionDetail, { session: { session_id: 'abc', duration_s: 1, request_count: 0, total_tokens: 0, total_cost_usd: 0 } as SessionSummary, tz: 'UTC', onNavigateToLogs: vi.fn() }))
   expect(await screen.findByText(/Search · Oct 21/)).toBeTruthy()
 })
+
+it('shows missing latency in the interaction and expanded detail', async () => {
+  const rows = [{ id: 'missing', ts: 1_000_000, model: 'model-a', latency_ms: null }]
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => ({ ok: true, json: async () => url.startsWith('/usage?') ? rows : [] })))
+  const view = render(createElement(SessionDetail, { session: { session_id: 'abc', duration_s: 1, request_count: 1, total_tokens: 1, total_cost_usd: 1, model: 'model-a' } as SessionSummary, onNavigateToLogs: vi.fn() }))
+  await waitFor(() => expect(view.container.querySelector('#session-request-missing')).toBeTruthy())
+  const row = view.container.querySelector('#session-request-missing')!
+  expect(row.children[4].textContent).toBe('—')
+  fireEvent.click(row)
+  await waitFor(() => expect([...view.container.querySelectorAll('.detail-group')].find(group => group.querySelector('.detail-label')?.textContent === 'Latency')?.querySelector('.detail-value')?.textContent).toBe('—'))
+})

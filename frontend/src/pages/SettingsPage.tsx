@@ -219,7 +219,7 @@ export function SettingsPage() {
             </div>
             <div className="panel-body" style={{ padding: '0' }}>
               <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                {t('Browsers signed in to this account. A session idle for 30 days signs out automatically.')}
+                {t('Browsers signed in to this account. A session idle for 30 days expires.')}
               </div>
               <table className="table">
                 <thead>

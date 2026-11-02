@@ -294,7 +294,7 @@ export const zh: Record<string, string> = {
   'Sign out': '退出登录',
   'Devices': '设备',
   'Installed machines. Revoking a machine stops tracking immediately.': '已安装的设备。撤销设备后会立即停止追踪。',
-  'Browsers signed in to this account. A session idle for 30 days signs out automatically.': '已登录此账号的浏览器。闲置 30 天的会话会自动退出。',
+  'Browsers signed in to this account. A session idle for 30 days expires.': '已登录此账号的浏览器。闲置 30 天的会话会过期。',
   'Machine': '设备',
   'Installed version': '已安装版本',
   'Authorized': '已授权',

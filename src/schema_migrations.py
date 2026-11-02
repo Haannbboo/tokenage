@@ -137,7 +137,7 @@ def _drop_evaluator_schema(engine) -> list[str]:
         with engine.begin() as connection:
             if engine.dialect.name == "postgresql":
                 connection.execute(text("SET LOCAL lock_timeout = '2s'"))
-            else:
+            elif engine.dialect.name == "sqlite":
                 # Serialize SQLite schema inspection and DDL with other writers.
                 connection.exec_driver_sql("BEGIN IMMEDIATE")
             insp = inspect(connection)

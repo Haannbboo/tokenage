@@ -198,10 +198,8 @@ def test_google_callback_happy_path(api_module, monkeypatch, fresh_db):
     assert body["token"] == {"kind": "web", "device_name": "browser"}
 
 
-def test_second_login_retires_the_previous_web_session(
-    api_module, monkeypatch, fresh_db
-):
-    """One live browser session per user: the new login revokes the old cookie."""
+def test_second_login_keeps_the_previous_web_session(api_module, monkeypatch, fresh_db):
+    """Concurrent browser logins remain independent."""
     _enable_auth(monkeypatch)
     _mock_google_flow(api_module, monkeypatch)
     first = TestClient(api_module.app)
@@ -214,10 +212,16 @@ def test_second_login_retires_the_previous_web_session(
     second.get(f"/auth/google/callback?code=the-code&state={state}")
     assert second.get("/auth/me").status_code == 200
 
+    assert first.get("/auth/me").json()["user"] is not None
+    data = second.get("/auth/devices").json()
+    assert data["devices"] == []
+    assert len(data["web_sessions"]) == 2
+    assert sum(row["current"] for row in data["web_sessions"]) == 1
+    other = next(row for row in data["web_sessions"] if not row["current"])
+    assert set(other) == {"id", "device_name", "created_at", "last_used_at", "current"}
+    assert second.post(f"/auth/devices/{other['id']}/revoke").status_code == 204
     assert first.get("/auth/me").json()["user"] is None
-
-    # The surviving session is a cookie, not a listed device.
-    assert second.get("/auth/devices").json()["devices"] == []
+    assert second.get("/auth/me").json()["user"] is not None
 
 
 def test_google_callback_state_replay(api_module, monkeypatch, fresh_db):
@@ -656,7 +660,7 @@ def test_devices_list_marks_current(api_module, monkeypatch, fresh_db):
     )
     assert devices.status_code == 200
     body = devices.json()["devices"]
-    # The browser session is not a device: a new login replaces it.
+    assert len(devices.json()["web_sessions"]) == 1
     assert [device["device_name"] for device in body] == ["old-laptop"]
     assert body[0]["current"] is True
     assert body[0]["kind"] == "cli"
@@ -985,3 +989,88 @@ def test_authlib_verify_rejects_wrong_nonce(api_module, monkeypatch):
             await _routes_module().auth_google.verify_id_token(token, "wrong-nonce")
 
     asyncio.run(run())
+
+
+def test_web_idle_expiry_and_activity(api_module, monkeypatch, fresh_db):
+    from src.auth import tokens
+    from src.database.engine import get_engine
+
+    now = 10_000_000_000_000
+    monkeypatch.setattr(tokens, "_now_micros", lambda: now)
+    web, user = tokens.mint_token(
+        "idle@example.com", kind="web", db_path=fresh_db.db_path
+    )
+    cli, _ = tokens.mint_token("idle@example.com", kind="cli", db_path=fresh_db.db_path)
+    with get_engine(fresh_db.db_path).begin() as conn:
+        conn.execute(
+            text("UPDATE auth_tokens SET created_at = :old, last_used_at = NULL"),
+            {"old": now - tokens.WEB_IDLE_TIMEOUT_MICROS},
+        )
+    assert tokens.resolve_token(web, fresh_db.db_path) is None
+    assert tokens.resolve_token(cli, fresh_db.db_path) is not None
+    assert all(
+        row.kind != "web" for row in tokens.list_user_tokens(user.id, fresh_db.db_path)
+    )
+    with get_engine(fresh_db.db_path).begin() as conn:
+        conn.execute(
+            text("UPDATE auth_tokens SET last_used_at = :recent WHERE kind = 'web'"),
+            {"recent": now - tokens.ACTIVITY_UPDATE_INTERVAL_MICROS - 1},
+        )
+    assert tokens.resolve_token(web, fresh_db.db_path) is not None
+    with get_engine(fresh_db.db_path).connect() as conn:
+        assert (
+            conn.execute(
+                text("SELECT last_used_at FROM auth_tokens WHERE kind = 'web'")
+            ).scalar_one()
+            == now
+        )
+
+
+def test_web_session_owner_scope_and_label(api_module, monkeypatch, fresh_db):
+    _enable_auth(monkeypatch)
+    _mock_google_flow(api_module, monkeypatch)
+    first = TestClient(
+        api_module.app,
+        headers={
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X) Chrome/120 Safari/537"
+        },
+    )
+    state = _start_login(api_module, monkeypatch, first)
+    first.get(f"/auth/google/callback?code=x&state={state}")
+    session = first.get("/auth/devices").json()["web_sessions"][0]
+    assert session["device_name"] == "Chrome on macOS"
+    _mock_google_flow(api_module, monkeypatch, email="other@example.com")
+    other = TestClient(api_module.app)
+    state = _start_login(api_module, monkeypatch, other)
+    other.get(f"/auth/google/callback?code=x&state={state}")
+    assert other.post(f"/auth/devices/{session['id']}/revoke").status_code == 404
+    assert other.post("/auth/devices/missing/revoke").status_code == 404
+    assert first.get("/auth/me").json()["user"] is not None
+
+
+def test_only_ingest_activity_updates_machine_last_seen(api_module, fresh_db):
+    from src.auth import tokens
+    from src.database.engine import get_engine
+
+    _, user = tokens.mint_token(
+        "seen@example.com", kind="web", db_path=fresh_db.db_path
+    )
+    cli, ingest, device = tokens.mint_device_tokens(
+        user.id, "seen-installation", "laptop", db_path=fresh_db.db_path
+    )
+    web, _ = tokens.mint_token("seen@example.com", kind="web", db_path=fresh_db.db_path)
+
+    def last_seen():
+        with get_engine(fresh_db.db_path).connect() as conn:
+            return conn.execute(
+                text("SELECT last_seen_at FROM devices WHERE id = :id"),
+                {"id": device.id},
+            ).scalar_one()
+
+    with get_engine(fresh_db.db_path).begin() as conn:
+        conn.execute(text("UPDATE devices SET last_seen_at = 1"))
+    assert tokens.resolve_token(web, fresh_db.db_path) is not None
+    assert tokens.resolve_token(cli, fresh_db.db_path) is not None
+    assert last_seen() == 1
+    assert tokens.resolve_token(ingest, fresh_db.db_path) is not None
+    assert last_seen() > 1

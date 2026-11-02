@@ -232,6 +232,46 @@ def auth_me(request: Request):
     }
 
 
+def _browser_label(request: Request) -> str:
+    """Extract only coarse browser and OS names; never persist the user agent."""
+    ua = request.headers.get("user-agent", "").lower()
+    browser = next(
+        (
+            name
+            for marker, name in (
+                ("edg/", "Edge"),
+                ("opr/", "Opera"),
+                ("firefox/", "Firefox"),
+                ("crios/", "Chrome"),
+                ("chrome/", "Chrome"),
+                ("safari/", "Safari"),
+            )
+            if marker in ua
+        ),
+        "Browser",
+    )
+    os_name = next(
+        (
+            name
+            for marker, name in (
+                ("windows", "Windows"),
+                ("android", "Android"),
+                ("iphone", "iOS"),
+                ("ipad", "iOS"),
+                ("mac os", "macOS"),
+                ("linux", "Linux"),
+            )
+            if marker in ua
+        ),
+        "Unknown OS",
+    )
+    return (
+        f"{browser} on {os_name}"
+        if browser != "Browser" and os_name != "Unknown OS"
+        else "browser"
+    )
+
+
 @router.get("/auth/local/login")
 def auth_local_login(request: Request, code: str = ""):
     """Redeem a one-time link from `tokenage server login-link` for a session."""
@@ -239,10 +279,8 @@ def auth_local_login(request: Request, code: str = ""):
         raise HTTPException(status_code=404, detail="not found")
     if auth_google.pop_login_code(code) is None:
         raise HTTPException(status_code=400, detail="invalid or expired link")
-    # One live browser session: the new login retires the old cookie.
-    _retire_web_sessions(get_local_owner().id)
     plaintext_token, _ = mint_token(
-        LOCAL_OWNER_EMAIL, kind="web", device_name="browser"
+        LOCAL_OWNER_EMAIL, kind="web", device_name=_browser_label(request)
     )
     response = _frontend_redirect(_request_frontend_origin(request))
     response.set_cookie(
@@ -345,10 +383,9 @@ async def auth_google_callback(request: Request):
         # like the web path does.
         code_response.delete_cookie(OAUTH_STATE_COOKIE_NAME)
         return code_response
-    # One live browser session per user: the new login retires the old cookie.
-    user = get_or_create_user(email)
-    _retire_web_sessions(user.id)
-    plaintext_token, user = mint_token(email, kind="web", device_name="browser")
+    plaintext_token, user = mint_token(
+        email, kind="web", device_name=_browser_label(request)
+    )
     update_user_name(user.id, str(claims.get("name") or "").strip() or None)
     response = _frontend_redirect(origin)
     response.set_cookie(
@@ -378,18 +415,23 @@ def auth_devices(
     include_revoked: bool = False,
     user: User = Depends(get_current_user),
 ):
-    """List installed machines and the caller's unlinked tokens.
-
-    ``include_revoked`` also returns revoked machines (for the usage device
-    filter, which must still name them).
-
-    Browser sessions are deliberately absent: signing in again retires the
-    previous one, so a stale browser entry is never left to manage here.
-    """
+    """List installed machines, legacy tokens, and individual web sessions."""
     auth_token = getattr(request.state, "auth_token", None)
     current_id = auth_token.id if auth_token is not None else None
     current_device_id = auth_token.device_id if auth_token is not None else None
+    tokens = list_user_tokens(user.id)
     return {
+        "web_sessions": [
+            {
+                "id": token.id,
+                "device_name": token.device_name or "browser",
+                "created_at": token.created_at,
+                "last_used_at": token.last_used_at,
+                "current": token.id == current_id,
+            }
+            for token in tokens
+            if token.kind == "web"
+        ],
         "devices": [
             {
                 "id": device.id,
@@ -415,9 +457,9 @@ def auth_devices(
                 "client_commit": None,
                 "current": device.id == current_id,
             }
-            for device in list_user_tokens(user.id)
-            if device.device_id is None and device.kind != "web"
-        ]
+            for device in tokens
+            if device.device_id is None and device.kind == "cli"
+        ],
     }
 
 
@@ -477,19 +519,6 @@ class CliExchangeRequest(BaseModel):
 def _sanitize_device_name(raw: str | None) -> str:
     cleaned = "".join(c for c in (raw or "").strip() if c.isprintable())
     return cleaned[:64] or _DEFAULT_DEVICE_NAME
-
-
-def _retire_web_sessions(user_id: str) -> None:
-    """Retire the user's existing browser sessions so a new login is the only one.
-
-    Keeps the session list from growing one indistinguishable entry per login,
-    and makes a sign-in from a new browser take over the old one. Called before
-    minting, so the fresh token is never a candidate.
-    """
-    # ponytail: one UPDATE per stale row; a single UPDATE if that ever matters.
-    for stale in list_user_tokens(user_id):
-        if stale.kind == "web":
-            revoke_token(stale.id, user_id)
 
 
 def _normalize_cli_code(raw: str) -> str:

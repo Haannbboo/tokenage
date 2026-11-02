@@ -198,7 +198,7 @@ def test_login_link_signs_a_remote_browser_in_once(
     assert replay.status_code == 400
 
 
-def test_login_link_second_login_retires_the_first_session(
+def test_login_link_second_login_keeps_the_first_session(
     api_module, cli_module, fresh_db, capsys
 ):
     sessions = []
@@ -207,6 +207,9 @@ def test_login_link_second_login_retires_the_first_session(
         remote = _remote(api_module)
         remote.get("/auth/local/login?" + link.split("?", 1)[1])
         sessions.append(remote)
+    assert _me_email(sessions[0]) == OWNER
+    assert _me_email(sessions[1]) == OWNER
+    assert sessions[0].post("/auth/logout").status_code == 204
     assert _me_email(sessions[0]) is None
     assert _me_email(sessions[1]) == OWNER
 

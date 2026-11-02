@@ -210,6 +210,14 @@ export type DeviceRow = {
   revoked_at?: number | null
 }
 
+export type WebSession = {
+  id: string
+  device_name: string
+  created_at: number
+  last_used_at: number | null
+  current: boolean
+}
+
 export type DeviceStatus = {
   device_id: string | null
   device_name: string | null

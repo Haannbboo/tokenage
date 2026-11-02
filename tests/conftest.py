@@ -197,7 +197,6 @@ _TRUNCATE_TABLES = [
     "price_snapshots",
     "usage_hourly",
     "tool_calls",
-    "evaluation_jobs",
     "sessions",
     "usage",
     "base_urls",

@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import DBAPIError
 
 from .database import get_engine, init_db
 from .database.models import metadata
 
-TENANT_TABLES = ("usage", "usage_hourly", "sessions", "tool_calls", "evaluation_jobs")
-DEVICE_ID_TABLES = ("usage", "usage_hourly", "evaluation_jobs")
-LEGACY_EVALUATION_JOB_INDEX = "ix_evaluation_jobs_one_active_per_session"
+TENANT_TABLES = ("usage", "usage_hourly", "sessions", "tool_calls")
+DEVICE_ID_TABLES = ("usage", "usage_hourly")
+RETIRED_SESSION_COLUMNS = (
+    "outcome",
+    "source",
+    "confidence",
+    "task_title",
+    "task_title_zh",
+    "summary",
+    "evidence_json",
+    "failure_reason",
+    "evaluated_at",
+    "project",
+)
 
 # Run in one transaction. Rebuild the rollup from raw usage, which is kept, so
 # the backfill is exact even if ingest already wrote hourly rows. Old
@@ -58,7 +70,7 @@ HOURLY_BACKFILL = (
 
 
 def _require_no_null_user_ids(engine, insp) -> None:
-    """Fail before any DDL, with a named error, rather than half-converging."""
+    """Fail before tenant backfill DDL with a named error."""
     with engine.connect() as connection:
         for (_, table), columns in insp.get_multi_columns(
             filter_names=list(TENANT_TABLES)
@@ -112,6 +124,53 @@ def _ensure_postgres_usage_cursor_index(engine) -> bool:
         return True
 
 
+def _drop_evaluator_schema(engine) -> list[str]:
+    """Retire evaluator storage before any tenant/device backfill touches it.
+
+    Operators back up the database before rollout. Every node must run the code
+    from this release before the migration runs: older code selects the dropped
+    columns.
+    Keep the drops transactional and bounded: another node may still hold a lock.
+    """
+    applied: list[str] = []
+    try:
+        with engine.begin() as connection:
+            if engine.dialect.name == "postgresql":
+                connection.execute(text("SET LOCAL lock_timeout = '2s'"))
+            elif engine.dialect.name == "sqlite":
+                # Serialize SQLite schema inspection and DDL with other writers.
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
+            insp = inspect(connection)
+            if insp.has_table("evaluation_jobs"):
+                connection.execute(text("DROP TABLE IF EXISTS evaluation_jobs"))
+                applied.append("evaluation_jobs.drop")
+            if not insp.has_table("sessions"):
+                return applied
+            columns = {c["name"] for c in insp.get_columns("sessions")}
+            retiring = columns.intersection(RETIRED_SESSION_COLUMNS)
+            for name in RETIRED_SESSION_COLUMNS:
+                if name in retiring:
+                    # IF EXISTS also tolerates two Postgres nodes restarting
+                    # against the same database with a stale inspection result.
+                    guard = "IF EXISTS " if engine.dialect.name == "postgresql" else ""
+                    connection.execute(
+                        text(f"ALTER TABLE sessions DROP COLUMN {guard}{name}")
+                    )
+                    applied.append(f"sessions.drop_{name}")
+    except DBAPIError as exc:
+        if (
+            getattr(exc.orig, "pgcode", None) == "55P03"
+            or getattr(exc.orig, "sqlstate", None) == "55P03"
+        ):
+            raise RuntimeError(
+                "Evaluator schema removal hit the PostgreSQL lock timeout (2s); "
+                "no evaluator drops were committed. Release the blocking transaction "
+                "and retry the migration."
+            ) from exc
+        raise
+    return applied
+
+
 def migrate_database(db_path: str | None = None) -> list[str]:
     """Bring a database up to the models: create missing indexes, replace the
     daily rollup with the hourly one, and make user_id NOT NULL (Postgres).
@@ -120,12 +179,12 @@ def migrate_database(db_path: str | None = None) -> list[str]:
     """
     engine = get_engine(db_path)
     init_db(db_path)  # create_all: missing tables, with their indexes
-    applied: list[str] = []
+    applied = _drop_evaluator_schema(engine)
     insp = inspect(engine)
     if engine.dialect.name == "postgresql":
         _require_no_null_user_ids(engine, insp)
     elif stale := _nullable_user_id_tables(insp):
-        # Checked before any DDL: success here would hide NULL-owner rows.
+        # Reject before tenant/device backfills: success would hide NULL-owner rows.
         raise RuntimeError(
             f"SQLite tables {stale} have a nullable user_id; this schema has "
             "no upgrade path. Rebuild the database before migrating."
@@ -201,28 +260,6 @@ def migrate_database(db_path: str | None = None) -> list[str]:
             if index.name not in existing.get(table.name, ()):
                 index.create(engine, checkfirst=True)
                 applied.append(f"{table.name}.{index.name}")
-
-    # Evaluation moved to the client: the old server queue's one-active-job
-    # index would block a second client run on the same session, and any
-    # queued/running rows it guarded can never finish without the worker.
-    if LEGACY_EVALUATION_JOB_INDEX in existing.get("evaluation_jobs", ()):
-        with engine.begin() as connection:
-            connection.execute(
-                text(f"DROP INDEX IF EXISTS {LEGACY_EVALUATION_JOB_INDEX}")
-            )
-        applied.append("evaluation_jobs.drop_one_active_index")
-
-    with engine.begin() as connection:
-        result = connection.execute(
-            text(
-                "UPDATE evaluation_jobs SET status = 'failed', "
-                "error = 'Evaluation moved to the client', "
-                "finished_at = COALESCE(finished_at, created_at) "
-                "WHERE device_id IS NULL AND status NOT IN ('succeeded', 'failed')"
-            )
-        )
-        if result.rowcount:  # type: ignore[attr-defined]
-            applied.append("evaluation_jobs.fail_legacy_active")
 
     # ponytail: SQLite cannot ALTER a column to NOT NULL; its databases get the
     # constraint from create_all (a rebuilt/new file). Postgres is altered here.

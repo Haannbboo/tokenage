@@ -1,7 +1,7 @@
 """Retired evaluation endpoints reject old clients without modifying data."""
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
 # Frozen from the old client's EvaluationStartedReport and completed report.
@@ -35,7 +35,7 @@ def test_retired_routes_are_json_404_and_do_not_write(
 ):
     from src.auth.tokens import get_or_create_user, mint_device_tokens
     from src.config.app import CONFIG
-    from src.database.models import EvaluationJob, SessionRecord
+    from src.database.models import SessionRecord
 
     user = get_or_create_user("retirement@example.com", db_path=fresh_db.db_path)
     token, _, _ = mint_device_tokens(
@@ -53,8 +53,7 @@ def test_retired_routes_are_json_404_and_do_not_write(
                 started=1,
                 ended=2,
                 updated_at="2026-01-01",
-                outcome="failed",
-                task_title="historic",
+                request_count=3,
             )
         )
         db.commit()
@@ -91,6 +90,7 @@ def test_retired_routes_are_json_404_and_do_not_write(
         assert response.status_code == 404, (method, path, response.text)
         assert response.json() == {"detail": "Not Found"}
     with Session(engine) as db:
-        assert db.scalars(select(EvaluationJob)).all() == []
+        assert not inspect(engine).has_table("evaluation_jobs")
+        assert len(db.scalars(select(SessionRecord)).all()) == 1
         row = db.get(SessionRecord, "session-1")
-        assert (row.outcome, row.task_title) == ("failed", "historic")
+        assert (row.client_source, row.request_count) == ("codex", 3)

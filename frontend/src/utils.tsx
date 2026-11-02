@@ -512,6 +512,7 @@ export function getSourceIcon(source: string, theme: Theme = getTheme()) {
   if (s.includes('codex')) return <img src="/models/codex-color.svg" alt="" style={style} />
   if (s.includes('opencode') || s.includes('open-code')) return <img src="/models/opencode.svg" alt="" style={style} />
   if (s.includes('claude')) return <img src="/models/claude-ai-icon.svg" alt="" style={style} />
+  if (s.includes('kilo')) return <img src={dark ? '/models/kilocode-dark.png' : '/models/kilocode.png'} alt="" style={style} />
   return null
 }
 

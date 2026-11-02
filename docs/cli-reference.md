@@ -12,8 +12,8 @@ or both. They are installed separately and share only the launcher; the client
 never runs from the server clone, even on the same machine.
 
 - **Client** — the tracking wrapper, agent configuration, sign-in, local proxy,
-  automatic session evaluation, and device reporting.
-- **Server** — the API, OTLP collector, dashboard, and evaluation result storage.
+  and device reporting.
+- **Server** — the API, OTLP collector, dashboard, and usage storage.
   Reached through `tokenage server ...`.
 
 Anything that is not one of the subcommands below is run as a child command with
@@ -233,8 +233,8 @@ db:
   # url: postgresql+psycopg://user:pass@host:5432/db
 ```
 
-The local proxy and automatic evaluation are configured in `~/.tokenage/client.yaml`,
-not here. See the README's proxy and automatic session evaluation sections.
+The local proxy is configured in `~/.tokenage/client.yaml`, not here. See the
+README's proxy section.
 
 `tokenage server start` merges missing defaults from `config.example.yaml`
 into the user config without overwriting existing values. `tokenage server
@@ -247,8 +247,7 @@ Client state, all under `$TOKENAGE_HOME` (default `~/.tokenage`):
 | `current` | client | Symlink to the active client source snapshot. |
 | `versions/` | client | Previous client snapshots. |
 | `credentials.json` | client | Signed-in identity, CLI and ingest tokens, `otlp_logs_endpoint`. Mode `0600`. |
-| `client.yaml` | client | Local proxy and evaluation settings. |
-| `evaluations/` | client | One latest evaluation result per session, its covered revision, and submission status. |
+| `client.yaml` | client | Local proxy settings. |
 | `config.yaml` | server | Server config. |
 | `supervisord.conf` | server | Written by `server start`. |
 | `run/` | server | supervisord pid and socket. |

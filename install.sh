@@ -248,6 +248,14 @@ ln -s "versions/$COMMIT" "$CURRENT_TMP"
 "$VERSION_DIR/.venv/bin/python" -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' \
   "$CURRENT_TMP" "$TRACKER_HOME/current"
 
+# Restart the new snapshot immediately after the swap.
+INSTALL_RC=0
+TOKENAGE_CLIENT_COMMIT=$COMMIT PYTHONPATH=$VERSION_DIR \
+  "$VERSION_DIR/.venv/bin/python" -P -m client client restart --if-running || {
+    printf '%s\n' 'tokenage: error: client update installed, but service restart failed' >&2
+    INSTALL_RC=1
+  }
+
 if [ "${TOKENAGE_SKIP_LOGIN:-0}" = 1 ]; then
   say "Refreshing agent configuration with the updated client..."
   TOKENAGE_CLIENT_COMMIT=$COMMIT PYTHONPATH=$VERSION_DIR \
@@ -256,14 +264,14 @@ if [ "${TOKENAGE_SKIP_LOGIN:-0}" = 1 ]; then
   case $SETUP_RC in
     0) ;;
     3) say "Not signed in; agents left unwired. Run: $BIN_DIR/tokenage login" ;;
-    *) fail 'client update installed, but agent configuration refresh failed' ;;
+    *) printf '%s\n' 'tokenage: error: client update installed, but agent configuration refresh failed' >&2; INSTALL_RC=1 ;;
   esac
   say "Installed tokenage $COMMIT. Existing credentials were preserved; sign-in skipped."
 else
   say "Installed tokenage $COMMIT. Starting sign-in..."
   if ( : </dev/tty ) >/dev/null 2>&1; then
     TOKENAGE_CLIENT_COMMIT=$COMMIT PYTHONPATH=$VERSION_DIR \
-      "$VERSION_DIR/.venv/bin/python" -P -m client login --server "$SERVER_URL" </dev/tty
+      "$VERSION_DIR/.venv/bin/python" -P -m client login --server "$SERVER_URL" </dev/tty || INSTALL_RC=1
   else
     say "No interactive terminal is available. Finish setup with: $BIN_DIR/tokenage login --server $SERVER_URL"
   fi
@@ -283,3 +291,5 @@ case ":${ORIGINAL_PATH}:" in
     printf '\nAdd this directory to your shell PATH to run tokenage from anywhere:\n  export PATH="%s:$PATH"\n' "$BIN_DIR"
     ;;
 esac
+
+exit "$INSTALL_RC"

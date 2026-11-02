@@ -9,8 +9,12 @@ export function shouldProxyApiRequest(requestUrl) {
     pathname.startsWith('/auth/') ||
     pathname === '/usage' ||
     pathname.startsWith('/usage/') ||
+    // Retired endpoints must reach the API's JSON 404 handlers.
     pathname === '/evaluation-jobs' ||
     pathname.startsWith('/evaluation-jobs/') ||
+    pathname === '/config/evaluation' ||
+    pathname.startsWith('/poll/') ||
+    pathname.startsWith('/local/') ||
     pathname === '/model-effectiveness' ||
     pathname === '/sessions' ||
     pathname.startsWith('/sessions/') ||

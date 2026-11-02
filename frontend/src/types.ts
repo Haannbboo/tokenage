@@ -98,40 +98,6 @@ export type DateRangeOption = '24h' | '5h' | '7d' | '30d' | 'all'
 /** The bucket the time axis is drawn in. */
 export type PeriodGranularity = 'hour' | '15m' | 'day'
 
-export type SessionOutcome = 'solved' | 'partial' | 'failed' | 'stuck' | 'no_op' | 'unknown'
-export type SessionEvaluationSource = 'manual' | 'heuristic' | 'llm'
-export type EvaluatorType = 'claude' | 'codex' | 'opencode'
-
-export type SessionEvaluation = {
-  session_id: string
-  outcome: SessionOutcome
-  source: SessionEvaluationSource
-  confidence: number | null
-  task_title: string | null
-  task_title_zh: string | null
-  summary: string | null
-  evidence: string[]
-  failure_reason: string | null
-  evaluated_at: string | null
-}
-
-export type EvaluationJob = {
-  job_id: string
-  kind: string
-  session_id: string
-  client_source: string
-  user_id: string | null
-  device_id: string | null
-  device_name?: string | null
-  status: 'running' | 'succeeded' | 'failed'
-  trigger: 'auto'
-  evaluator_type: EvaluatorType
-  created_at: string | null
-  started_at: string | null
-  finished_at: string | null
-  error: string | null
-}
-
 export type SessionSummary = {
   session_id: string
   client_source: string
@@ -156,7 +122,6 @@ export type SessionSummary = {
   status_5xx: number | null
   status_unknown: number | null
   tool_calls_json: Record<string, number> | null
-  evaluation: SessionEvaluation | null
 }
 
 export type SessionSelectorRow = {
@@ -172,58 +137,6 @@ export type SessionsSummary = {
   total_tokens: number
   total_cost_usd: number
   avg_latency_ms: number
-}
-
-export type ModelEffectivenessGroup = {
-  key: string
-  session_count: number
-  evaluated_count: number
-  solved_count: number
-  partial_count: number
-  failed_count: number
-  stuck_count: number
-  unknown_count: number
-  no_op_count: number
-  solve_rate: number | null
-  total_cost_usd: number
-  cost_per_solved: number | null
-  avg_duration_s: number
-}
-
-export type ModelEffectivenessResponse = {
-  groups: ModelEffectivenessGroup[]
-}
-
-export type DailyEffectivenessGroup = {
-  model: string
-  client_source: string
-  session_count: number
-  evaluated_count: number
-  solved_count: number
-  failed_count: number
-  stuck_count: number
-  total_cost_usd: number
-  cost_per_solved: number | null
-  solve_rate: number | null
-}
-
-export type DailyEffectivenessReport = {
-  date: string
-  summary: string
-  session_count: number
-  evaluated_count: number
-  classified_count: number
-  solved_count: number
-  partial_count: number
-  failed_count: number
-  stuck_count: number
-  no_op_count: number
-  unknown_count: number
-  total_cost_usd: number
-  highlights: string[]
-  needs_attention: string[]
-  model_takeaways: string[]
-  groups: DailyEffectivenessGroup[]
 }
 
 // The client and the server release separately, so `status` is an open string:

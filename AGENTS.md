@@ -128,7 +128,7 @@ Use targeted tests during iteration, but before commit/PR run the relevant full 
 There is one installed command: `client/bin/tokenage`. Whichever component installs first places it, and the `# tokenage launcher` marker line is how an install recognises a launcher it previously wrote. The server install symlinks it from the clone into `~/.local/bin` unless one exists; the client install replaces it with a copy from its snapshot. It resolves the two components out of `$TOKENAGE_HOME` — `current` for the client snapshot, `src` for the server clone — and routes to whichever one the arguments name. The client runs only from `current` (or `TOKENAGE_ROOT`), never from the server clone, even on one machine.
 
 - `client/` — the client: tracking wrapper, agent configuration, sign-in, component report, and the local proxy (`client/proxy/`, run by the client service, configured in `$TOKENAGE_HOME/client.yaml`). It must never import `src`.
-- `src/` — the server component: API, OTLP collector, usage ingest, dashboard, evaluation worker; its operations are `src/ops.py` (start/stop/restart/status/update, the post-venv half of bootstrap), dispatched by `src/cli.py`; the only shell it needs is `src/scripts/bootstrap.sh`, which runs before the venv exists. There is no top-level `scripts/`.
+- `src/` — the server component: API, OTLP collector, usage ingest, dashboard; its operations are `src/ops.py` (start/stop/restart/status/update, the post-venv half of bootstrap), dispatched by `src/cli.py`; the only shell it needs is `src/scripts/bootstrap.sh`, which runs before the venv exists. There is no top-level `scripts/`.
 
 Command surface:
 
@@ -221,7 +221,6 @@ Key behaviors:
 - Runtime API port is config-driven. Do not assume `4001`; read `~/.tokenage/config.yaml`. This repo has recently run the API on `4004`.
 - Service control uses `~/.tokenage/supervisord.conf`.
 - The configured DB may be remote Postgres/Supabase, not local SQLite. Worker and session-selector changes must tolerate slow or hung DB calls.
-- For stuck evaluations, inspect `evaluation_jobs` plus `/evaluation-jobs/active`. A queued auto job can be normal buffer behavior; if no running job exists and it survives a worker interval, suspect the worker loop.
 - Frontend-used API routes must be added to `frontend/vite-api-proxy.js` and its proxy route tests, or Vite dev mode may fail while production works.
 
 ## High-risk areas

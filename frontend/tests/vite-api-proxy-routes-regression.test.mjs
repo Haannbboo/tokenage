@@ -13,6 +13,10 @@ const proxiedRoutes = [
   '/evaluation-jobs/started',
   '/sessions/session-123/evaluation',
   '/sessions/session-123/evaluation-jobs',
+  '/local/evaluation-jobs/active',
+  '/config/evaluation',
+  '/local/sessions/session-123/evaluation-jobs',
+  '/local/poll/job-123',
   '/pricing',
   '/pricing/z-ai/glm-5.1-20260406',
   '/pricing/overrides',
@@ -30,16 +34,10 @@ for (const route of proxiedRoutes) {
   )
 }
 
-// The /local/* evaluation routes were hard removed; requests must not be
-// proxied to the API anymore.
 const frontendRoutes = [
   '/',
   '/assets/index.js',
   '/favicon.ico',
-  '/local/evaluation-jobs/active',
-  '/config/evaluation',
-  '/local/sessions/session-123/evaluation-jobs',
-  '/local/poll/job-123',
 ]
 
 for (const route of frontendRoutes) {

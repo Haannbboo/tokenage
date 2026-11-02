@@ -7,7 +7,7 @@ export function TimezoneSelector() {
   const localTz = getLocalTimezone()
 
   return (
-    <div className="panel evaluation-default-selector">
+    <div className="panel">
       <div className="panel-tabs">
         <div className="tab active"><span>🌐</span> {t('Timezone')}</div>
       </div>

@@ -360,51 +360,7 @@ def test_logout_reports_cleanup_failure_after_removing_credentials(machine, caps
     assert not (machine / ".tokenage" / "credentials.json").exists()
 
 
-# ------------------------------------------------------- evaluator selection
-
-
-def _client_config(machine: Path) -> Path:
-    return machine / ".tokenage" / "client.yaml"
-
-
-def test_setup_records_the_default_evaluator_once(machine: Path) -> None:
+def test_setup_does_not_create_client_config(machine: Path) -> None:
     _sign_in(machine)
     assert setup.run_setup(disable=False) == 0
-    text = _client_config(machine).read_text(encoding="utf-8")
-    assert "evaluator: claude" in text  # claude beats codex in priority order
-    assert "quiet_delay_seconds: 600" in text
-
-    assert setup.run_setup(disable=False) == 0
-    assert _client_config(machine).read_text(encoding="utf-8") == text
-
-
-def test_setup_preserves_proxy_and_explicit_evaluator(machine: Path) -> None:
-    _sign_in(machine)
-    original = (
-        "proxy:\n"
-        "  providers:\n"
-        "    DeepSeek:\n"
-        "      base_url: https://api.deepseek.com\n"
-        "      api_key: sk-secret\n"
-        "evaluation:\n"
-        "  quiet_delay_seconds: 30\n"
-        "  evaluator: codex\n"
-    )
-    _client_config(machine).parent.mkdir(parents=True, exist_ok=True)
-    _client_config(machine).write_text(original, encoding="utf-8")
-
-    assert setup.run_setup(disable=False) == 0
-
-    assert _client_config(machine).read_text(encoding="utf-8") == original
-
-
-def test_setup_leaves_evaluator_unset_without_any_agent_cli(
-    machine: Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    _sign_in(machine)
-    monkeypatch.setattr(setup.shutil, "which", lambda name: None)
-
-    assert setup.run_setup(disable=False) == 0
-
-    assert not _client_config(machine).exists()
-    assert "No tracked agents detected" in capsys.readouterr().out
+    assert not (machine / ".tokenage" / "client.yaml").exists()

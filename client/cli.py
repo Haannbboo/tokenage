@@ -40,10 +40,7 @@ tracking options go before the command; use -- when they do:
 """
 
 REMOVED = {
-    "summary": (
-        "tokenage: 'summary' is no longer a command. Evaluations now run in "
-        "the background; see the dashboard."
-    ),
+    "summary": "tokenage: 'summary' is no longer a command; see the usage dashboard.",
     "server": (
         "tokenage: 'server' commands are handled by the launcher script, "
         "which resolves the server component."
@@ -176,7 +173,12 @@ def _build_subcommand(name: str) -> argparse.ArgumentParser:
         subparsers = parser.add_subparsers(dest="action", required=True)
         subparsers.add_parser("start", help="start the service in the background")
         subparsers.add_parser("stop", help="stop the background service")
-        subparsers.add_parser("restart", help="stop then start the service")
+        client_restart = subparsers.add_parser(
+            "restart", help="stop then start the service"
+        )
+        client_restart.add_argument(
+            "--if-running", action="store_true", help=argparse.SUPPRESS
+        )
         client_status = subparsers.add_parser(
             "status", help="report whether the service runs"
         )
@@ -247,7 +249,9 @@ def _run_subcommand(name: str, argv: list[str]) -> int:
         if args.action == "stop":
             return service.stop()
         if args.action == "restart":
-            return service.restart()
+            return (
+                service.restart_if_running() if args.if_running else service.restart()
+            )
         if args.action == "status":
             return service.run_status(as_json=args.json)
         return service.run_foreground()

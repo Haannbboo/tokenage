@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { SessionSummary, DateRangeOption } from '../types'
-import { buildSessionInsights } from '../utils'
 import { getSinceDate } from '../dateRange.ts'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
@@ -8,7 +7,6 @@ import { useApp } from '../contexts/AppContext'
 export function useSessionsData(opts: {
   activeSource: string | null
   dateRange: DateRangeOption
-  hideNoop?: boolean
 }) {
   const { refreshTrigger, setError } = useApp()
 
@@ -18,7 +16,6 @@ export function useSessionsData(opts: {
   const [sessionSortOrder, setSessionSortOrder] = useState<'asc' | 'desc'>('desc')
   const [sessionPage, setSessionPage] = useState(1)
   const [hasMoreSessions, setHasMoreSessions] = useState(true)
-  const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null)
 
   const prevFilterKeyRef = useRef('')
   const sinceRef = useRef<string | null>(null)
@@ -33,12 +30,8 @@ export function useSessionsData(opts: {
     setSessionPage(1)
   }, [sessionSortBy])
 
-  const sessionInsights = useMemo(() => {
-    return buildSessionInsights(sessions)
-  }, [sessions])
-
   // Filter-change keys — when any of these change, reset to page 1
-  const filterKey = `${opts.activeSource}|${opts.dateRange}|${opts.hideNoop}|${refreshTrigger}`
+  const filterKey = `${opts.activeSource}|${opts.dateRange}|${refreshTrigger}`
 
   // Sessions fetch
   useEffect(() => {
@@ -73,7 +66,6 @@ export function useSessionsData(opts: {
         sessionsUrl.searchParams.set('sort_order', sessionSortOrder)
         sessionsUrl.searchParams.set('limit', '50')
         sessionsUrl.searchParams.set('offset', String((sessionPage - 1) * 50))
-        if (opts.hideNoop) sessionsUrl.searchParams.set('hide_noop', 'true')
 
         const response = await fetch(sessionsUrl.toString(), sig)
         if (!response.ok) throw new Error(t('Failed to fetch session data'))
@@ -95,19 +87,15 @@ export function useSessionsData(opts: {
 
     void fetchSessionsData()
     return () => controller.abort()
-  }, [opts.activeSource, opts.dateRange, opts.hideNoop, refreshTrigger, filterKey, sessionSortBy, sessionSortOrder, sessionPage, setError])
+  }, [opts.activeSource, opts.dateRange, refreshTrigger, filterKey, sessionSortBy, sessionSortOrder, sessionPage, setError])
 
   return {
     sessions,
-    setSessions,
     sessionsLoading,
     hasMoreSessions,
     sessionSortBy,
     sessionSortOrder,
-    selectedSession,
-    setSelectedSession,
     handleSessionSort,
-    sessionInsights,
     setSessionPage,
   }
 }

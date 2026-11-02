@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildSessionInsights, fillGaps, formatProviderName, netThroughput, resolveTimezone } from '../src/utils'
+import { fillGaps, formatProviderName, netThroughput, resolveTimezone } from '../src/utils'
 import { getSinceDate } from '../src/dateRange'
 import { overrideBody, pricingSourceOrder } from '../src/hooks/usePricingData'
 import { buildTimelineData } from '../src/components/RequestTimeline'
-import type { DailyUsage, SessionSummary } from '../src/types'
+import type { DailyUsage } from '../src/types'
 
 vi.mock('../src/i18n/index.ts', () => ({
   t: (value: string) => value,
@@ -89,24 +89,5 @@ describe('provider labels', () => {
     expect(formatProviderName('notminimax')).toBe('notminimax')
     expect(formatProviderName('minimaxgateway')).toBe('minimaxgateway')
     expect(formatProviderName('openai')).toBe('openai')
-  })
-})
-
-
-describe('session insights', () => {
-  it('selects sessions by cost, latency, tokens, cache and failures without reordering input', () => {
-    const base: SessionSummary = {
-      session_id: 'a', client_source: 'test', model: 'model', started: 0, ended: 0, duration_s: 0,
-      request_count: 1, total_tokens: 10, prompt_tokens: 10, completion_tokens: 0, cached_tokens: 0,
-      cache_creation_tokens: 0, total_cost_usd: 1, avg_latency_ms: 1, latency_sum_ms: 1, avg_ttft_ms: 0,
-      successful_requests: 1, failed_requests: 0, status_429: null, status_4xx: null, status_5xx: null,
-      status_unknown: null, tool_calls_json: null, evaluation: null,
-    }
-    const other = { ...base, session_id: 'b', total_cost_usd: 2, avg_latency_ms: 5, total_tokens: 20, cached_tokens: 5, failed_requests: 1 }
-    const sessions = [base, other]
-    expect(buildSessionInsights([])).toEqual([])
-    expect(buildSessionInsights(sessions).map(insight => insight.session)).toEqual([other, other, other, other, other])
-    expect(sessions).toEqual([base, other])
-    expect(buildSessionInsights([base]).map(insight => insight.session)).toEqual([base, base, base])
   })
 })

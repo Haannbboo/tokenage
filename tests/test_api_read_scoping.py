@@ -47,9 +47,7 @@ def tenant_reads(api_module, fresh_db):
     cookie, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
     tokens["cookie"] = cookie
 
-    for owner_index, (name, weight, outcome) in enumerate(
-        (("a", 1, "solved"), ("b", 10, "failed"), ("local", 100, "stuck"))
-    ):
+    for owner_index, (name, weight) in enumerate((("a", 1), ("b", 10), ("local", 100))):
         for index, source in enumerate(("opencode", f"{name}-source")):
             usage = Usage(
                 device_id="test-device",
@@ -91,12 +89,6 @@ def tenant_reads(api_module, fresh_db):
                 session.refresh(tool)
                 session.expunge(tool)
             ingest_write(upsert_session_from_tool_call, tool)
-            db.upsert_session_evaluation(
-                usage.session_id,
-                outcome,
-                summary=f"{name}-private-evaluation",
-                user_id=usage.user_id,
-            )
     return tokens, user_ids
 
 
@@ -184,28 +176,14 @@ def test_all_read_routes_isolate_data(
     sessions = read("/sessions")
     assert sessions["total"] == count
     assert {row["session_id"] for row in sessions["sessions"]} == expected_sessions
-    assert {row["evaluation"]["summary"] for row in sessions["sessions"]} == {
-        f"{owner}-private-evaluation" for owner in owners
-    }
+    assert all("evaluation" not in row for row in sessions["sessions"])
     selector = read("/sessions", view="selector")
     assert selector["total"] is None
     assert {row["session_id"] for row in selector["sessions"]} == expected_sessions
     summary = read("/sessions/summary")
     assert summary["session_count"] == count
     assert summary["total_cost_usd"] == 2 * weight
-    for group_by in ("model", "provider", "source"):
-        groups = read("/model-effectiveness", group_by=group_by)["groups"]
-        assert sum(row["session_count"] for row in groups) == count
-        assert sum(row["total_cost_usd"] for row in groups) == 2 * weight
-        assert sum(row["solved_count"] for row in groups) == (2 if owners else 0)
-        assert sum(row["failed_count"] for row in groups) == (2 if "b" in owners else 0)
-    report = read("/sessions/daily-effectiveness", date=DAY)
-    assert report["session_count"] == count
-    assert report["total_cost_usd"] == 2 * weight
-    assert sum(row["session_count"] for row in report["groups"]) == count
-    assert sum(row["total_cost_usd"] for row in report["groups"]) == 2 * weight
     if auth_mode in ("cookie", "bearer"):
-        assert report["needs_attention"] == []
         assert read("/usage", limit=1)[0]["id"] == "a-1"
         assert read("/usage", limit=1, offset=1)[0]["id"] == "a-0"
         page = read("/sessions", limit=1, offset=1)

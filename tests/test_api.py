@@ -812,266 +812,14 @@ def test_usage_count_endpoint_passes_session_id(api_module, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_put_session_evaluation_creates_evaluation(api_module, monkeypatch):
-    captured = {}
-
-    def fake_upsert(**kwargs):
-        captured.update(kwargs)
-
-    monkeypatch.setattr(api_module, "upsert_session_evaluation", fake_upsert)
-
-    response = TestClient(api_module.app).put(
-        "/sessions/sess-1/evaluation",
-        json={
-            "outcome": "solved",
-            "source": "manual",
-            "evidence": ["User marked solved"],
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
-    assert captured["session_id"] == "sess-1"
-    assert captured["outcome"] == "solved"
-    assert captured["source"] == "manual"
-    assert captured["evidence"] == ["User marked solved"]
-
-
-def test_put_session_evaluation_invalid_outcome_returns_400(api_module, monkeypatch):
-    monkeypatch.setattr(api_module, "upsert_session_evaluation", lambda **kw: None)
-
-    response = TestClient(api_module.app).put(
-        "/sessions/sess-1/evaluation",
-        json={"outcome": "invalid_outcome"},
-    )
-
-    assert response.status_code == 400
-
-
-def test_put_session_evaluation_invalid_source_returns_400(api_module, monkeypatch):
-    monkeypatch.setattr(api_module, "upsert_session_evaluation", lambda **kw: None)
-
-    response = TestClient(api_module.app).put(
-        "/sessions/sess-1/evaluation",
-        json={"outcome": "solved", "source": "bogus_source"},
-    )
-
-    assert response.status_code == 400
-
-
-def test_put_session_evaluation_rejects_llm_source(api_module, monkeypatch):
-    def fail_if_called(**kwargs):
-        raise AssertionError("manual evaluation endpoint should not write LLM results")
-
-    monkeypatch.setattr(api_module, "upsert_session_evaluation", fail_if_called)
-
-    response = TestClient(api_module.app).put(
-        "/sessions/sess-1/evaluation",
-        json={
-            "outcome": "solved",
-            "source": "llm",
-            "task_title": "Spoofed task title",
-            "task_title_zh": "伪造任务标题",
-            "evidence": ["caller supplied an LLM source"],
-        },
-    )
-
-    assert response.status_code == 400
-    assert "manual" in response.json()["detail"].lower()
-
-
-def test_put_session_evaluation_returns_404_when_session_not_found(
-    api_module, monkeypatch
-):
-    def raise_not_found(**kwargs):
-        raise ValueError("Session not found: nonexistent")
-
-    monkeypatch.setattr(api_module, "upsert_session_evaluation", raise_not_found)
-
-    response = TestClient(api_module.app).put(
-        "/sessions/nonexistent/evaluation",
-        json={"outcome": "solved"},
-    )
-
-    assert response.status_code == 404
-
-
-def test_get_session_evaluation_returns_evaluation(api_module, monkeypatch):
-    fake_eval = {
-        "session_id": "sess-1",
-        "outcome": "solved",
-        "source": "manual",
-        "confidence": None,
-        "task_title": "Fixed bug",
-        "task_title_zh": "修复错误",
-        "summary": None,
-        "evidence": ["User marked solved"],
-        "failure_reason": None,
-        "evaluated_at": "2026-05-11T00:00:00+00:00",
-    }
-    monkeypatch.setattr(
-        api_module, "get_session_evaluation", lambda sid, **kw: fake_eval
-    )
-
-    response = TestClient(api_module.app).get("/sessions/sess-1/evaluation")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["evaluation"]["outcome"] == "solved"
-    assert data["evaluation"]["task_title"] == "Fixed bug"
-    assert data["evaluation"]["task_title_zh"] == "修复错误"
-
-
-def test_get_session_evaluation_returns_null_when_absent(api_module, monkeypatch):
-    monkeypatch.setattr(api_module, "get_session_evaluation", lambda sid, **kw: None)
-
-    response = TestClient(api_module.app).get("/sessions/sess-1/evaluation")
-
-    assert response.status_code == 200
-    assert response.json()["evaluation"] is None
-
-
-def test_delete_session_evaluation_removes_evaluation(api_module, monkeypatch):
-    monkeypatch.setattr(api_module, "delete_session_evaluation", lambda sid, **kw: True)
-
-    response = TestClient(api_module.app).delete("/sessions/sess-1/evaluation")
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "deleted"
-
-
-def test_delete_session_evaluation_returns_404_when_absent(api_module, monkeypatch):
-    monkeypatch.setattr(
-        api_module, "delete_session_evaluation", lambda sid, **kw: False
-    )
-
-    response = TestClient(api_module.app).delete("/sessions/sess-1/evaluation")
-
-    assert response.status_code == 404
-
-
 # ---------------------------------------------------------------------------
 # Slice 4: Model Effectiveness API
 # ---------------------------------------------------------------------------
 
 
-def test_model_effectiveness_endpoint_passes_filters(api_module, monkeypatch):
-    captured = {}
-
-    def fake_aggregate(**kwargs):
-        captured.update(kwargs)
-        return {
-            "groups": [
-                {
-                    "key": "gpt-5.5",
-                    "session_count": 2,
-                    "evaluated_count": 1,
-                    "solved_count": 1,
-                    "partial_count": 0,
-                    "failed_count": 0,
-                    "stuck_count": 0,
-                    "unknown_count": 1,
-                    "no_op_count": 0,
-                    "solve_rate": 1.0,
-                    "total_cost_usd": 0.5,
-                    "cost_per_solved": 0.5,
-                    "avg_duration_s": 120.0,
-                }
-            ]
-        }
-
-    monkeypatch.setattr(api_module, "aggregate_model_effectiveness", fake_aggregate)
-
-    response = TestClient(api_module.app).get(
-        "/model-effectiveness",
-        params={
-            "group_by": "model",
-            "since": "2026-05-01T00:00:00Z",
-            "until": "2026-05-11T23:59:59Z",
-            "client_source": "codex",
-        },
-    )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["groups"][0]["key"] == "gpt-5.5"
-    assert captured == {
-        "user_id": ANY,
-        "group_by": "model",
-        "since": "2026-05-01T00:00:00Z",
-        "until": "2026-05-11T23:59:59Z",
-        "client_source": "codex",
-        "hide_noop": False,
-    }
-
-
-def test_model_effectiveness_endpoint_rejects_invalid_group_by(api_module, monkeypatch):
-    monkeypatch.setattr(
-        api_module, "aggregate_model_effectiveness", lambda **kwargs: {"groups": []}
-    )
-
-    response = TestClient(api_module.app).get(
-        "/model-effectiveness",
-        params={"group_by": "evaluation_source"},
-    )
-
-    assert response.status_code == 400
-
-
 # ---------------------------------------------------------------------------
 # Slice 8: Daily Effectiveness Report API
 # ---------------------------------------------------------------------------
-
-
-def test_daily_effectiveness_endpoint_passes_date(api_module, monkeypatch):
-    captured = {}
-
-    def fake_report(**kwargs):
-        captured.update(kwargs)
-        return {
-            "date": kwargs["date"],
-            "summary": "You ran 2 AI sessions. 1 was evaluated. Total cost was $0.42.",
-            "session_count": 2,
-            "evaluated_count": 1,
-            "classified_count": 1,
-            "solved_count": 1,
-            "partial_count": 0,
-            "failed_count": 0,
-            "stuck_count": 0,
-            "no_op_count": 0,
-            "unknown_count": 1,
-            "total_cost_usd": 0.42,
-            "highlights": ["codex / gpt-5.5 solved 1/1 evaluated sessions"],
-            "needs_attention": [],
-            "model_takeaways": ["codex / gpt-5.5 solved 1/1 evaluated sessions"],
-            "groups": [],
-        }
-
-    monkeypatch.setattr(api_module, "daily_session_effectiveness_report", fake_report)
-
-    response = TestClient(api_module.app).get(
-        "/sessions/daily-effectiveness",
-        params={"date": "2026-05-10"},
-    )
-
-    assert response.status_code == 200
-    assert captured == {"date": "2026-05-10", "user_id": ANY}
-    assert response.json()["date"] == "2026-05-10"
-
-
-def test_daily_effectiveness_endpoint_rejects_invalid_date(api_module, monkeypatch):
-    def fake_report(**kwargs):
-        raise ValueError("Invalid date: not-a-date. Expected YYYY-MM-DD")
-
-    monkeypatch.setattr(api_module, "daily_session_effectiveness_report", fake_report)
-
-    response = TestClient(api_module.app).get(
-        "/sessions/daily-effectiveness",
-        params={"date": "not-a-date"},
-    )
-
-    assert response.status_code == 400
-    assert "Invalid date" in response.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -1110,13 +858,11 @@ def test_spa_deep_links_do_not_hijack_api_routes(api_module, monkeypatch):
     assert "application/json" in response.headers.get("content-type", "")
 
 
-def test_spa_does_not_hijack_evaluation_jobs_routes(api_module, monkeypatch):
-    monkeypatch.setattr(api_module, "list_active_evaluation_jobs", lambda **kwargs: [])
+def test_spa_does_not_hijack_evaluation_jobs_routes(api_module):
     response = TestClient(api_module.app).get("/evaluation-jobs/active")
-
-    assert response.status_code == 200
+    assert response.status_code == 404
     assert "application/json" in response.headers.get("content-type", "")
-    assert response.json() == {"jobs": {}}
+    assert response.json() == {"detail": "Not Found"}
 
 
 def test_spa_missing_asset_does_not_return_html(api_module):
@@ -1207,8 +953,8 @@ def test_usage_count_passes_tool_name(api_module, monkeypatch):
 # (docs/design/specs/pr22-route-classification.md)
 # ---------------------------------------------------------------------------
 
-# Evaluation routes the server used to own. Evaluation runs on the client now;
-# these paths must never resolve to a handler again.
+# Retired evaluation execution/configuration routes must never resolve to
+# an active handler again.
 REMOVED_EVALUATION_ROUTES = [
     ("PUT", "/local/sessions/sess-1/evaluation"),
     ("GET", "/local/sessions/sess-1/evaluation"),
@@ -1264,7 +1010,8 @@ def test_removed_evaluation_routes_are_gone_under_local_provider(
     api_module, method, path
 ):
     response = TestClient(api_module.app).request(method, path)
-    _assert_route_removed(response)
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
 
 
 @pytest.mark.parametrize("method,path", REMOVED_EVALUATION_ROUTES)
@@ -1273,7 +1020,8 @@ def test_removed_evaluation_routes_are_gone_under_google_provider(
 ):
     client = _authenticated_client(api_module, fresh_db, monkeypatch)
     response = client.request(method, path)
-    _assert_route_removed(response)
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
 
 
 REMOVED_LOCAL_INSPECTION_PATHS = [

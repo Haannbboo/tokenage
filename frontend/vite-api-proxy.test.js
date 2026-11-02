@@ -13,7 +13,7 @@ import {
 
 test('shouldProxyApiRequest matches config, usage and session routes', () => {
   assert.equal(shouldProxyApiRequest('/config'), false)
-  assert.equal(shouldProxyApiRequest('/config/evaluation'), false)
+  assert.equal(shouldProxyApiRequest('/config/evaluation'), true)
   assert.equal(shouldProxyApiRequest('/pricing/overrides'), true)
   assert.equal(shouldProxyApiRequest('/usage'), true)
   assert.equal(shouldProxyApiRequest('/usage/count?since=1'), true)
@@ -25,11 +25,13 @@ test('shouldProxyApiRequest matches config, usage and session routes', () => {
   assert.equal(shouldProxyApiRequest('/evaluation-jobs/active'), true)
   assert.equal(shouldProxyApiRequest('/evaluation-jobs/job-123'), true)
   assert.equal(shouldProxyApiRequest('/evaluation-jobs/started'), true)
-  // The old /local/* evaluation routes were removed server-side; they must
-  // fall through to Vite instead of being proxied to the API.
-  assert.equal(shouldProxyApiRequest('/local/sessions/123/evaluation'), false)
-  assert.equal(shouldProxyApiRequest('/local/evaluation-jobs/active'), false)
-  assert.equal(shouldProxyApiRequest('/local/poll/job-123'), false)
+  assert.equal(shouldProxyApiRequest('/evaluation-jobs/completed'), true)
+  assert.equal(shouldProxyApiRequest('/sessions/daily-effectiveness'), true)
+  // Retired paths must reach the API's JSON 404 handlers.
+  assert.equal(shouldProxyApiRequest('/local/sessions/123/evaluation'), true)
+  assert.equal(shouldProxyApiRequest('/local/evaluation-jobs/active'), true)
+  assert.equal(shouldProxyApiRequest('/local/poll/job-123'), true)
+  assert.equal(shouldProxyApiRequest('/poll/job-123'), true)
   assert.equal(shouldProxyApiRequest('/auth/me'), true)
   assert.equal(shouldProxyApiRequest('/auth/google/login'), true)
   assert.equal(shouldProxyApiRequest('/auth/google/callback?code=x&state=y'), true)

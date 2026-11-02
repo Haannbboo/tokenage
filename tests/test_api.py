@@ -676,8 +676,10 @@ def test_sessions_endpoint_passes_filters(api_module, monkeypatch):
     data = response.json()
     assert "sessions" in data
     assert "total" in data
-    assert captured["client_source"] == "claude-code"
-    assert captured["since"] == "2026-05-01T00:00:00Z"
+    assert isinstance(captured["filters"], api_module.SessionFilters)
+    assert captured["filters"].client_source == "claude-code"
+    assert captured["filters"].until == 1778371200000000
+    assert captured["filters"].since == 1777593600000000
     assert captured["sort_by"] == "total_cost_usd"
     assert captured["sort_order"] == "asc"
     assert captured["limit"] == 25
@@ -733,8 +735,8 @@ def test_sessions_endpoint_selector_view_skips_count(api_module, monkeypatch):
         "total": None,
     }
     assert count_called is False
-    assert captured["client_source"] == "codex"
-    assert captured["since"] == "2026-05-01T00:00:00Z"
+    assert captured["filters"].client_source == "codex"
+    assert captured["filters"].since == 1777593600000000
     assert captured["sort_by"] == "started"
     assert captured["sort_order"] == "desc"
     assert captured["limit"] == 50
@@ -772,7 +774,7 @@ def test_sessions_summary_endpoint_passes_filters(api_module, monkeypatch):
     data = response.json()
     assert data["session_count"] == 3
     assert data["total_tokens"] == 5000
-    assert captured["client_source"] == "opencode"
+    assert captured["filters"].client_source == "opencode"
 
 
 def test_usage_endpoint_passes_session_id(api_module, monkeypatch):

@@ -2871,7 +2871,9 @@ def test_fetch_sessions_groups_by_session_id(fresh_db):
         db_path=db_path,
     )
 
-    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
+    result = database_module.fetch_sessions(
+        filters=database_module.SessionFilters(user_id="test-user"), db_path=db_path
+    )
     assert len(result) == 2
     assert result[0]["session_id"] == "sess-2"
     assert result[0]["request_count"] == 1
@@ -2907,7 +2909,9 @@ def test_fetch_sessions_excludes_null_session_id(fresh_db):
         db_path=db_path,
     )
 
-    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
+    result = database_module.fetch_sessions(
+        filters=database_module.SessionFilters(user_id="test-user"), db_path=db_path
+    )
     assert len(result) == 0
 
 
@@ -2939,7 +2943,10 @@ def test_fetch_sessions_filters_by_client_source(fresh_db):
         )
 
     result = database_module.fetch_sessions(
-        client_source="codex", db_path=db_path, user_id="test-user"
+        filters=database_module.SessionFilters(
+            client_source="codex", user_id="test-user"
+        ),
+        db_path=db_path,
     )
     assert len(result) == 1
     assert result[0]["session_id"] == "s2"
@@ -2972,10 +2979,12 @@ def test_fetch_sessions_accepts_browser_iso_boundary_filters(fresh_db):
     )
 
     result = database_module.fetch_sessions(
-        since="2026-05-09T10:00:00.000Z",
-        until="2026-05-09T10:00:00.000Z",
+        filters=database_module.SessionFilters(
+            since="2026-05-09T10:00:00.000Z",
+            until="2026-05-09T10:00:00.001Z",
+            user_id="test-user",
+        ),
         db_path=db_path,
-        user_id="test-user",
     )
 
     assert [session["session_id"] for session in result] == ["boundary"]
@@ -3009,7 +3018,10 @@ def test_fetch_sessions_sorting(fresh_db):
         )
 
     result = database_module.fetch_sessions(
-        sort_by="total_tokens", sort_order="asc", db_path=db_path, user_id="test-user"
+        filters=database_module.SessionFilters(user_id="test-user"),
+        sort_by="total_tokens",
+        sort_order="asc",
+        db_path=db_path,
     )
     assert result[0]["session_id"] == "s-low"
     assert result[1]["session_id"] == "s-high"
@@ -3066,7 +3078,10 @@ def test_fetch_sessions_sort_by_duration(fresh_db):
         )
 
     result = database_module.fetch_sessions(
-        sort_by="duration_s", sort_order="desc", db_path=db_path, user_id="test-user"
+        filters=database_module.SessionFilters(user_id="test-user"),
+        sort_by="duration_s",
+        sort_order="desc",
+        db_path=db_path,
     )
     assert result[0]["session_id"] == "long"
     assert result[1]["session_id"] == "short"
@@ -3100,7 +3115,10 @@ def test_fetch_sessions_pagination(fresh_db):
         )
 
     result = database_module.fetch_sessions(
-        limit=2, offset=1, db_path=db_path, user_id="test-user"
+        filters=database_module.SessionFilters(user_id="test-user"),
+        limit=2,
+        offset=1,
+        db_path=db_path,
     )
     assert len(result) == 2
 
@@ -3132,7 +3150,7 @@ def test_fetch_session_selector_rows_returns_only_dropdown_fields(fresh_db):
     )
 
     result = database_module.fetch_session_selector_rows(
-        db_path=db_path, user_id="test-user"
+        filters=database_module.SessionFilters(user_id="test-user"), db_path=db_path
     )
 
     assert result == [
@@ -3175,14 +3193,14 @@ def test_fetch_session_selector_rows_applies_filters_sort_and_pagination(fresh_d
         )
 
     result = database_module.fetch_session_selector_rows(
-        client_source="codex",
-        since="2026-05-09T10:30:00.000Z",
+        filters=database_module.SessionFilters(
+            client_source="codex", since="2026-05-09T10:30:00.000Z", user_id="test-user"
+        ),
         sort_by="started",
         sort_order="desc",
         limit=1,
         offset=0,
         db_path=db_path,
-        user_id="test-user",
     )
 
     assert [row["session_id"] for row in result] == ["s2"]
@@ -3215,7 +3233,12 @@ def test_count_sessions(fresh_db):
             db_path=db_path,
         )
 
-    assert database_module.count_sessions(db_path=db_path, user_id="test-user") == 2
+    assert (
+        database_module.count_sessions(
+            filters=database_module.SessionFilters(user_id="test-user"), db_path=db_path
+        )
+        == 2
+    )
 
 
 def test_count_usage_with_session_id(fresh_db):
@@ -3369,7 +3392,9 @@ def test_summarize_sessions(fresh_db):
         db_path=db_path,
     )
 
-    result = database_module.summarize_sessions(db_path=db_path, user_id="test-user")
+    result = database_module.summarize_sessions(
+        filters=database_module.SessionFilters(user_id="test-user"), db_path=db_path
+    )
     assert result["session_count"] == 2
     assert result["total_tokens"] == 500
     assert result["total_cost_usd"] == pytest.approx(0.016)
@@ -3616,7 +3641,9 @@ def test_fetch_sessions_reads_from_persisted_table(fresh_db):
         )
         session.commit()
 
-    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
+    result = database_module.fetch_sessions(
+        filters=database_module.SessionFilters(user_id="test-user"), db_path=db_path
+    )
     assert len(result) == 1
     assert result[0]["session_id"] == "manual-sess"
     assert result[0]["request_count"] == 5
@@ -3686,7 +3713,9 @@ def test_rebuild_sessions_from_usage(fresh_db):
     count = database_module.rebuild_sessions_from_usage(db_path=db_path)
     assert count == 2
 
-    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
+    result = database_module.fetch_sessions(
+        filters=database_module.SessionFilters(user_id="test-user"), db_path=db_path
+    )
     assert len(result) == 2
 
     by_id = {r["session_id"]: r for r in result}
@@ -3749,7 +3778,9 @@ def test_rebuild_sessions_from_usage_recomputes_tool_calls_json(fresh_db):
     count = database_module.rebuild_sessions_from_usage(db_path=db_path)
     assert count == 1
 
-    result = database_module.fetch_sessions(db_path=db_path, user_id="test-user")
+    result = database_module.fetch_sessions(
+        filters=database_module.SessionFilters(user_id="test-user"), db_path=db_path
+    )
     assert len(result) == 1
     assert result[0]["tool_calls_json"] == {"bash": 2, "read": 1}
 

@@ -24,6 +24,7 @@ READ_PATHS = (
     "/usage/daily-by-dimension",
     "/sessions",
     "/sessions/summary",
+    "/sessions/distribution",
     "/model-effectiveness",
     "/sessions/daily-effectiveness",
 )
@@ -180,6 +181,10 @@ def test_all_read_routes_isolate_data(
     selector = read("/sessions", view="selector")
     assert selector["total"] is None
     assert {row["session_id"] for row in selector["sessions"]} == expected_sessions
+    distribution = read("/sessions/distribution")
+    for dimension in distribution.values():
+        assert sum(row["session_count"] for row in dimension) == count
+        assert sum(row["total_cost_usd"] for row in dimension) == 2 * weight
     summary = read("/sessions/summary")
     assert summary["session_count"] == count
     assert summary["total_cost_usd"] == 2 * weight
@@ -226,6 +231,21 @@ def test_foreign_ids_and_filters_cannot_expand_scope(
             "sessions": [],
             "total": 0,
         }
+        distribution = client.get(
+            "/sessions/distribution",
+            params={"client_source": f"{owner}-source", "user_id": user_ids[owner]},
+        ).json()
+        assert all(
+            sum(row["session_count"] for row in dimension) == 0
+            for dimension in distribution.values()
+        )
+        assert (
+            client.get(
+                "/usage",
+                params=params | {"limit": 30, "before": f"{START_TS + 999999999}:z"},
+            ).json()
+            == []
+        )
     assert len(client.get("/usage", params={"user_id": user_ids["b"]}).json()) == 2
     assert len(client.get("/usage/a-0/tool-calls").json()) == 1
     assert client.get("/sessions/a-session-0/tool-calls/summary").json() == [
@@ -410,3 +430,48 @@ def _upsert_hourly(usage, db_path=None):
     with Session(get_engine(db_path)) as session:
         upsert_hourly_aggregate(session, usage)
         session.commit()
+
+
+def test_session_model_device_filters_ignore_foreign_usage(
+    api_module, tenant_reads, monkeypatch, fresh_db
+):
+    from src.config.app import CONFIG
+    from src.database.models import Usage
+
+    tokens, users = tenant_reads
+    monkeypatch.setitem(CONFIG, "auth", {"provider": "google"})
+    with Session(fresh_db.database_module.get_engine()) as session:
+        session.add(
+            Usage(
+                id="foreign-session-link",
+                user_id=users["b"],
+                session_id="a-session-0",
+                device_id="private-device",
+                model="private-model",
+                provider="test",
+                endpoint="otlp",
+                ts=START_TS,
+            )
+        )
+        session.commit()
+    client = TestClient(
+        api_module.app, headers={"Authorization": f"Bearer {tokens['a']}"}
+    )
+    for params in (
+        {"device_id": "private-device"},
+        {"model": "private-model"},
+        {"model": ["private-model", "another-private-model"]},
+    ):
+        assert client.get("/sessions", params=params).json() == {
+            "sessions": [],
+            "total": 0,
+        }
+        charts = client.get("/sessions/distribution", params=params).json()
+        assert all(
+            sum(row["session_count"] for row in rows) == 0 for rows in charts.values()
+        )
+    charts = client.get(
+        "/sessions/distribution",
+        params={"cost_bucket": "1-5", "duration_bucket": "<1m", "user_id": users["b"]},
+    ).json()
+    assert sum(row["session_count"] for row in charts["by_agent"]) == 2

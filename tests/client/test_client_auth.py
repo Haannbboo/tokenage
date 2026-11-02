@@ -231,16 +231,15 @@ def test_login_writes_credentials_0600(monkeypatch, capsys):
     assert "tokenage_ingest" not in captured.err
 
 
-def test_login_initializes_the_evaluator_from_detected_agents(monkeypatch):
+def test_login_does_not_create_client_config(monkeypatch):
     (Path.home() / ".codex").mkdir()
     code, _, _ = _run_login(monkeypatch, inputs=["the-code"], agents=["codex"])
 
     assert code == 0
-    config = paths.client_config_path().read_text(encoding="utf-8")
-    assert "evaluator: codex" in config
+    assert not paths.client_config_path().exists()
 
 
-def test_login_leaves_the_evaluator_unset_without_agent_clis(monkeypatch):
+def test_login_without_agent_clis_does_not_create_client_config(monkeypatch):
     code, _, _ = _run_login(monkeypatch, inputs=["the-code"], agents=[])
 
     assert code == 0

@@ -194,8 +194,8 @@ def _launchd_loaded() -> bool:
     )
 
 
-def _launchd_bootout() -> None:
-    _run(["launchctl", "bootout", f"{_gui_domain()}/{LAUNCHD_LABEL}"])
+def _launchd_bootout():
+    return _run(["launchctl", "bootout", f"{_gui_domain()}/{LAUNCHD_LABEL}"])
 
 
 def start(*, restart: bool = False) -> int:
@@ -219,18 +219,45 @@ def start(*, restart: bool = False) -> int:
             steps.append(["systemctl", "--user", "restart", UNIT_NAME])
     else:
         changed = _write_if_changed(plist_path(), render_plist(launcher))
+        was_loaded = _launchd_loaded()
+        bootout_error = None
+        enable_error = None
         if changed or restart:
-            _launchd_bootout()
+            result = _launchd_bootout()
+            if result.returncode and was_loaded:
+                bootout_error = (
+                    result.stderr or result.stdout
+                ).strip() or "bootout failed"
         steps = [["launchctl", "enable", f"{_gui_domain()}/{LAUNCHD_LABEL}"]]
-        if not _launchd_loaded():
-            steps.append(["launchctl", "bootstrap", _gui_domain(), str(plist_path())])
     for cmd in steps:
         result = _run(cmd)
         if result.returncode != 0:
-            return _fail(
+            message = (
                 f"could not start the client service ({' '.join(cmd)}): "
                 f"{(result.stderr or result.stdout).strip()}"
             )
+            if manager == "launchd" and (changed or restart):
+                enable_error = message
+            else:
+                return _fail(message)
+    if manager == "launchd" and (changed or restart or not was_loaded):
+        cmd = ["launchctl", "bootstrap", _gui_domain(), str(plist_path())]
+        for attempt in range(5):
+            result = _run(cmd)
+            if result.returncode == 0 and _launchd_loaded():
+                break
+            if attempt < 4:
+                time.sleep(0.2)
+        else:
+            return _fail(
+                f"could not start the client service ({' '.join(cmd)}): {(result.stderr or result.stdout).strip()}"
+            )
+    if manager == "launchd" and enable_error is not None:
+        return _fail(enable_error)
+    if manager == "launchd" and bootout_error is not None:
+        return _fail(f"could not stop the client service: {bootout_error}")
+    if manager == "launchd" and not _launchd_loaded():
+        return _fail("client service did not load")
     print(f"  started   client service ({manager})")
     print(f"  log       {log_path()}")
     _print_proxy()
@@ -281,6 +308,17 @@ def _manager_active(manager: str | None) -> bool:
     if manager == "launchd":
         return _launchd_loaded()
     return False
+
+
+def restart_if_running() -> int:
+    """Installer upgrade hook: bounce live services, preserve stopped ones."""
+    if _manager_active(_manager()):
+        return restart()
+    # Clean up without enabling a deliberately stopped unit.
+    from client.retirement import cleanup_once
+
+    cleanup_once()
+    return 0
 
 
 def service_status() -> dict[str, Any]:
@@ -423,16 +461,13 @@ def run_foreground() -> int:
 
     proxy = start_proxy()
 
-    # Evaluation runs on its own daemon thread: a long evaluator subprocess
-    # must never block the device check or the proxy.
-    evaluation = None
-    try:
-        from client.evaluation import EvaluationWorker
+    from client.retirement import start_cleanup
 
-        evaluation = EvaluationWorker()
-        evaluation.start()
+    cleanup_stop = None
+    try:
+        cleanup_stop = start_cleanup()
     except Exception:
-        logger.exception("evaluation worker failed to start")
+        logger.exception("retired client state cleanup could not start")
 
     try:
         while not stop:
@@ -446,8 +481,8 @@ def run_foreground() -> int:
             while not stop and time.monotonic() < deadline:
                 time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
     finally:
-        if evaluation is not None:
-            evaluation.stop()
+        if cleanup_stop is not None:
+            cleanup_stop.set()
         proxy.stop()
         logger.info("client service stopped (pid %s)", os.getpid())
     return 0

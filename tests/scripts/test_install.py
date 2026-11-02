@@ -39,6 +39,8 @@ if 'check-server' in args and os.environ.get('TOKENAGE_FAKE_PROTOCOL_FAIL') == '
     raise SystemExit(1)
 if 'setup' in args and os.environ.get('TOKENAGE_FAKE_SETUP_FAIL') == '1':
     raise SystemExit(1)
+if 'restart' in args and os.environ.get('TOKENAGE_FAKE_RESTART_FAIL') == '1':
+    raise SystemExit(1)
 """
 
 
@@ -124,6 +126,7 @@ def _run_install(
     env = {
         **os.environ,
         "HOME": str(home),
+        "TOKENAGE_HOME": str(home / ".tokenage"),
         "PATH": f"{fake_bin}:/usr/bin:/bin",
         "TOKENAGE_FIXTURE_ARCHIVE": str(archive),
         "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
@@ -200,6 +203,7 @@ def test_launcher_runs_the_current_snapshot_and_failed_sha_keeps_it(
     launcher_env = {
         **os.environ,
         "HOME": str(home),
+        "TOKENAGE_HOME": str(home / ".tokenage"),
         "PATH": f"{fake_bin}:/usr/bin:/bin",
         "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
         "TOKENAGE_FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
@@ -280,6 +284,7 @@ def test_reinstall_checks_protocol_before_replacing_current_symlink(
     env = {
         **os.environ,
         "HOME": str(home),
+        "TOKENAGE_HOME": str(home / ".tokenage"),
         "PATH": f"{fake_bin}:/usr/bin:/bin",
         "TOKENAGE_FIXTURE_ARCHIVE": str(next_archive),
         "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
@@ -321,6 +326,7 @@ def test_refuses_to_overwrite_a_foreign_launcher(tmp_path: Path) -> None:
         env={
             **os.environ,
             "HOME": str(home),
+            "TOKENAGE_HOME": str(home / ".tokenage"),
             "PATH": f"{fake_bin}:/usr/bin:/bin",
             "TOKENAGE_FIXTURE_ARCHIVE": str(tmp_path / "snapshot.tar.gz"),
             "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
@@ -347,7 +353,12 @@ def test_existing_current_directory_fails_before_installing_launcher(
         ["/bin/sh", str(script)],
         text=True,
         capture_output=True,
-        env={**os.environ, "HOME": str(home), "PATH": f"{fake_bin}:/usr/bin:/bin"},
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "TOKENAGE_HOME": str(home / ".tokenage"),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
         timeout=10,
     )
     assert result.returncode != 0
@@ -365,6 +376,7 @@ def test_login_reads_code_from_tty_when_installer_runs_from_pipe(
     env = {
         **os.environ,
         "HOME": str(home),
+        "TOKENAGE_HOME": str(home / ".tokenage"),
         "PATH": f"{fake_bin}:/usr/bin:/bin",
         "TOKENAGE_FIXTURE_ARCHIVE": str(archive),
         "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
@@ -396,12 +408,15 @@ def test_login_reads_code_from_tty_when_installer_runs_from_pipe(
         raise AssertionError("installer did not finish")
     log = (tmp_path / "python.log").read_text()
     assert "-m client login --server https://host.example tty=yes" in log
+    assert log.index("client client restart --if-running") < log.index("client login")
     assert "login-input=browser-code-1234" in log
     assert b"No interactive terminal is available" not in output
 
 
+@pytest.mark.parametrize("restart_fails", [False, True])
 def test_updater_skip_login_mode_preserves_existing_credentials(
     tmp_path: Path,
+    restart_fails: bool,
 ) -> None:
     home, fake_bin, archive = _fixture(tmp_path)
     script = tmp_path / "install.sh"
@@ -409,11 +424,13 @@ def test_updater_skip_login_mode_preserves_existing_credentials(
     env = {
         **os.environ,
         "HOME": str(home),
+        "TOKENAGE_HOME": str(home / ".tokenage"),
         "PATH": f"{fake_bin}:/usr/bin:/bin",
         "TOKENAGE_FIXTURE_ARCHIVE": str(archive),
         "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
         "TOKENAGE_FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
         "TOKENAGE_SKIP_LOGIN": "1",
+        "TOKENAGE_FAKE_RESTART_FAIL": "1" if restart_fails else "0",
     }
 
     result = subprocess.run(
@@ -424,10 +441,16 @@ def test_updater_skip_login_mode_preserves_existing_credentials(
         timeout=30,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == (1 if restart_fails else 0), (
+        result.stdout + result.stderr
+    )
     log = (tmp_path / "python.log").read_text()
     assert "-m client check-server --server https://host.example" in log
     assert "-P -m client setup" in log
+    assert "-P -m client client restart --if-running" in log
+    if restart_fails:
+        assert "service restart failed" in result.stderr
+        return
     assert "login" not in log
     assert "Existing credentials were preserved; sign-in skipped." in result.stdout
     assert (home / ".tokenage" / "credentials.json").read_text() == (
@@ -447,6 +470,7 @@ def test_updater_reports_agent_configuration_refresh_failure(tmp_path: Path) -> 
         env={
             **os.environ,
             "HOME": str(home),
+            "TOKENAGE_HOME": str(home / ".tokenage"),
             "PATH": f"{fake_bin}:/usr/bin:/bin",
             "TOKENAGE_FIXTURE_ARCHIVE": str(archive),
             "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
@@ -459,6 +483,8 @@ def test_updater_reports_agent_configuration_refresh_failure(tmp_path: Path) -> 
 
     assert result.returncode != 0
     assert "agent configuration refresh failed" in result.stderr
+    log = (tmp_path / "python.log").read_text()
+    assert log.index("client client restart --if-running") < log.index("client setup")
     log = (tmp_path / "python.log").read_text()
     assert "-P -m client setup" in log
     assert "login" not in log
@@ -521,6 +547,7 @@ def _both_fixture(tmp_path: Path, *, api_port: int = 4123):
     env = {
         **os.environ,
         "HOME": str(home),
+        "TOKENAGE_HOME": str(home / ".tokenage"),
         "PATH": f"{fake_bin}:/usr/bin:/bin",
         "TOKENAGE_FIXTURE_ARCHIVE": str(archive),
         "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),

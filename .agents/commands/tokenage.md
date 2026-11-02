@@ -85,7 +85,7 @@ Cover:
 - Duplicate final events.
 - Retry after partial failure.
 
-## Database, workers, and evaluations
+## Database and workers
 
 The DB can be slow or remote. Don't write worker loops that hang forever.
 
@@ -94,7 +94,6 @@ Rules:
 - Use timeouts for external/DB-ish calls where practical.
 - Keep worker loops resilient to one bad job.
 - Avoid unbounded scans as data grows.
-- For stuck evaluations, inspect `evaluation_jobs` and `/evaluation-jobs/active`.
 - Make migration compatibility explicit.
 
 ### Schema and migration workflow

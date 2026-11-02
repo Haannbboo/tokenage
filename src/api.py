@@ -19,7 +19,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from protocol import MAX_SUPPORTED_GENERATION, MIN_SUPPORTED_GENERATION
 from protocol.device_status import DeviceStatusReport
-from protocol.evaluation import EvaluationCompletedReport, EvaluationStartedReport
 from protocol.usage_report import UsageReport
 from src.config.app import CONFIG, _config_lock
 from src.config.server_config import resolve_server_urls
@@ -32,35 +31,24 @@ from .auth import (
 from .auth import router as auth_router
 from .auth.tokens import list_user_devices, set_device_status
 from .database import (
-    VALID_OUTCOMES,
-    VALID_SOURCES,
     Device,
     User,
     aggregate_daily_by_dimension,
-    aggregate_model_effectiveness,
     aggregate_usage_by_period,
     count_sessions,
     count_usage,
-    daily_session_effectiveness_report,
     delete_model_price,
-    delete_session_evaluation,
     distinct_client_sources,
     distinct_tool_names,
     fetch_recent_usage,
     fetch_session_selector_rows,
     fetch_sessions,
     fetch_tool_calls,
-    get_evaluation_job,
-    get_session_evaluation,
     get_usage_high_watermark_ts,
     init_db,
-    list_active_evaluation_jobs,
     list_model_prices,
-    list_session_evaluation_jobs,
     load_model_price_overrides,
     recalculate_usage_cost,
-    record_evaluation_completed,
-    record_evaluation_started,
     reprice_estimated_rows,
     summarize_session_tool_calls,
     summarize_sessions,
@@ -70,7 +58,6 @@ from .database import (
     summarize_usage_by_source,
     summarize_usage_window,
     upsert_model_price,
-    upsert_session_evaluation,
 )
 from .ingest_queue import (
     TRANSIENT_DB_ERRORS,
@@ -104,6 +91,9 @@ _SPA_API_PREFIXES = (
     "/devices",
     "/evaluation-jobs",
     "/model-effectiveness",
+    "/config/evaluation",
+    "/poll/",
+    "/local/",
     "/pricing",
     "/version",
     "/install.sh",
@@ -122,18 +112,6 @@ AUTH_GATE_EXTRA_GATED_PATHS = ("/docs", "/redoc", "/openapi.json")
 
 def _request_user_id(request: Request) -> str:
     return get_current_user(request).id
-
-
-class SessionEvaluationUpdate(BaseModel):
-    outcome: str
-    source: str = "manual"
-    confidence: float | None = None
-    task_title: str | None = None
-    task_title_zh: str | None = None
-    summary: str | None = None
-    evidence: list[str] = []
-    failure_reason: str | None = None
-    project: str | None = None
 
 
 def _parse_device_status_json(raw: str | None) -> dict | None:
@@ -581,7 +559,6 @@ def get_sessions(
     sort_order: str = "desc",
     limit: int = 50,
     offset: int = 0,
-    hide_noop: bool = False,
 ):
     user_id = _request_user_id(request)
     if view not in {"summary", "selector"}:
@@ -601,7 +578,6 @@ def get_sessions(
                 sort_order=sort_order,
                 limit=limit,
                 offset=offset,
-                hide_noop=hide_noop,
             ),
             "total": None,
         }
@@ -615,14 +591,12 @@ def get_sessions(
         sort_order=sort_order,
         limit=limit,
         offset=offset,
-        hide_noop=hide_noop,
     )
     total = count_sessions(
         user_id=user_id,
         client_source=client_source,
         since=since,
         until=until,
-        hide_noop=hide_noop,
     )
     return {"sessions": sessions, "total": total}
 
@@ -633,49 +607,13 @@ def get_sessions_summary(
     client_source: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    hide_noop: bool = False,
 ):
     return summarize_sessions(
         user_id=_request_user_id(request),
         client_source=client_source,
         since=since,
         until=until,
-        hide_noop=hide_noop,
     )
-
-
-@app.get("/model-effectiveness")
-def model_effectiveness(
-    request: Request,
-    since: str | None = None,
-    until: str | None = None,
-    client_source: str | None = None,
-    group_by: str = "model",
-    hide_noop: bool = False,
-):
-    if group_by not in {"model", "source", "provider"}:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid group_by. Must be one of ['model', 'provider', 'source']",
-        )
-    return aggregate_model_effectiveness(
-        user_id=_request_user_id(request),
-        group_by=group_by,
-        since=since,
-        until=until,
-        client_source=client_source,
-        hide_noop=hide_noop,
-    )
-
-
-@app.get("/sessions/daily-effectiveness")
-def sessions_daily_effectiveness(request: Request, date: str):
-    try:
-        return daily_session_effectiveness_report(
-            date=date, user_id=_request_user_id(request)
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _device_status_entry(device: Device) -> dict:
@@ -747,152 +685,37 @@ def get_devices_status(user: User = Depends(get_current_user)):
     return {"devices": entries}
 
 
-def _require_device_cli_token(request: Request) -> tuple[str, str]:
-    """Report routes accept device-bound CLI credentials only.
-
-    The web token (browser cookie/bearer), ingest tokens, and the tokenless
-    loopback owner all authenticate the API gate but are not report
-    credentials. Returns (user_id, device_id).
-    """
-    auth_token = getattr(request.state, "auth_token", None)
-    if auth_token is None or auth_token.kind != "cli" or auth_token.device_id is None:
-        raise HTTPException(status_code=403, detail="device-bound cli token required")
-    return get_current_user(request).id, auth_token.device_id
-
-
-@app.post("/evaluation-jobs/started", status_code=204)
-def report_evaluation_started(request: Request, report: EvaluationStartedReport):
-    """Record a client run start. Informational: a completed report may create
-    the run on its own."""
-    user_id, device_id = _require_device_cli_token(request)
-    try:
-        outcome = record_evaluation_started(
-            job_id=report.job_id,
-            session_id=report.session_id,
-            client_source=report.client_source,
-            evaluator_type=report.evaluator_type,
-            started_at=report.started_at,
-            user_id=user_id,
-            device_id=device_id,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    if outcome == "conflict":
-        raise HTTPException(
-            status_code=409, detail="job id conflicts with an existing run"
-        )
-    return Response(status_code=204)
+# Explicit tombstones keep retired API paths out of the dashboard mount.
+RETIRED_EVALUATION_PATHS = (
+    "/evaluation-jobs",
+    "/evaluation-jobs/{path:path}",
+    "/sessions/{session_id}/evaluation",
+    "/sessions/{session_id}/evaluation-jobs",
+    "/sessions/{session_id}/evaluate-with-llm",
+    "/sessions/daily-effectiveness",
+    "/model-effectiveness",
+    "/config/evaluation",
+    "/poll/{path:path}",
+    "/local/poll/{path:path}",
+    "/local/evaluation-jobs",
+    "/local/evaluation-jobs/{path:path}",
+    "/local/sessions/{session_id}/evaluation",
+    "/local/sessions/{session_id}/evaluation-jobs",
+    "/local/sessions/{session_id}/evaluate-with-llm",
+)
 
 
-@app.post("/evaluation-jobs/completed", status_code=204)
-def report_evaluation_completed(request: Request, report: EvaluationCompletedReport):
-    """Record a client run outcome. A successful report writes the result onto
-    the session; the job row keeps run metadata only."""
-    user_id, device_id = _require_device_cli_token(request)
-    try:
-        outcome = record_evaluation_completed(
-            job_id=report.job_id,
-            session_id=report.session_id,
-            client_source=report.client_source,
-            evaluator_type=report.evaluator_type,
-            started_at=report.started_at,
-            finished_at=report.finished_at,
-            status=report.status,
-            result=report.result.model_dump(mode="json") if report.result else None,
-            error=report.error,
-            user_id=user_id,
-            device_id=device_id,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    if outcome == "conflict":
-        raise HTTPException(
-            status_code=409, detail="job id conflicts with an existing run"
-        )
-    return Response(status_code=204)
+def retired_evaluation_route():
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
-@app.get("/evaluation-jobs/active")
-def active_evaluation_jobs(request: Request, session_ids: str | None = None):
-    """Running attempts for the caller, keyed by session. There is no server
-    queue, so a run never has a queue position."""
-    parsed_session_ids = [
-        item for item in (session_ids or "").split(",") if item
-    ] or None
-    jobs = list_active_evaluation_jobs(
-        session_ids=parsed_session_ids, user_id=_request_user_id(request)
+for _path in RETIRED_EVALUATION_PATHS:
+    app.add_api_route(
+        _path,
+        retired_evaluation_route,
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+        include_in_schema=False,
     )
-    # The query is newest-first; preserve that attempt if an earlier client
-    # start report for the same session has not received its completion yet.
-    return {"jobs": {job["session_id"]: job for job in reversed(jobs)}}
-
-
-@app.get("/evaluation-jobs/{job_id}")
-def get_evaluation_job_route(request: Request, job_id: str):
-    job = get_evaluation_job(job_id, user_id=_request_user_id(request))
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return job
-
-
-@app.get("/sessions/{session_id}/evaluation-jobs")
-def session_evaluation_jobs(request: Request, session_id: str):
-    jobs = list_session_evaluation_jobs(session_id, user_id=_request_user_id(request))
-    return {"jobs": jobs}
-
-
-@app.put("/sessions/{session_id}/evaluation")
-def put_session_evaluation(
-    request: Request, session_id: str, update: SessionEvaluationUpdate
-):
-    if update.outcome not in VALID_OUTCOMES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid outcome: {update.outcome}. Must be one of {sorted(VALID_OUTCOMES)}",
-        )
-    if update.source not in VALID_SOURCES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid source: {update.source}. Must be one of {sorted(VALID_SOURCES)}",
-        )
-    if update.source != "manual":
-        raise HTTPException(
-            status_code=400,
-            detail="Manual evaluation endpoint only accepts source 'manual'.",
-        )
-    try:
-        upsert_session_evaluation(
-            session_id=session_id,
-            outcome=update.outcome,
-            source=update.source,
-            confidence=update.confidence,
-            task_title=update.task_title,
-            task_title_zh=update.task_title_zh,
-            summary=update.summary,
-            evidence=update.evidence,
-            failure_reason=update.failure_reason,
-            project=update.project,
-            user_id=_request_user_id(request),
-        )
-    except ValueError as e:
-        if "Session not found" in str(e):
-            raise HTTPException(status_code=404, detail=str(e))
-        raise
-    return {"status": "success"}
-
-
-@app.get("/sessions/{session_id}/evaluation")
-def get_evaluation(request: Request, session_id: str):
-    evaluation = get_session_evaluation(session_id, user_id=_request_user_id(request))
-    return {"evaluation": evaluation}
-
-
-@app.delete("/sessions/{session_id}/evaluation")
-def delete_evaluation(request: Request, session_id: str):
-    deleted = delete_session_evaluation(session_id, user_id=_request_user_id(request))
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {"status": "deleted"}
 
 
 @app.get("/usage/{usage_id}/tool-calls")

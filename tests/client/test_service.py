@@ -441,10 +441,12 @@ def test_systemd_stop_disables_and_tolerates_missing_unit(managed) -> None:
     assert service.stop() == 1
 
 
-def test_launchd_start_writes_plist_and_bootstraps(managed) -> None:
+def test_launchd_start_writes_plist_and_bootstraps(managed, monkeypatch) -> None:
     import plistlib
 
-    fake = managed("launchd", fail=("print",))
+    fake = managed("launchd")
+    states = iter([False, True, True])
+    monkeypatch.setattr(service, "_launchd_loaded", lambda: next(states))
     assert service.start() == 0
     plist = plistlib.loads(service.plist_path().read_bytes())
     assert plist["Label"] == service.LAUNCHD_LABEL
@@ -713,47 +715,6 @@ def test_foreground_starts_proxy_and_stops_it_on_shutdown(
     assert events[0] == "start" and "check" in events and events[-1] == "stop"
 
 
-def test_foreground_starts_and_stops_the_evaluation_worker(
-    device_home: Path, monkeypatch
-) -> None:
-    from client import evaluation
-    from client.proxy import runtime
-
-    events: list[str] = []
-
-    class Handle:
-        def stop(self) -> None:
-            events.append("proxy-stop")
-
-    class Worker:
-        def __init__(self) -> None:
-            events.append("eval-new")
-
-        def start(self) -> None:
-            events.append("eval-start")
-
-        def stop(self) -> None:
-            events.append("eval-stop")
-
-    monkeypatch.setattr(
-        runtime, "start_proxy", lambda: events.append("proxy-start") or Handle()
-    )
-    monkeypatch.setattr(evaluation, "EvaluationWorker", Worker)
-    handlers: dict = {}
-    monkeypatch.setattr(service.signal, "signal", lambda n, h: handlers.update({n: h}))
-
-    def check(state):
-        events.append("check")
-        handlers[signal.SIGTERM](signal.SIGTERM, None)
-
-    monkeypatch.setattr(service, "_check_once", check)
-    monkeypatch.setattr(service.logging, "basicConfig", lambda **kw: None)
-    assert service.run_foreground() == 0
-    assert events[0] == "proxy-start"
-    assert "eval-start" in events and "check" in events
-    assert events[-2:] == ["eval-stop", "proxy-stop"]
-
-
 def test_service_keeps_running_when_proxy_cannot_bind(device_home: Path) -> None:
     blocker = socket.socket()
     blocker.bind(("127.0.0.1", 0))
@@ -840,3 +801,34 @@ def test_client_start_prints_proxy_outcome(managed, capsys) -> None:
     _record(RUNNING, pid=2**22 + 12345)  # old service's record: not shown
     service.start()
     assert "  proxy " not in capsys.readouterr().out
+
+
+def test_launchd_restart_retries_bootstrap_and_checks_loaded(managed, monkeypatch):
+    fake = managed("launchd")
+    original = service._run
+    attempts = []
+
+    def run(cmd):
+        if cmd[1] == "bootstrap":
+            attempts.append(1)
+            if len(attempts) == 1:
+                return subprocess.CompletedProcess(cmd, 1, "", "still loaded")
+        return original(cmd)
+
+    monkeypatch.setattr(service, "_run", run)
+    monkeypatch.setattr(service.time, "sleep", lambda _: None)
+    assert service.restart() == 0
+    assert len(attempts) == 2
+    assert any(cmd[1] == "bootout" for cmd in fake.calls)
+
+
+def test_launchd_restart_fails_on_bootout(managed):
+    fake = managed("launchd", fail=("bootout",))
+    assert service.restart() == 1
+    assert any(cmd[1] == "bootstrap" for cmd in fake.calls)
+
+
+def test_launchd_bootstraps_even_if_enable_fails(managed):
+    fake = managed("launchd", fail=("enable",))
+    assert service.restart() == 1
+    assert any(cmd[1] == "bootstrap" for cmd in fake.calls)

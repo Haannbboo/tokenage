@@ -32,7 +32,7 @@ Two components, one command:
   Depends only on `httpx` and `pyyaml`,
   and never imports `src`.
 - **Server** (`src/`, `scripts/`) — the API, the OTLP collector, the
-  dashboard, pricing, storage and the evaluation worker. Owns
+  dashboard, pricing and storage. Owns
   `~/.tokenage/config.yaml`, `supervisord.conf` and the database.
 
 An all-in-one install has both. A remote machine installs only the client, and
@@ -781,14 +781,13 @@ The aliases are removed in the next major version of the server release.
 
 ## Removed commands
 
-`tokenage summary` is gone. Evaluations run in the background through the
-server's job API, and the result is on the dashboard. The spelling is refused
-with exit 2 so a script that still calls it fails loudly instead of being run as
+`tokenage summary` is gone. Usage is available on the dashboard. The spelling
+is refused with exit 2 so a script that still calls it fails loudly instead of being run as
 a tracked child command named `summary`:
 
 ```
 $ tokenage summary 01JQ8F2K9W3N
-tokenage: 'summary' is no longer a command. Evaluations now run in the background; see the dashboard.
+tokenage: 'summary' is no longer a command; see the usage dashboard.
 $ echo $?
 2
 ```

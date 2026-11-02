@@ -267,10 +267,10 @@ def test_time_filter_active_inclusive_end_exclusive_across_bucket_edge(sessions_
             },
         ).json()
         assert page["total"] == row["session_count"]
-        assert (
-            int(datetime.fromisoformat(row["start"]).timestamp() * 1_000_000)
-            >= row["key"]
-        )
+        start = int(datetime.fromisoformat(row["start"]).timestamp() * 1_000_000)
+        # Only the first bucket can be clipped.
+        first = row is chart["over_time"][0]
+        assert start >= row["key"] if first else start == row["key"]
     iso_edge = datetime.fromtimestamp(edge / 1_000_000, UTC).isoformat()
     assert (
         client.get(
@@ -546,3 +546,12 @@ def test_session_models_cost_order_and_bad_json(sessions_api, payload, expected)
         next(row for row in rows if row["session_id"] == "session-00")["models"]
         == expected
     )
+
+
+def test_chart_rejects_too_many_time_buckets(sessions_api):
+    client, _ = sessions_api
+    response = client.get(
+        "/sessions/distribution",
+        params={"granularity": "15m", "since": "2020-01-01", "until": "2027-01-01"},
+    )
+    assert response.status_code == 400

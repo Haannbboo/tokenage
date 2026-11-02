@@ -630,9 +630,12 @@ def get_sessions_distribution(
         raise HTTPException(status_code=400, detail="Invalid granularity")
     if not re.fullmatch(r"[+-](?:0[0-9]|1[0-4]):[0-5][0-9]", tz_offset):
         raise HTTPException(status_code=400, detail="Invalid tz_offset")
-    return aggregate_session_distribution(
-        filters=filters, granularity=granularity, tz_offset=tz_offset
-    )
+    try:
+        return aggregate_session_distribution(
+            filters=filters, granularity=granularity, tz_offset=tz_offset
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 def _device_status_entry(device: Device) -> dict:

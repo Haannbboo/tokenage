@@ -3,8 +3,9 @@ import { createElement } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SessionsTab } from '../src/pages/SessionsTab'
-vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn(), dateRange: 'all' }) }))
-vi.mock('../src/hooks/useSessionsData', () => ({ useSessionsData: () => ({ sessions: [{ session_id: 'session-123456789', started: 1000000, ended: 2000000, client_source: 'test', request_count: 1, total_cost_usd: 0 }], distribution: null, sessionsLoading: false, sessionsError: false, hasMoreSessions: false, sessionSortBy: 'started', sessionSortOrder: 'asc', handleSessionSort: vi.fn(), setSessionPage: vi.fn() }) }))
+const state = vi.hoisted(() => ({ dateRange: 'all', sessions: [{ session_id: 'session-123456789', started: 1000000, ended: 2000000, client_source: 'test', request_count: 1, total_cost_usd: 0 }] }))
+vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn(), dateRange: state.dateRange, timezone: 'UTC' }) }))
+vi.mock('../src/hooks/useSessionsData', () => ({ useSessionsData: () => ({ sessions: state.sessions, distribution: null, sessionsLoading: false, sessionsError: false, hasMoreSessions: false, sessionSortBy: 'started', sessionSortOrder: 'asc', handleSessionSort: vi.fn(), setSessionPage: vi.fn() }) }))
 vi.mock('../src/components/SessionDetail', () => ({ SessionDetail: () => createElement('div', null, 'detail opened') }))
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 it('copies the ID without toggling, while the row and keyboard toggle', () => {
@@ -20,4 +21,24 @@ it('copies the ID without toggling, while the row and keyboard toggle', () => {
   expect(screen.getByText('detail opened')).toBeTruthy()
   fireEvent.keyDown(row, { key: 'Enter' })
   expect(row.getAttribute('aria-expanded')).toBe('false')
+})
+
+it('scales activity to listed starts and ends and clips earlier sessions', () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2025-10-22T12:00:00Z'))
+  state.dateRange = '24h'
+  const time = (hour: number) => Date.UTC(2025, 9, 22, hour) * 1000
+  state.sessions = [
+    { session_id: 'early', started: time(-13), ended: time(10), client_source: 'test', request_count: 1, total_cost_usd: 0 },
+    { session_id: 'first', started: time(8), ended: time(9), client_source: 'test', request_count: 1, total_cost_usd: 0 },
+    { session_id: 'last', started: time(10), ended: time(12), client_source: 'test', request_count: 1, total_cost_usd: 0 },
+  ]
+  const view = render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  const bars = view.container.querySelectorAll<HTMLElement>('.session-span i')
+  expect(bars[0].style.left).toBe('0%'); expect(bars[0].style.width).toBe('50%')
+  expect(bars[1].style.left).toBe('0%'); expect(bars[1].style.width).toBe('25%')
+  expect(bars[2].style.left).toBe('50%'); expect(bars[2].style.width).toBe('50%')
+  expect(view.container.querySelector('.session-axis')?.textContent).toMatch(/08:00.*12:00/)
+  state.dateRange = 'all'; view.rerender(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  expect(view.container.querySelector('.session-axis')?.textContent).toMatch(/11:00.*12:00/)
+  vi.useRealTimers()
 })

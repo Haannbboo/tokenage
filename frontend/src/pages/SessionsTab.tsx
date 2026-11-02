@@ -18,7 +18,10 @@ export function SessionsTab({ onNavigateToLogs }: { onNavigateToLogs: (filters?:
   const header = (label: string, column: string, className?: string) => <th className={className}><button className="session-plain-button" onClick={() => handleSessionSort(column)}>{t(label)} {sessionSortBy === column ? (sessionSortOrder === 'asc' ? '↑' : '↓') : ''}</button></th>
   const starts = sessions.map(s => s.started), ends = sessions.map(s => s.ended)
   const since = getSinceDate(dateRange)
-  const min = since ? new Date(since).getTime() * 1000 : Math.min(...starts), max = since ? Date.now() * 1000 : Math.max(...ends), span = Math.max(1, max - min)
+  const rangeStart = since ? new Date(since).getTime() * 1000 : null
+  const inRangeStarts = rangeStart == null ? starts : starts.filter(start => start >= rangeStart)
+  const min = inRangeStarts.length ? Math.min(...inRangeStarts) : rangeStart ?? 0
+  const max = ends.length ? Math.max(...ends) : min, span = Math.max(1, max - min)
   const agentName = (source: string | null | undefined) => source ? getAgentDisplayName(source) === source ? sessionAgentName(source) : getAgentDisplayName(source) : t('Unknown')
   const agentColor = (source: string | null | undefined) => getSourceBadgeText(source ?? '')
   const shortTimeLabel = (row: { period?: string; start?: string; end?: string }) => {

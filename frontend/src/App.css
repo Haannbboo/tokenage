@@ -1353,7 +1353,7 @@
 .session-mark-wrap .session-mark-tooltip { width:190px; margin-left:-95px; white-space:nowrap; text-align:left; }
 .session-gap { top:38px; z-index:2; }
 .session-lane-tick { position:absolute; top:65px; transform:translateX(-50%); font-size:10px; color:var(--text-secondary); white-space:nowrap; }
-.session-row-hovered { background:var(--hover-bg, var(--tab-toggle-bg)); }
+.session-interactions .table tbody tr.session-row-hovered > td { background: var(--surface-hover); }
 .expandable-row { cursor:pointer; }
 .expandable-row:focus-visible { outline:2px solid var(--color-green); outline-offset:-2px; }
 

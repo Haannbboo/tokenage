@@ -66,18 +66,27 @@ def _primary_by_cost(costs: dict[str, float]) -> str | None:
     return max(costs, key=costs.get)  # type: ignore[arg-type]
 
 
+MAX_TIME_BUCKETS = 5000
+
+
 def _load_cost_map(payload: str | None) -> dict[str, float]:
+    return json.loads(payload or "{}")
+
+
+def _session_models(payload: str | None) -> list[str]:
+    """Models used by a session, costliest first; bad JSON yields none."""
     try:
         costs = json.loads(payload or "{}")
     except (ValueError, TypeError):
-        return {}
+        return []
     if not isinstance(costs, dict):
-        return {}
-    return {
-        key: float(value)
-        for key, value in costs.items()
-        if isinstance(value, (int, float)) and math.isfinite(value)
+        return []
+    numeric = {
+        model: cost
+        for model, cost in costs.items()
+        if type(cost) is int or (type(cost) is float and math.isfinite(cost))
     }
+    return sorted(numeric, key=lambda model: numeric[model], reverse=True)
 
 
 def _add_usage_to_cost_maps(
@@ -508,12 +517,11 @@ def _session_record_to_dict(rec: SessionRecord) -> dict[str, Any]:
     """Convert a SessionRecord ORM object to the API response dict."""
     started = rec.started
     ended = rec.ended
-    models = _load_cost_map(rec.models_json)
     result: dict[str, Any] = {
         "session_id": rec.session_id,
         "client_source": rec.client_source or "",
         "model": rec.primary_model or "",
-        "models": sorted(models, key=lambda model: models[model], reverse=True),
+        "models": _session_models(rec.models_json),
         "started": started,
         "ended": ended,
         "duration_s": _compute_duration_s(started, ended),
@@ -751,6 +759,8 @@ def _active_session_buckets(
     offset = _tz_seconds(tz_offset) * 1_000_000
     grid_start = (lower + offset) // size * size - offset
     count = (upper - grid_start + size - 1) // size
+    if count > MAX_TIME_BUCKETS:
+        raise ValueError("Range too long for this granularity")
     changes = [0] * (count + 1)
     for started, ended in timestamps:
         # The outer buckets are clipped; exclude timestamps beyond those edges.

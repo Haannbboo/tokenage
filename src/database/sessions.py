@@ -8,6 +8,8 @@ from __future__ import annotations
 import calendar
 import json
 import logging
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -26,7 +28,6 @@ from .models import (
     Usage,
 )
 from .usage import (
-    _bucket_start,
     _format_periods,
     _granularity,
     _tz_seconds,
@@ -66,7 +67,17 @@ def _primary_by_cost(costs: dict[str, float]) -> str | None:
 
 
 def _load_cost_map(payload: str | None) -> dict[str, float]:
-    return json.loads(payload or "{}")
+    try:
+        costs = json.loads(payload or "{}")
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(costs, dict):
+        return {}
+    return {
+        key: float(value)
+        for key, value in costs.items()
+        if isinstance(value, (int, float)) and math.isfinite(value)
+    }
 
 
 def _add_usage_to_cost_maps(
@@ -408,11 +419,6 @@ def _fixed_bucket_expr(value: Any, buckets: tuple) -> Any:
     )
 
 
-def _session_time_bucket(granularity: str, tz_offset: str) -> Any:
-    size, _ = _granularity(granularity)
-    return _bucket_start(size, tz_offset, SessionRecord.started, 1_000_000)
-
-
 def _normalize_timestamp_filter(value: str) -> int:
     """Convert an ISO timestamp string to epoch microseconds for column comparison."""
     try:
@@ -467,7 +473,7 @@ def _session_filters(criteria: SessionFilters) -> list[Any]:
     if criteria.client_source:
         filters.append(SessionRecord.client_source == criteria.client_source)
     if criteria.since is not None:
-        filters.append(SessionRecord.started >= criteria.since)
+        filters.append(SessionRecord.ended >= criteria.since)
     if criteria.until is not None:
         filters.append(SessionRecord.started < criteria.until)
     if criteria.device_id or criteria.provider or criteria.model:
@@ -502,10 +508,12 @@ def _session_record_to_dict(rec: SessionRecord) -> dict[str, Any]:
     """Convert a SessionRecord ORM object to the API response dict."""
     started = rec.started
     ended = rec.ended
+    models = _load_cost_map(rec.models_json)
     result: dict[str, Any] = {
         "session_id": rec.session_id,
         "client_source": rec.client_source or "",
         "model": rec.primary_model or "",
+        "models": sorted(models, key=lambda model: models[model], reverse=True),
         "started": started,
         "ended": ended,
         "duration_s": _compute_duration_s(started, ended),
@@ -671,22 +679,22 @@ def aggregate_session_distribution(
     tz_offset: str = "+00:00",
     db_path: str | None = None,
 ) -> dict[str, Any]:
-    """Aggregate every matching session in SQL, without loading session pages.
+    """Count active sessions over time and aggregate lifetime costs by dimension.
 
-    Dates select session starts in the half-open interval [since, until). Model/device select whole-session rollups, not partial usage costs.
-    Missing/negative duration is zero, independent of wall time, so a chart click
-    remains exact for live sessions. Zero buckets are returned for fixed charts.
+    Time buckets and list filters both use ended >= start and started < end.
+    Only timestamps are loaded for the portable linear-time activity sweep.
     """
-    since, until = filters.since, filters.until
     conditions = _session_filters(filters)
     dimensions = {
-        "over_time": _session_time_bucket(granularity, tz_offset),
         "by_agent": func.coalesce(SessionRecord.client_source, ""),
         "by_duration": _fixed_bucket_expr(_duration_s_expr(), DURATION_BUCKETS),
         "by_cost": _fixed_bucket_expr(SessionRecord.total_cost_usd, COST_BUCKETS),
     }
     result = {}
     with get_engine(db_path).connect() as connection:
+        timestamps = connection.execute(
+            select(SessionRecord.started, SessionRecord.ended).where(*conditions)
+        ).all()
         for name, dimension in dimensions.items():
             query = (
                 select(
@@ -711,14 +719,62 @@ def aggregate_session_distribution(
     total_cost = sum(row["total_cost_usd"] for row in result["by_agent"])
     for row in result["by_agent"]:
         row["cost_share"] = row["total_cost_usd"] / total_cost if total_cost else 0.0
-    for row in result["over_time"]:
-        local_start = int(row["key"])
-        row["key"] = local_start - _tz_seconds(tz_offset) * 1_000_000
-        start = max(row["key"], since) if since is not None else row["key"]
-        end = row["key"] + _granularity(granularity)[0] * 1_000_000
-        end = min(end, until) if until is not None else end
-        row["start"] = datetime.fromtimestamp(start / 1_000_000, UTC).isoformat()
-        row["end"] = datetime.fromtimestamp(end / 1_000_000, UTC).isoformat()
-        row["period"] = local_start
-    _format_periods(result["over_time"], _granularity(granularity)[1], 1_000_000)
+    result["over_time"] = _active_session_buckets(
+        timestamps, filters=filters, granularity=granularity, tz_offset=tz_offset
+    )
     return result
+
+
+def _active_session_buckets(
+    timestamps: Sequence[Any],
+    *,
+    filters: SessionFilters,
+    granularity: str,
+    tz_offset: str,
+) -> list[dict[str, Any]]:
+    if not timestamps:
+        return []
+    lower = (
+        int(filters.since)
+        if filters.since is not None
+        else min(row.started for row in timestamps)
+    )
+    upper = (
+        int(filters.until)
+        if filters.until is not None
+        else int(datetime.now(UTC).timestamp() * 1_000_000)
+    )
+    if upper <= lower:
+        return []
+    seconds, fmt = _granularity(granularity)
+    size = seconds * 1_000_000
+    offset = _tz_seconds(tz_offset) * 1_000_000
+    grid_start = (lower + offset) // size * size - offset
+    count = (upper - grid_start + size - 1) // size
+    changes = [0] * (count + 1)
+    for started, ended in timestamps:
+        # The outer buckets are clipped; exclude timestamps beyond those edges.
+        if ended < lower or started >= upper:
+            continue
+        first = max(0, (started - grid_start) // size)
+        last = min(count - 1, (ended - grid_start) // size)
+        if first <= last:
+            changes[first] += 1
+            changes[last + 1] -= 1
+    rows = []
+    active = 0
+    for i in range(count):
+        active += changes[i]
+        key = grid_start + i * size
+        start, end = max(key, lower), min(key + size, upper)
+        rows.append(
+            {
+                "key": key,
+                "session_count": active,
+                "start": datetime.fromtimestamp(start / 1_000_000, UTC).isoformat(),
+                "end": datetime.fromtimestamp(end / 1_000_000, UTC).isoformat(),
+                "period": key + offset,
+            }
+        )
+    _format_periods(rows, fmt, 1_000_000)
+    return rows

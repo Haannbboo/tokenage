@@ -182,9 +182,12 @@ def test_all_read_routes_isolate_data(
     assert selector["total"] is None
     assert {row["session_id"] for row in selector["sessions"]} == expected_sessions
     distribution = read("/sessions/distribution")
-    for dimension in distribution.values():
+    for name, dimension in distribution.items():
         assert sum(row["session_count"] for row in dimension) == count
-        assert sum(row["total_cost_usd"] for row in dimension) == 2 * weight
+        if name != "over_time":
+            assert sum(row["total_cost_usd"] for row in dimension) == 2 * weight
+        else:
+            assert all("total_cost_usd" not in row for row in dimension)
     summary = read("/sessions/summary")
     assert summary["session_count"] == count
     assert summary["total_cost_usd"] == 2 * weight

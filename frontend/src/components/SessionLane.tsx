@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { UsageRow } from '../types'
 import { getModelTextColor } from '../model-badge'
-import { formatCost, formatLatency, formatNumber, formatTime, PALETTE } from '../utils'
+import { formatTime, PALETTE } from '../utils'
 import { t } from '../i18n'
 
 const MAX_GAP = 60_000
@@ -51,6 +51,7 @@ function axisTime(ms: number, tz?: string) { return new Intl.DateTimeFormat(unde
 function idle(ms: number) { const m = Math.floor(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m` }
 export function SessionLane({ rows, selected, hovered, onHover, onSelect, tz }: { rows: UsageRow[]; selected: string | null; hovered?: string | null; onHover?: (id: string | null) => void; onSelect: (id: string) => void; tz?: string }) {
   const [compact, setCompact] = useState(() => { try { return localStorage.getItem('tokenage-session-gaps') !== 'real' } catch { return true } })
+  const hasCuts = useMemo(() => lanePositions(rows, true).cuts.length > 0, [rows])
   const layout = useMemo(() => laneLayout(rows, compact), [rows, compact])
   const modelColors = useMemo(() => {
     const colors = new Map<string, string>(), used = new Set<string>()
@@ -61,15 +62,15 @@ export function SessionLane({ rows, selected, hovered, onHover, onSelect, tz }: 
     }
     return colors
   }, [rows])
-  return <div><div className="session-lane-heading"><span>{t('Timeline')}</span><div role="group" aria-label={t('Gap display')}>
+  return <div><div className="session-lane-heading"><span>{t('Timeline')}</span>{hasCuts && <div role="group" aria-label={t('Gap display')}>
     {[true, false].map(value => <button key={String(value)} className="btn-ghost" aria-pressed={compact === value} onClick={() => { setCompact(value); try { localStorage.setItem('tokenage-session-gaps', value ? 'compact' : 'real') } catch { /* storage unavailable */ } }}>{t(value ? 'Compact' : 'Real time')}</button>)}
-  </div></div><div className="session-model-legend">{[...modelColors].map(([model, color]) => <span key={model}><i style={{ background: color }} />{model}</span>)}</div>
-  <div className="session-lane-scroll"><div className="session-lane" style={{ width: layout.width + 32 }}><div className="session-lane-track" style={{ width: layout.width }}>
-    {layout.cuts.map(cut => <span key={cut.x} className="session-gap" style={{ left: cut.x / layout.total * 1000 + 500 * MAX_GAP / layout.total }}>⫽ {idle(cut.end - cut.start)} {t('idle')}</span>)}
-    {layout.marks.map(({ row, px, pxWidth }) => <span key={row.id} className="session-mark-wrap has-tooltip" style={{ left: px, width: pxWidth }}>
+  </div>}</div><div className="session-model-legend">{[...modelColors].map(([model, color]) => <span key={model}><i style={{ background: color }} />{model}</span>)}</div>
+  <div className="session-lane-scroll"><div className="session-lane"><div className="session-lane-track">
+    {layout.cuts.map(cut => <span key={cut.x} className="session-gap" style={{ left: `${(cut.x + MAX_GAP / 2) / layout.total * 100}%` }}>⫽ {idle(cut.end - cut.start)} {t('idle')}</span>)}
+    {layout.marks.map(({ row, px, pxWidth }) => <span key={row.id} className="session-mark-wrap" style={{ left: `${px / layout.width * 100}%`, width: `${pxWidth / layout.width * 100}%` }}>
       <button className={`session-mark${selected === row.id || hovered === row.id ? ' selected' : ''}${(row.status ?? 200) >= 400 ? ' error' : ''}`} style={{ background: (row.status ?? 200) >= 400 ? 'var(--color-red, #dc2626)' : modelColors.get(row.model) }} onMouseEnter={() => onHover?.(row.id)} onMouseLeave={() => onHover?.(null)} onFocus={() => onHover?.(row.id)} onBlur={() => onHover?.(null)} onClick={() => onSelect(row.id)} aria-label={`${formatTime(row.ts, tz)} ${row.model} ${row.status ?? 200}`} />
-      <span className="tooltip-text session-mark-tooltip">{t('Time')}: {formatTime(row.ts, tz)}<br />{t('Model')}: {row.model}<br />{t('Tokens')}: {formatNumber(row.total_tokens)}<br />{t('Cost')}: {formatCost(row.total_cost_usd)}<br />{t('Latency')}: {formatLatency(row.latency_ms)}<br />{t('Tools')}: {row.tool_names?.split(',').filter(Boolean).length ?? 0}<br />{t('Status')}: {row.status ?? 200}</span>
+
     </span>)}
-    {layout.ticks.map((tick, i) => <span key={i} className="session-lane-tick" style={{ left: tick.x }}>{axisTime(tick.time, tz)}</span>)}
+    {layout.ticks.map((tick, i) => <span key={i} className="session-lane-tick" style={{ left: `${tick.x / layout.width * 100}%` }}>{axisTime(tick.time, tz)}</span>)}
   </div></div></div></div>
 }

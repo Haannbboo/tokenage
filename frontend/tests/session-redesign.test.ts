@@ -74,3 +74,16 @@ it('links row and mark hover without scrolling', async () => {
   fireEvent.mouseLeave(row); fireEvent.mouseEnter(mark); expect(row.classList.contains('session-row-hovered')).toBe(true)
   fireEvent.keyDown(row, { key: ' ' }); expect(row.getAttribute('aria-expanded')).toBe('true')
 })
+
+it('shows a break only for compacted long idle gaps', () => {
+  localStorage.removeItem('tokenage-session-gaps')
+  const rows = [{ id: 'a', ts: 1_000_000, model: 'a', latency_ms: 0 }, { id: 'b', ts: 3_601_000_000, model: 'a', latency_ms: 0 }] as UsageRow[]
+  const view = render(createElement(SessionLane, { rows, selected: null, onSelect: vi.fn() }))
+  expect(screen.getByText(/1h 0m idle/)).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Real time' }))
+  expect(view.container.querySelector('.session-gap')).toBeNull()
+  cleanup()
+  render(createElement(SessionLane, { rows: rows.slice(0, 1), selected: null, onSelect: vi.fn() }))
+  expect(screen.queryByRole('group', { name: 'Gap display' })).toBeNull()
+  localStorage.removeItem('tokenage-session-gaps')
+})

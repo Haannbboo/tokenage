@@ -1,5 +1,6 @@
 """Shared chart/list predicates, boundary behavior, and session timeline reads."""
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -15,6 +16,12 @@ TS = 1776420000000000
 def sessions_api(api_module, fresh_db, monkeypatch):
     from src.database.models import SessionRecord, Usage
 
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 4, 27, tzinfo=UTC)
+
+    monkeypatch.setattr("src.database.sessions.datetime", Clock)
     # Include both sides of every exact edge, including subsecond duration.
     durations = [
         0,
@@ -114,7 +121,7 @@ def test_time_bucket_click_timezone_and_combined_filters(
         "until": "2026-04-26",
     }
     charts = client.get("/sessions/distribution", params=params).json()
-    assert sum(row["session_count"] for row in charts["over_time"]) == 4
+    assert sum(row["session_count"] for row in charts["over_time"]) >= 4
     for row in charts["over_time"]:
         page = client.get(
             "/sessions",
@@ -221,7 +228,7 @@ def test_charts_and_summary_ignore_list_bucket_filters(sessions_api):
         )
 
 
-def test_time_filter_start_inclusive_end_exclusive_across_bucket_edge(sessions_api):
+def test_time_filter_active_inclusive_end_exclusive_across_bucket_edge(sessions_api):
     from datetime import UTC, datetime
 
     from src.database.models import SessionRecord
@@ -246,9 +253,10 @@ def test_time_filter_start_inclusive_end_exclusive_across_bucket_edge(sessions_a
             )
         session.commit()
     chart = client.get(
-        "/sessions/distribution", params={"client_source": "edge-agent"}
+        "/sessions/distribution",
+        params={"client_source": "edge-agent", "until": "2026-04-20"},
     ).json()
-    assert [r["session_count"] for r in chart["over_time"]] == [1, 2]
+    assert [r["session_count"] for r in chart["over_time"]] == [1, 3, 1]
     for row in chart["over_time"]:
         page = client.get(
             "/sessions",
@@ -261,14 +269,19 @@ def test_time_filter_start_inclusive_end_exclusive_across_bucket_edge(sessions_a
         assert page["total"] == row["session_count"]
         assert (
             int(datetime.fromisoformat(row["start"]).timestamp() * 1_000_000)
-            == row["key"]
+            >= row["key"]
         )
     iso_edge = datetime.fromtimestamp(edge / 1_000_000, UTC).isoformat()
     assert (
-        client.get("/sessions", params={"since": iso_edge, "until": iso_edge}).json()[
-            "total"
-        ]
-        == 0
+        client.get(
+            "/sessions",
+            params={
+                "client_source": "edge-agent",
+                "since": iso_edge,
+                "until": iso_edge,
+            },
+        ).json()["total"]
+        == 1
     )
 
 
@@ -278,7 +291,7 @@ def test_partial_bucket_boundaries_round_trip_chart_count(sessions_api):
     from src.database.models import SessionRecord
 
     client, fresh_db = sessions_api
-    # All three starts share a bucket; each date boundary removes one of them.
+    # Earlier starts remain active; only the exclusive upper edge removes a row.
     with Session(fresh_db.database_module.get_engine()) as session:
         for i in range(3):
             session.add(
@@ -300,7 +313,7 @@ def test_partial_bucket_boundaries_round_trip_chart_count(sessions_api):
     chart = client.get("/sessions/distribution", params=params).json()
     assert len(chart["over_time"]) == 1
     row = chart["over_time"][0]
-    assert row["session_count"] == 1
+    assert row["session_count"] == 2
     assert row["start"] == params["since"]
     assert row["end"] == params["until"]
     page = client.get(
@@ -312,7 +325,7 @@ def test_partial_bucket_boundaries_round_trip_chart_count(sessions_api):
         },
     ).json()
     assert page["total"] == row["session_count"]
-    assert page["sessions"][0]["session_id"] == "partial-1"
+    assert {row["session_id"] for row in page["sessions"]} == {"partial-0", "partial-1"}
 
 
 def test_uniform_rows_and_empty_client_source_means_no_filter(sessions_api):
@@ -332,10 +345,9 @@ def test_uniform_rows_and_empty_client_source_means_no_filter(sessions_api):
         session.commit()
     chart = client.get("/sessions/distribution").json()
     assert any(row["key"] == "" for row in chart["by_agent"])
-    for rows in chart.values():
-        assert all(
-            {"key", "session_count", "total_cost_usd"} <= row.keys() for row in rows
-        )
+    for name, rows in chart.items():
+        assert all({"key", "session_count"} <= row.keys() for row in rows)
+        assert all(("total_cost_usd" in row) == (name != "over_time") for row in rows)
     assert client.get("/sessions", params={"client_source": ""}).json()["total"] == 11
     assert (
         client.get("/sessions/distribution", params={"client_source": ""}).json()
@@ -412,4 +424,125 @@ def test_timeline_latest_30_cursor_tools_and_empty(sessions_api):
         "prompt" not in key or key in {"prompt_tokens", "prompt_length"}
         for row in first
         for key in row
+    )
+
+
+@pytest.mark.parametrize("tz_offset", ["+00:00", "-07:00", "+05:30"])
+@pytest.mark.parametrize("granularity", ["day", "hour", "15m"])
+def test_active_range_spanning_buckets_and_ended_boundary(
+    sessions_api, tz_offset, granularity
+):
+    from src.database.models import SessionRecord
+
+    client, fresh_db = sessions_api
+    since, until = TS + 123, TS + 2 * 86400_000000 + 456
+    with Session(fresh_db.database_module.get_engine()) as session:
+        for name, start, end in (
+            ("spanning", TS - 86400_000000, until + 1),
+            ("ended-before", TS - 86400_000000, since - 1),
+            ("ended-at", TS - 86400_000000, since),
+            ("starts-at-end", until, until + 1),
+        ):
+            session.add(
+                SessionRecord(
+                    session_id=name,
+                    user_id="test-user",
+                    client_source="spanning-agent",
+                    started=start,
+                    ended=end,
+                    total_cost_usd=Decimal("3"),
+                    updated_at="now",
+                )
+            )
+        session.commit()
+    params = {
+        "client_source": "spanning-agent",
+        "since": datetime.fromtimestamp(since / 1_000_000, UTC).isoformat(),
+        "until": datetime.fromtimestamp(until / 1_000_000, UTC).isoformat(),
+    }
+    page = client.get("/sessions", params=params).json()
+    assert {row["session_id"] for row in page["sessions"]} == {"spanning", "ended-at"}
+    assert client.get("/sessions/summary", params=params).json()["session_count"] == 2
+    selector = client.get("/sessions", params=params | {"view": "selector"}).json()
+    assert {row["session_id"] for row in selector["sessions"]} == {
+        "spanning",
+        "ended-at",
+    }
+    chart = client.get(
+        "/sessions/distribution",
+        params=params
+        | {
+            "tz_offset": tz_offset,
+            "granularity": granularity,
+        },
+    ).json()
+    assert len(chart["over_time"]) >= 3
+    assert chart["over_time"][0]["start"] == params["since"]
+    assert chart["over_time"][-1]["end"] == params["until"]
+    assert chart["over_time"][0]["session_count"] == 2
+    for row in chart["over_time"]:
+        assert "total_cost_usd" not in row
+        assert (
+            client.get(
+                "/sessions",
+                params=params
+                | {
+                    "since": row["start"],
+                    "until": row["end"],
+                },
+            ).json()["total"]
+            == row["session_count"]
+        )
+    for dimension in ("by_agent", "by_duration", "by_cost"):
+        assert sum(row["session_count"] for row in chart[dimension]) == 2
+        assert sum(row["total_cost_usd"] for row in chart[dimension]) == 6
+
+
+def test_empty_time_distribution(sessions_api):
+    client, _ = sessions_api
+    for params in ({"client_source": "missing"}, {"since": "2099-01-01"}):
+        chart = client.get("/sessions/distribution", params=params).json()
+        assert chart["over_time"] == []
+        assert sum(row["session_count"] for row in chart["by_cost"]) == 0
+
+
+def test_implicit_time_bounds_and_zero_buckets(sessions_api):
+    client, _ = sessions_api
+    rows = client.get(
+        "/sessions/distribution", params={"client_source": "codex"}
+    ).json()["over_time"]
+    assert (
+        rows[0]["start"]
+        == datetime.fromtimestamp((TS + 86400_000000) / 1_000_000, UTC).isoformat()
+    )
+    assert rows[-1]["end"] == "2026-04-27T00:00:00+00:00"
+    assert any(row["session_count"] == 0 for row in rows)
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        (
+            '{"cheap": 1, "expensive": 10, "middle": 4}',
+            ["expensive", "middle", "cheap"],
+        ),
+        (None, []),
+        ("bad-json", []),
+        ("null", []),
+        ("[]", []),
+        ('{"bad": "oops", "good": 2, "infinite": NaN}', ["good"]),
+    ],
+)
+def test_session_models_cost_order_and_bad_json(sessions_api, payload, expected):
+    from src.database.models import SessionRecord
+
+    client, fresh_db = sessions_api
+    with Session(fresh_db.database_module.get_engine()) as session:
+        row = session.get(SessionRecord, "session-00")
+        row.models_json = payload
+        session.commit()
+    rows = client.get("/sessions").json()["sessions"]
+    assert (
+        next(row for row in rows if row["session_id"] == "session-00")["models"]
+        == expected
     )

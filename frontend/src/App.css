@@ -1356,3 +1356,25 @@
 .session-row-hovered { background:var(--hover-bg, var(--tab-toggle-bg)); }
 .expandable-row { cursor:pointer; }
 .expandable-row:focus-visible { outline:2px solid var(--color-green); outline-offset:-2px; }
+
+/* Sessions charts and timeline */
+.session-bars { overflow: hidden; gap: 2px; }
+.session-bar { flex: 1 1 0; min-width: 0; font-size: 12px; }
+.session-bar small { font-size: 12px; }
+.session-bar i { background: var(--color-blue); opacity: 1; }
+.session-stack button { opacity: 1; }
+.session-bar { position: relative; padding-bottom: 16px; }
+.session-time-label { position: absolute !important; bottom: 0; left: 50%; width: max-content !important; max-width: 65px; transform: translateX(-50%); overflow: hidden !important; }
+.session-time-label.first { left: 0; transform: none; }
+.session-span { overflow: hidden; }
+.session-axis { font-size: 12px; }
+.session-model-legend, .session-lane-tick, .session-gap { font-size: 12px; }
+.session-lane-track { width: calc(100% - 32px); }
+.session-lane-tick:nth-last-child(5) { transform: none; }
+.session-lane-tick:last-child { transform: translateX(-100%); }
+.session-gap::before { content: '╱╱'; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); color: var(--text-primary); font-weight: bold; }
+.session-tools-more { border: 0; padding: 0; }
+.session-tools-more summary { cursor: pointer; list-style: none; }
+.session-tools-more summary::-webkit-details-marker { display: none; }
+.session-tools-more:focus-within .tooltip-text, .session-tools-more[open] .tooltip-text { visibility: visible; opacity: 1; }
+.session-tool-extra { display: block; white-space: nowrap; }

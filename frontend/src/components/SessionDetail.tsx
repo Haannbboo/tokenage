@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import type { SessionSummary, UsageRow } from '../types'
 import type { TimelineTool } from './RequestTimeline'
 import { RequestDetail } from './RequestDetail'
@@ -11,6 +11,7 @@ import { t } from '../i18n'
 type Tool = TimelineTool & { usage_id: string | null }
 export function SessionDetail({ session, tz, onNavigateToLogs }: { session: SessionSummary; tz?: string; onNavigateToLogs: (filters: { sessionFilter: string }) => void }) {
   const { showToast } = useApp()
+  const listRef = useRef<HTMLDivElement>(null)
   const [rows, setRows] = useState<UsageRow[] | null>(null)
   const [tools, setTools] = useState<Tool[] | null>(null)
   const [rowsError, setRowsError] = useState(false)
@@ -46,12 +47,21 @@ export function SessionDetail({ session, tz, onNavigateToLogs }: { session: Sess
       showToast(t('Cost recalculated'))
     } catch { showToast(t('Failed to recalculate cost')) } finally { setRecalculatingId(null) }
   }
-  const selectMark = (id: string) => { setSelected(id); document.getElementById(`session-request-${id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }
-  const stats = [[t('Duration'), formatDuration(Math.round(session.duration_s))], [t('Requests'), formatNumber(session.request_count)], [t('Tokens'), formatNumber(session.total_tokens)], [t('Cost'), formatCost(session.total_cost_usd)], [t('Models'), (session.models?.length ? session.models : [...new Set((rows ?? []).map(row => row.model).filter(Boolean))]).join(', ') || session.model || '—']]
+  const scrollToRow = (id: string) => {
+    const list = listRef.current
+    const row = document.getElementById(`session-request-${id}`)
+    if (!list || !row) return
+    const bounds = list.getBoundingClientRect(), target = row.getBoundingClientRect()
+    if (target.top < bounds.top) list.scrollTop += target.top - bounds.top
+    else if (target.bottom > bounds.bottom) list.scrollTop += target.bottom - bounds.bottom
+  }
+  const hoverMark = (id: string | null) => { setHovered(id); if (id) scrollToRow(id) }
+  const selectMark = (id: string) => { setSelected(id); scrollToRow(id) }
+  const stats = [[t('Duration'), formatDuration(Math.round(session.duration_s))], [t('Requests'), formatNumber(session.request_count)], [t('Tokens'), formatNumber(session.total_tokens)], [t('Cost'), formatCost(session.total_cost_usd, 2)], [t('Models'), session.models?.length ? session.models.join(', ') : session.model || '—']]
   return <div className="session-detail"><div className="session-stats">{stats.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
     {rowsError ? <p role="alert">{t('Failed to fetch interactions')}</p> : !rows ? <p>{t('Loading...')}</p> : rows.length === 0 ? <p>{t('No interactions found.')}</p> : <>
-      <SessionLane rows={rows} selected={selected} hovered={hovered} onHover={setHovered} onSelect={selectMark} tz={tz} />
-      <div className="session-interactions"><table className="table"><thead><tr>{['Time', 'Model', 'Tokens', 'Cost', 'Latency', 'Status', 'Tools'].map(label => <th key={label}>{t(label)}</th>)}</tr></thead><tbody>{rows.map(row => <Fragment key={row.id}><tr id={`session-request-${row.id}`} className={`expandable-row${hovered === row.id ? ' session-row-hovered' : ''}`} tabIndex={0} aria-expanded={selected === row.id} onMouseEnter={() => setHovered(row.id)} onMouseLeave={() => setHovered(null)} onFocus={() => setHovered(row.id)} onBlur={() => setHovered(null)} onClick={() => setSelected(selected === row.id ? null : row.id)} onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSelected(selected === row.id ? null : row.id) } }}>
+      <SessionLane rows={rows} selected={selected} hovered={hovered} onHover={hoverMark} onSelect={selectMark} tz={tz} />
+      <div className="session-interactions" ref={listRef}><table className="table"><thead><tr>{['Time', 'Model', 'Tokens', 'Cost', 'Latency', 'Status', 'Tools'].map(label => <th key={label}>{t(label)}</th>)}</tr></thead><tbody>{rows.map(row => <Fragment key={row.id}><tr id={`session-request-${row.id}`} className={`expandable-row${hovered === row.id ? ' session-row-hovered' : ''}`} tabIndex={0} aria-expanded={selected === row.id} onMouseEnter={() => setHovered(row.id)} onMouseLeave={() => setHovered(null)} onFocus={() => setHovered(row.id)} onBlur={() => setHovered(null)} onClick={() => setSelected(selected === row.id ? null : row.id)} onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSelected(selected === row.id ? null : row.id) } }}>
         {(['time', 'model', 'tokens', 'cost', 'latency', 'status', 'tool'] as const).map(column => <Fragment key={column}>{renderRequestCell(row, column, { tz, colWidths: { model: 200, device: 120 }, hoveredSession: null, setSessionFilter: () => {}, recalculatingId, handleRecalculateCost, stopToolPropagation: true })}</Fragment>)}
       </tr>{selected === row.id && <tr className="expanded-row"><td colSpan={7}>{callsError ? <p role="alert">{t('Failed to fetch tool calls')}</p> : !calls ? <p>{t('Loading...')}</p> : <><div className="session-request-breakdown">{[[t('Input'), formatNumber(row.prompt_tokens)], [t('Output'), formatNumber(row.completion_tokens)], [t('Cached'), formatNumber(row.cached_tokens)], [t('Cache write'), formatNumber(row.cache_creation_tokens)], [t('Input cost'), formatCost(row.normal_input_cost_usd)], [t('Output cost'), formatCost(row.output_cost_usd)], [t('Cache cost'), formatCost(row.cache_read_cost_usd)], [t('Cache write cost'), formatCost(row.cache_write_cost_usd)]].map(([label, val]) => <span key={label}>{label}: {val}</span>)}</div><RequestDetail row={row} toolCalls={calls} showToast={showToast} /></>}</td></tr>}</Fragment>)}</tbody></table></div>
       <div className="session-pager"><span>{t('Latest {shown} requests').replace('{shown}', String(rows.length))}</span><button className="btn-ghost" onClick={() => onNavigateToLogs({ sessionFilter: session.session_id })}>{t('View all in Request Logs')} →</button></div>

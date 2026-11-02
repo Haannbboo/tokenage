@@ -102,7 +102,7 @@ export type SessionSummary = {
   session_id: string
   client_source: string
   model: string
-  models?: string[]
+  models: string[]
   started: number
   ended: number
   duration_s: number
@@ -145,7 +145,7 @@ type SessionDistributionCount = {
 }
 
 export type SessionDistribution = {
-  over_time: (SessionDistributionCount & { key: number; period: string; start: string; end: string })[]
+  over_time: { session_count: number; key: number; period: string; start: string; end: string }[]
   by_agent: (SessionDistributionCount & { key: string; cost_share: number })[]
   by_duration: (SessionDistributionCount & { key: SessionDurationBucket })[]
   by_cost: (SessionDistributionCount & { key: SessionCostBucket })[]

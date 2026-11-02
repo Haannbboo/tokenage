@@ -6,7 +6,7 @@ export const zh: Record<string, string> = {
   'Cache cost': '缓存费用',
   'Cache write cost': '缓存写入费用',
 
-  'Sessions over time': '会话趋势',
+  'Active sessions': '活跃会话',
   'By agent': '按代理',
   'By duration': '按时长',
   'By cost': '按费用',

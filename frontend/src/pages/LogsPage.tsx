@@ -544,7 +544,6 @@ export function LogsPage() {
                     className={`cost-recalc-btn ${costValueClass}`}
                     style={{ color: 'var(--color-green)', fontWeight: 500 }}
                     onClick={handleCostClick}
-                    title={t('Click to recalculate')}
                     aria-label={t('Click to recalculate')}
                   >
                     {formatCost(total)}
@@ -561,54 +560,54 @@ export function LogsPage() {
                       est.
                     </span>
                   )}
-                  <div className="tooltip-text" style={{ width: '200px', marginLeft: '-100px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                        <span style={{ color: 'rgba(255, 255, 255, 0.6)' }}>{t('Input:')}</span>
-                        <div style={{ textAlign: 'right' }}>
+                  <div className="tooltip-text cost-tooltip">
+                    <div className="cost-tooltip-rows">
+                      <div className="cost-tooltip-row">
+                        <span className="cost-tooltip-label">{t('Input:')}</span>
+                        <div className="cost-tooltip-amount">
                           <div>{formatCost(actualInputCost)}</div>
                           {pricing && (
-                            <div style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.4)' }}>{formatNumber(uncachedTokens)} tokens x {formatRate(pricing.input)}</div>
+                            <div className="cost-tooltip-detail">{formatNumber(uncachedTokens)} tokens x {formatRate(pricing.input)}</div>
                           )}
                         </div>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                        <span style={{ color: 'rgba(255, 255, 255, 0.6)' }}>{t('Output:')}</span>
-                        <div style={{ textAlign: 'right' }}>
+                      <div className="cost-tooltip-row">
+                        <span className="cost-tooltip-label">{t('Output:')}</span>
+                        <div className="cost-tooltip-amount">
                           <div>{formatCost(outputCost)}</div>
                           {pricing && (
-                            <div style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.4)' }}>{formatNumber(completionTokens)} tokens x {formatRate(pricing.output)}</div>
+                            <div className="cost-tooltip-detail">{formatNumber(completionTokens)} tokens x {formatRate(pricing.output)}</div>
                           )}
                         </div>
                       </div>
                       {cacheCost > 0 && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                          <span style={{ color: 'rgba(255, 255, 255, 0.6)' }}>{t('Cache:')}</span>
-                          <div style={{ textAlign: 'right' }}>
+                        <div className="cost-tooltip-row">
+                          <span className="cost-tooltip-label">{t('Cache:')}</span>
+                          <div className="cost-tooltip-amount">
                             <div style={{ color: 'var(--color-green)' }}>{formatCost(cacheCost)}</div>
                             {pricing && (
-                              <div style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.4)' }}>{formatNumber(cached)} tokens x {formatRate(pricing.cache_read)}</div>
+                              <div className="cost-tooltip-detail">{formatNumber(cached)} tokens x {formatRate(pricing.cache_read)}</div>
                             )}
                           </div>
                         </div>
                       )}
                       {cacheWriteCost > 0 && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                          <span style={{ color: 'rgba(255, 255, 255, 0.6)' }}>{t('Cache write:')}</span>
-                          <div style={{ textAlign: 'right' }}>
+                        <div className="cost-tooltip-row">
+                          <span className="cost-tooltip-label">{t('Cache write:')}</span>
+                          <div className="cost-tooltip-amount">
                             <div style={{ color: 'var(--color-purple)' }}>{formatCost(cacheWriteCost)}</div>
                             {pricing && pricing.cache_write !== null && (
-                              <div style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.4)' }}>{formatNumber(cacheCreation)} tokens x {formatRate(pricing.cache_write)}</div>
+                              <div className="cost-tooltip-detail">{formatNumber(cacheCreation)} tokens x {formatRate(pricing.cache_write)}</div>
                             )}
                           </div>
                         </div>
                       )}
-                      <div style={{ marginTop: '4px', paddingTop: '4px', borderTop: '1px solid #334155', display: 'flex', justifyContent: 'space-between', color: 'white' }}>
-                        <span style={{ color: 'rgba(255, 255, 255, 0.6)' }}>{t('Total:')}</span>
+                      <div className="cost-tooltip-row cost-tooltip-total">
+                        <span className="cost-tooltip-label">{t('Total:')}</span>
                         <span>{formatCost(total)}</span>
                       </div>
                       {pricing && (
-                        <div style={{ marginTop: '4px', paddingTop: '4px', borderTop: '1px solid #334155', fontSize: '9px', color: 'rgba(255, 255, 255, 0.5)', lineHeight: 1.5 }}>
+                        <div className="cost-tooltip-meta">
                           <div>
                             {t('Source:')} {pricing.source ?? t('unknown')}
                             {pricing.estimated && ` (${t('estimated')})`}
@@ -622,6 +621,7 @@ export function LogsPage() {
                         </div>
                       )}
                     </div>
+                    <div className="cost-tooltip-footer">{t('Click to recalculate')}</div>
                   </div>
                 </div>
               );

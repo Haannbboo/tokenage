@@ -1,5 +1,5 @@
 /** Position a tooltip around its trigger, keeping its box inside the viewport. */
-export function tooltipPosition(trigger: DOMRect, tooltip: DOMRect, width: number, height: number) {
+export function tooltipPosition(trigger: DOMRect, tooltip: Pick<DOMRect, 'width' | 'height'>, width: number, height: number) {
   const gap = 8
   const margin = 4
   const left = Math.max(margin, Math.min(trigger.left + trigger.width / 2 - tooltip.width / 2, width - tooltip.width - margin))
@@ -20,7 +20,7 @@ export function installTooltips() {
 
   function position() {
     if (!trigger || !tooltip || !trigger.isConnected || !tooltip.matches(':popover-open')) return
-    const { left, top, below, arrow } = tooltipPosition(trigger.getBoundingClientRect(), tooltip.getBoundingClientRect(), innerWidth, innerHeight)
+    const { left, top, below, arrow } = tooltipPosition(trigger.getBoundingClientRect(), { width: tooltip.offsetWidth, height: tooltip.offsetHeight }, innerWidth, innerHeight)
     tooltip.style.setProperty('--tooltip-left', `${left}px`)
     tooltip.style.setProperty('--tooltip-top', `${top}px`)
     tooltip.style.setProperty('--tooltip-arrow', `${arrow}px`)
@@ -30,8 +30,6 @@ export function installTooltips() {
   function close() {
     if (tooltip) {
       if (tooltip.matches(':popover-open')) tooltip.hidePopover()
-      tooltip.removeAttribute('popover')
-      tooltip.classList.remove('tooltip-below')
     }
     trigger = null
     tooltip = null

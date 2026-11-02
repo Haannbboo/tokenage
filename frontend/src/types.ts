@@ -195,6 +195,7 @@ export type AuthUser = {
   id: string
   email: string
   name: string | null
+  picture: string | null
   created_at: number
 }
 

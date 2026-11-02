@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { PricingPage } from './PricingPage'
+import { UserAvatar } from '../components/UserAvatar'
 import { useApp } from '../contexts/AppContext'
 import { useDevices } from '../hooks/useDevices'
 import { useDeviceStatuses } from '../hooks/useDeviceStatuses'
@@ -119,9 +120,7 @@ export function SettingsPage() {
               <div className="tab active"><span>💻</span> {t('Machines')}</div>
               {auth.user && (auth.provider === 'google' || webSessions?.some(session => session.current)) && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span className="user-avatar">
-                    {(auth.user.name || auth.user.email).charAt(0).toUpperCase()}
-                  </span>
+                  <UserAvatar user={auth.user} />
                   <span className="user-email" title={auth.user.email}>
                     {auth.user.name || auth.user.email}
                   </span>

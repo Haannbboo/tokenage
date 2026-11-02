@@ -246,6 +246,25 @@ def update_user_name(
         session.commit()
 
 
+def update_user_picture(
+    user_id: str, picture: str | None, db_path: str | None = None
+) -> None:
+    """Refresh the Google profile picture, including clearing a missing one.
+
+    Best effort: a cosmetic write must not fail the sign-in.
+    """
+    try:
+        with Session(get_engine(db_path)) as session:
+            session.execute(
+                sa_update(User).where(User.id == user_id).values(picture=picture)
+            )
+            session.commit()
+    except SQLAlchemyError:
+        logging.getLogger(__name__).warning(
+            "Failed to update picture for user id=%s", user_id
+        )
+
+
 def revoke_token(token_id: str, user_id: str, db_path: str | None = None) -> bool:
     """Revoke a token owned by this user. Returns False if absent/already revoked."""
     engine = get_engine(db_path)

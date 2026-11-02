@@ -132,6 +132,16 @@ def migrate_database(db_path: str | None = None) -> list[str]:
         )
 
     # create_all does not add columns to tables that already exist.
+    if not any(c["name"] == "picture" for c in insp.get_columns("users")):
+        with engine.begin() as connection:
+            # Two nodes can migrate at once; SQLite has no IF NOT EXISTS here.
+            guard = "IF NOT EXISTS " if engine.dialect.name == "postgresql" else ""
+            connection.execute(
+                text(f"ALTER TABLE users ADD COLUMN {guard}picture VARCHAR")
+            )
+        applied.append("users.picture")
+        insp = inspect(engine)
+
     missing_device_id = [
         table
         for table in DEVICE_ID_TABLES

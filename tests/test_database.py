@@ -5941,3 +5941,31 @@ def test_raw_window_date_only_until_uses_end_of_day():
 
     assert _needs_raw_window("2026-05-07T10:15:00Z", "2026-05-07")
     assert not _needs_raw_window("2026-05-07T10:15:00Z", "2026-05-10")
+
+
+def test_multiple_model_filters_apply_to_raw_and_rollup(fresh_db):
+    db = fresh_db.database_module
+    for index, model in enumerate(("first", "second", "third")):
+        ingest_write(
+            db.log_usage,
+            db.Usage(
+                user_id="test-user",
+                device_id="test-device",
+                ts=TS_2026_04_17_10 + index,
+                provider="test-provider",
+                model=model,
+                endpoint="/v1/responses",
+                prompt_tokens=1,
+                completion_tokens=1,
+                total_tokens=2,
+            ),
+        )
+    models = ["first", "second"]
+    rows = db.fetch_recent_usage(limit=10, user_id="test-user", model=models)
+    assert {row["model"] for row in rows} == set(models)
+    summary = db.summarize_usage_by_model(user_id="test-user", model=models)
+    assert {row["model"] for row in summary} == set(models)
+    assert {
+        row["model"]
+        for row in db.fetch_recent_usage(limit=10, user_id="test-user", model="first")
+    } == {"first"}

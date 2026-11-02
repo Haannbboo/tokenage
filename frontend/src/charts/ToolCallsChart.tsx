@@ -1,3 +1,4 @@
+import { appendModels } from '../modelFilter'
 import { useEffect, useState } from 'react'
 import { getToolColor } from '../utils'
 import { HorizontalBarChart } from './HorizontalBarChart'
@@ -18,7 +19,7 @@ export function ToolCallsChart({
 }: {
   filterParams?: {
     provider?: string
-    model?: string | null
+    model?: string[] | null
     client_source?: string | null
     device_id?: string | null
     since?: string | null
@@ -33,7 +34,7 @@ export function ToolCallsChart({
       try {
         const url = new URL('/usage/by-tool', window.location.origin)
         if (filterParams.provider) url.searchParams.set('provider', filterParams.provider)
-        if (filterParams.model) url.searchParams.set('model', filterParams.model)
+        appendModels(url.searchParams, filterParams.model)
         if (filterParams.client_source) url.searchParams.set('client_source', filterParams.client_source)
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
@@ -72,25 +73,24 @@ export function ToolCallsChart({
       items={items}
       metric={metric}
     >
+      {/* Same footer as the Top card: a bordered row holding one pill group. */}
       <div style={{
         padding: '8px 12px',
         borderTop: '1px solid var(--border-color)',
         display: 'flex',
-        flexWrap: 'wrap',
-        gap: '2px',
-        background: 'var(--tab-toggle-bg)',
-        borderRadius: '6px',
-        paddingTop: '8px',
+        alignItems: 'center',
       }}>
-        {(['count', 'totalTime', 'avgTime'] as ToolMetric[]).map(m => (
-          <button
-            key={m}
-            className={`tab-toggle-btn ${metric === m ? 'active' : ''}`}
-            onClick={() => setMetric(m)}
-          >
-            {m === 'count' ? t('Count') : m === 'totalTime' ? t('Total time') : t('Avg time')}
-          </button>
-        ))}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', background: 'var(--tab-toggle-bg)', borderRadius: '6px', padding: '2px' }}>
+          {(['count', 'totalTime', 'avgTime'] as ToolMetric[]).map(m => (
+            <button
+              key={m}
+              className={`tab-toggle-btn ${metric === m ? 'active' : ''}`}
+              onClick={() => setMetric(m)}
+            >
+              {m === 'count' ? t('Count') : m === 'totalTime' ? t('Total time') : t('Avg time')}
+            </button>
+          ))}
+        </div>
       </div>
     </HorizontalBarChart>
   )

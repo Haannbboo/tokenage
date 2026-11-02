@@ -1,3 +1,4 @@
+import { appendModels } from '../modelFilter'
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
 import type { UsageRow, ActiveFilter } from '../types'
 import type { RequestLogColumnId } from './useRequestLogColumns'
@@ -22,7 +23,7 @@ export const DEFAULT_COL_WIDTHS: Record<RequestLogColumnId, number> = {
   source: 88,
   device: 95,
   session: 100,
-  input: 245,
+  input: 300,
   output: 190,
   cost: 75,
   tool: 145,
@@ -119,19 +120,19 @@ export function useLogsData(opts: {
     document.addEventListener('mouseup', handleMouseUp)
   }
 
+  const model = opts.activeFilter?.models
   const provider = opts.activeFilter?.provider
-  const model = opts.activeFilter?.model
   const { activeSource, sessionFilter, toolFilter, deviceFilter } = opts
   const query = useMemo(() => {
     const params = new URLSearchParams({ limit: String(LOGS_PAGE_SIZE) })
+    appendModels(params, model)
     if (provider) params.set('provider', provider)
-    if (model) params.set('model', model)
     if (activeSource) params.set('client_source', activeSource)
     if (sessionFilter) params.set('session_id', sessionFilter)
     if (toolFilter) params.set('tool_name', toolFilter)
     if (deviceFilter) params.set('device_id', deviceFilter)
     return params.toString()
-  }, [provider, model, activeSource, sessionFilter, toolFilter, deviceFilter])
+  }, [model, provider, activeSource, sessionFilter, toolFilter, deviceFilter])
 
   const fetchPage = useCallback(async (controller: AbortController, before?: string): Promise<UsageRow[]> => {
     const url = new URL('/usage', window.location.origin)

@@ -313,6 +313,7 @@ export const zh: Record<string, string> = {
   'No web sessions found.': '没有找到网页会话。',
   'No devices found.': '没有找到设备。',
   'Device revoked': '设备已撤销',
+  'Session revoked': '会话已撤销',
   'Failed to revoke device': '撤销设备失败',
   'CLI': 'CLI',
   'Ingest': '接入',

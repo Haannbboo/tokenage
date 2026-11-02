@@ -33,13 +33,13 @@ export function SettingsPage() {
   const deviceReport = (deviceId: string) =>
     statuses?.find((entry) => entry.device_id === deviceId)?.status ?? null
 
-  const handleRevokeDevice = async (deviceId: string) => {
+  const handleRevokeDevice = async (deviceId: string, revokedMessage = 'Device revoked') => {
     if (revokingDeviceId !== null) return
     setRevokingDeviceId(deviceId)
     try {
       const response = await fetch(`/auth/devices/${deviceId}/revoke`, { method: 'POST' })
       if (response.ok) {
-        showToast(t('Device revoked'))
+        showToast(t(revokedMessage))
         refreshDevices()
       } else {
         showToast(t('Failed to revoke device'))
@@ -222,16 +222,49 @@ export function SettingsPage() {
                 {t('Browsers signed in to this account. A session idle for 30 days signs out automatically.')}
               </div>
               <table className="table">
-                <thead><tr><th>{t('Browser')}</th><th>{t('Signed in')}</th><th>{t('Last active')}</th><th></th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>{t('Browser')}</th>
+                    <th>{t('Signed in')}</th>
+                    <th>{t('Last active')}</th>
+                    <th></th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {webSessions && webSessions.length > 0 ? webSessions.map(session => (
+                  {webSessions && webSessions.length > 0 ? webSessions.map((session) => (
                     <tr key={session.id}>
-                      <td style={{ fontWeight: 700 }}>{session.device_name} {session.current && <span className="badge badge-success">{t('This session')}</span>}</td>
-                      <td>{formatTime(session.created_at)}</td>
-                      <td>{session.last_used_at != null ? formatTime(session.last_used_at) : '—'}</td>
-                      <td style={{ textAlign: 'right' }}>{!session.current && <button type="button" className="btn-danger" disabled={revokingDeviceId !== null} onClick={() => void handleRevokeDevice(session.id)}>{revokingDeviceId === session.id ? `${t('Revoke')}…` : t('Revoke')}</button>}</td>
+                      <td style={{ fontWeight: 700 }}>
+                        {session.device_name}
+                        {session.current && (
+                          <span className="badge badge-success" style={{ marginLeft: '8px' }}>
+                            {t('This session')}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{formatTime(session.created_at)}</td>
+                      <td style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        {session.last_used_at != null ? formatTime(session.last_used_at) : '—'}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {!session.current && (
+                          <button
+                            type="button"
+                            className="btn-danger"
+                            disabled={revokingDeviceId !== null}
+                            onClick={() => void handleRevokeDevice(session.id, 'Session revoked')}
+                          >
+                            {revokingDeviceId === session.id ? `${t('Revoke')}…` : t('Revoke')}
+                          </button>
+                        )}
+                      </td>
                     </tr>
-                  )) : <tr><td colSpan={4} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>{webSessions ? t('No web sessions found.') : t('Loading...')}</td></tr>}
+                  )) : (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
+                        {webSessions ? t('No web sessions found.') : t('Loading...')}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

@@ -140,6 +140,11 @@ def mint_token(
     return token, user
 
 
+def _web_session_expired(token: AuthToken, now: int) -> bool:
+    last_active = token.last_used_at or token.created_at
+    return token.kind == "web" and last_active <= now - WEB_IDLE_TIMEOUT_MICROS
+
+
 def resolve_token(
     token: str, db_path: str | None = None
 ) -> tuple[User, AuthToken] | None:
@@ -177,11 +182,7 @@ def resolve_token(
             ):
                 return None
             now = _now_micros()
-            if (
-                auth_token.kind == "web"
-                and (auth_token.last_used_at or auth_token.created_at)
-                <= now - WEB_IDLE_TIMEOUT_MICROS
-            ):
+            if _web_session_expired(auth_token, now):
                 return None
             # Detach before bookkeeping: rollback after a failed refresh must not
             # expire the already validated identity or trigger another SELECT.
@@ -277,12 +278,8 @@ def list_user_tokens(user_id: str, db_path: str | None = None) -> list[AuthToken
             .all()
         )
         session.expunge_all()
-        cutoff = _now_micros() - WEB_IDLE_TIMEOUT_MICROS
-        return [
-            row
-            for row in rows
-            if row.kind != "web" or (row.last_used_at or row.created_at) > cutoff
-        ]
+        now = _now_micros()
+        return [row for row in rows if not _web_session_expired(row, now)]
 
 
 def list_user_devices(

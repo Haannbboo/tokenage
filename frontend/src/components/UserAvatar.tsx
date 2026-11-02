@@ -10,7 +10,7 @@ export function UserAvatar({ user }: { user: AuthUser }) {
       {picture && picture !== failedPicture ? (
         <img
           src={picture}
-          alt={`${displayName} profile`}
+          alt=""
           referrerPolicy="no-referrer"
           onError={() => setFailedPicture(picture)}
           style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }}

@@ -1,0 +1,76 @@
+// @vitest-environment jsdom
+import { createElement } from 'react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
+import { lanePositions, laneLayout, SessionLane } from '../src/components/SessionLane'
+import { applySessionBucket, sessionFilterQuery } from '../src/hooks/useSessionsData'
+import { SessionDetail } from '../src/components/SessionDetail'
+import type { SessionSummary, UsageRow } from '../src/types'
+vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn() }) }))
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+it('places request starts from completion time and cuts idle gaps', () => {
+  const rows = [{ id: 'a', ts: 1_000_000, latency_ms: 500 }, { id: 'b', ts: 3_601_000_000, latency_ms: null }] as UsageRow[]
+  const real = lanePositions(rows, false), compact = lanePositions(rows, true)
+  expect(real.marks[0].width).toBe(500)
+  expect(real.marks[1].width).toBe(0)
+  expect(compact.marks[1].gap).toBe(3_600_000)
+  expect(compact.marks[1].x).toBe(60_500)
+})
+it('maps dashboard and clicked time filters to API parameters', () => {
+  const p = sessionFilterQuery('codex', 'device', { provider: 'openai', models: ['a', 'b'] }, 'old')
+  applySessionBucket(p, { kind: 'time', key: '123', start: 'start', end: 'end' })
+  expect(p.getAll('model')).toEqual(['a', 'b']); expect(p.get('provider')).toBe('openai')
+  expect(p.get('since')).toBe('start'); expect(p.get('until')).toBe('end'); expect(p.has('key')).toBe(false)
+  applySessionBucket(p, { kind: 'duration', key: '1-10m' }); expect(p.get('duration_bucket')).toBe('1-10m')
+})
+it('opens all session requests in logs from the latest 30', async () => {
+  const rows = Array.from({ length: 30 }, (_, i) => ({ id: String(i), ts: 1_000_000 + i, model: 'test', latency_ms: null }))
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => ({ ok: true, json: async () => url.startsWith('/usage?') ? rows : [] })))
+  const navigate = vi.fn()
+  const session = { session_id: 'abc', duration_s: 1, request_count: 45, total_tokens: 1, total_cost_usd: 1, model: 'test' } as SessionSummary
+  render(createElement(SessionDetail, { session, onNavigateToLogs: navigate }))
+  await waitFor(() => expect(screen.getByText('Latest 30 requests')).toBeTruthy())
+  fireEvent.click(screen.getByRole('button', { name: /View all in Request Logs/ }))
+  expect(navigate).toHaveBeenCalledWith({ sessionFilter: 'abc' })
+})
+
+it('renders fixed-width accessible lane marks and formats session duration', async () => {
+  const rows = [{ id: 'one', ts: 1_000_000, model: 'gpt-4', latency_ms: 800 }, { id: 'two', ts: 3_000_000, model: 'gpt-5', latency_ms: 500, status: 500 }] as UsageRow[]
+  const select = vi.fn()
+  const lane = render(createElement(SessionLane, { rows, selected: null, onSelect: select }))
+  const marks = lane.container.querySelectorAll<HTMLButtonElement>('.session-mark')
+  expect(marks).toHaveLength(2)
+  expect(marks[0].parentElement?.style.width).not.toBe('')
+  expect(marks[0].style.background).not.toBe(marks[1].style.background)
+  expect(marks[1].classList.contains('error')).toBe(true)
+  fireEvent.click(marks[0]); expect(select).toHaveBeenCalledWith('one')
+  cleanup()
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => [] })))
+  const session = { session_id: 'abc', duration_s: 848, request_count: 1, total_tokens: 1234, total_cost_usd: 1, model: 'test' } as SessionSummary
+  render(createElement(SessionDetail, { session, onNavigateToLogs: vi.fn() }))
+  expect(screen.getByText('14m 8s')).toBeTruthy()
+  expect(screen.getByText('1,234')).toBeTruthy()
+  await waitFor(() => expect(screen.getByText('No interactions found.')).toBeTruthy())
+})
+
+it('uses truthful compact axis times and separates scaled marks', () => {
+  const rows = [{ id: 'a', ts: 1_000_000, latency_ms: 500 }, { id: 'b', ts: 1_000_000, latency_ms: 500 }, { id: 'c', ts: 3_601_000_000, latency_ms: 1000 }] as UsageRow[]
+  const layout = laneLayout(rows, true)
+  expect(layout.ticks).toHaveLength(5)
+  expect(layout.ticks[0].time).toBe(500)
+  expect(layout.ticks[4].time).toBe(3_601_000)
+  expect(layout.cuts[0].end - layout.cuts[0].start).toBe(3_599_000)
+  expect(layout.marks[0].pxWidth).toBe(3)
+  expect(layout.marks[1].px).toBeGreaterThanOrEqual(layout.marks[0].px + 4)
+  expect(layout.marks[2].pxWidth).toBeGreaterThan(3)
+})
+it('links row and mark hover without scrolling', async () => {
+  const rows = [{ id: 'a', ts: 1_000_000, model: 'model-a', latency_ms: 500 }]
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => ({ ok: true, json: async () => url.startsWith('/usage?') ? rows : [] })))
+  const view = render(createElement(SessionDetail, { session: { session_id: 'abc', duration_s: 1, request_count: 1, total_tokens: 1, total_cost_usd: 1, model: 'model-a' } as SessionSummary, onNavigateToLogs: vi.fn() }))
+  await waitFor(() => expect(view.container.querySelector('.session-mark')).toBeTruthy())
+  const row = view.container.querySelector('#session-request-a')!, mark = view.container.querySelector('.session-mark')!
+  fireEvent.mouseEnter(row); expect(mark.classList.contains('selected')).toBe(true)
+  fireEvent.mouseLeave(row); fireEvent.mouseEnter(mark); expect(row.classList.contains('session-row-hovered')).toBe(true)
+  fireEvent.keyDown(row, { key: ' ' }); expect(row.getAttribute('aria-expanded')).toBe('true')
+})

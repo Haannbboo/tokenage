@@ -102,6 +102,7 @@ export type SessionSummary = {
   session_id: string
   client_source: string
   model: string
+  models?: string[]
   started: number
   ended: number
   duration_s: number

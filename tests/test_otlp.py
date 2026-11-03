@@ -194,9 +194,8 @@ def test_extract_claude_fields_basic(otlp_module):
     assert fields["ttft_ms"] is None
 
 
-@pytest.mark.parametrize("malformed", [False, True])
 def test_claude_string_numeric_attributes_persist_usage_and_session(
-    otlp_module, fresh_db, malformed
+    otlp_module, fresh_db
 ):
     db = fresh_db.database_module
     client = _authed_client(otlp_module, fresh_db)
@@ -208,16 +207,14 @@ def test_claude_string_numeric_attributes_persist_usage_and_session(
         "duration_ms": "1200",
         "status_code": "200",
     }
-    if malformed:
-        numeric = dict.fromkeys(numeric, "abc")
     expected = {
-        "prompt_tokens": 0 if malformed else 100,
-        "completion_tokens": None if malformed else 40,
-        "cached_tokens": None if malformed else 20,
-        "cache_creation_tokens": None if malformed else 10,
-        "total_tokens": 0 if malformed else 150,
-        "latency_ms": None if malformed else 1200,
-        "status": None if malformed else 200,
+        "prompt_tokens": 100,
+        "completion_tokens": 40,
+        "cached_tokens": 20,
+        "cache_creation_tokens": 10,
+        "total_tokens": 150,
+        "latency_ms": 1200,
+        "status": 200,
     }
     # Separate batches exercise both creation and update of the session rollup.
     for count in (1, 2):
@@ -256,6 +253,217 @@ def test_claude_string_numeric_attributes_persist_usage_and_session(
                 expected["cache_creation_tokens"] or 0
             )
             assert rollup.latency_sum_ms == count * (expected["latency_ms"] or 0)
+
+
+def _numeric_otlp_body(source, **overrides):
+    service = "codex_cli_rs" if source == "codex" else source
+    if source == "claude":
+        service = "claude-code"
+        attrs = {
+            "event.name": "api_request",
+            "input_tokens": "80",
+            "output_tokens": "40",
+            "cache_read_tokens": "20",
+            "cache_creation_tokens": "10",
+            "status_code": "200",
+        }
+    else:
+        attrs = {
+            "event.name": "codex.sse_event"
+            if source == "codex"
+            else f"{source}.message_completed",
+            "event.kind": "response.completed",
+            "input_token_count": "80",
+            "output_token_count": "40",
+            "cached_token_count": "20",
+            "http.response.status_code": "200",
+        }
+    attrs.update(
+        {
+            "model": "test-model",
+            "session.id": "numeric-session",
+            "conversation.id": "numeric-session",
+            "duration_ms": "1200",
+            "ttft_ms": "300",
+            "prompt_length": "500",
+            **overrides,
+        }
+    )
+    body = _minimal_otlp_body(service_name=service)
+    body["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"] = _attrs(
+        attrs
+    )
+    return body
+
+
+def test_bad_inline_prompt_length_consumes_tracked_length_once(otlp_module, fresh_db):
+    body = _numeric_otlp_body("codex", prompt_length="abc")
+    scope = body["resourceLogs"][0]["scopeLogs"][0]
+    first = scope["logRecords"][0]
+    first["timeUnixNano"] = "1800000060000000000"
+    second = _numeric_otlp_body("codex")["resourceLogs"][0]["scopeLogs"][0][
+        "logRecords"
+    ][0]
+    second["timeUnixNano"] = "1800000120000000000"
+    second["attributes"] = [
+        attr for attr in second["attributes"] if attr["key"] != "prompt_length"
+    ]
+    scope["logRecords"] = [
+        {
+            "timeUnixNano": "1800000000000000000",
+            "attributes": _attrs(
+                {
+                    "event.name": "codex.user_prompt",
+                    "conversation.id": "numeric-session",
+                    "prompt_length": 500,
+                }
+            ),
+        },
+        first,
+        second,
+    ]
+    assert (
+        _authed_client(otlp_module, fresh_db).post("/v1/logs", json=body).status_code
+        == 200
+    )
+    drain()
+    db = fresh_db.database_module
+    with db.Session(db.get_engine(fresh_db.db_path)) as session:
+        usages = session.scalars(db.select(db.Usage).order_by(db.Usage.ts)).all()
+        assert [usage.prompt_length for usage in usages] == [500, 0]
+        rollup = session.scalar(db.select(db.SessionRecord))
+        assert rollup is not None
+        assert rollup.request_count == 2
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"],
+)
+def test_claude_malformed_token_is_skipped(otlp_module, fresh_db, caplog, token):
+    body = _numeric_otlp_body("claude", **{token: "abc"})
+    assert (
+        _authed_client(otlp_module, fresh_db).post("/v1/logs", json=body).status_code
+        == 200
+    )
+    drain()
+    db = fresh_db.database_module
+    with db.Session(db.get_engine(fresh_db.db_path)) as session:
+        assert session.scalar(db.select(db.Usage)) is None
+        assert session.scalar(db.select(db.SessionRecord)) is None
+    assert "Skipping ingest event" in caplog.text
+    assert "error=ValueError" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "source, attribute",
+    [
+        ("claude", "duration_ms"),
+        ("claude", "prompt_length"),
+        ("opencode", "ttft_ms"),
+        ("opencode", "prompt_length"),
+        ("kilo", "ttft_ms"),
+        ("codex", "ttft_ms"),
+        ("codex", "prompt_length"),
+    ],
+)
+def test_malformed_metadata_keeps_usage_and_session(
+    otlp_module, fresh_db, source, attribute
+):
+    body = _numeric_otlp_body(source, **{attribute: "abc"})
+    assert (
+        _authed_client(otlp_module, fresh_db).post("/v1/logs", json=body).status_code
+        == 200
+    )
+    drain()
+    db = fresh_db.database_module
+    with db.Session(db.get_engine(fresh_db.db_path)) as session:
+        usage = session.scalar(db.select(db.Usage))
+        assert usage is not None
+        # The recorder preserves its existing default of zero for unknown prompt length.
+        field = "latency_ms" if attribute == "duration_ms" else attribute
+        assert getattr(usage, field) == (0 if attribute == "prompt_length" else None)
+        assert usage.prompt_tokens == (80 if source == "codex" else 100)
+        assert usage.completion_tokens == 40
+        rollup = session.scalar(db.select(db.SessionRecord))
+        assert rollup is not None
+        assert rollup.request_count == 1
+        assert rollup.total_tokens == usage.total_tokens
+
+
+@pytest.mark.parametrize("source", ["codex", "opencode", "kilo"])
+def test_string_metadata_persists_usage_and_session(otlp_module, fresh_db, source):
+    body = _numeric_otlp_body(source)
+    assert (
+        _authed_client(otlp_module, fresh_db).post("/v1/logs", json=body).status_code
+        == 200
+    )
+    drain()
+    db = fresh_db.database_module
+    with db.Session(db.get_engine(fresh_db.db_path)) as session:
+        usage = session.scalar(db.select(db.Usage))
+        assert usage is not None
+        for field, expected in {
+            "latency_ms": 1200,
+            "status": 200,
+            "ttft_ms": 300,
+            "prompt_length": 500,
+        }.items():
+            assert getattr(usage, field) == expected
+            assert isinstance(getattr(usage, field), int)
+        rollup = session.scalar(db.select(db.SessionRecord))
+        assert rollup is not None
+        assert rollup.request_count == 1
+        assert rollup.latency_sum_ms == 1200
+
+
+@pytest.mark.parametrize(
+    "event, key",
+    [("codex.api_request", "duration_ms"), ("response.created", "ttft_ms")],
+)
+@pytest.mark.parametrize(
+    "value, expected", [("1200", 1200), ("abc", None), (float("inf"), None)]
+)
+def test_codex_state_metadata_is_lenient(otlp_module, event, key, value, expected):
+    attrs = _attrs(
+        {
+            "event.name": event if event == "codex.api_request" else "codex.sse_event",
+            "event.kind": event,
+            "conversation.id": "numeric-session",
+        }
+    )
+    attrs.append(
+        {
+            "key": "duration_ms",
+            "value": {"doubleValue": value}
+            if isinstance(value, float)
+            else {"stringValue": value},
+        }
+    )
+    assert otlp_module._handle_codex_state_event(attrs, user_id="user")
+    state = otlp_module.codex_state.get("user:numeric-session", {})
+    assert state.get(key) == expected
+
+
+@pytest.mark.parametrize("value", ["abc", float("inf")])
+def test_prompt_event_ignores_malformed_length(otlp_module, value):
+    tracker = otlp_module.PromptLengthTracker({"user_prompt"})
+    attrs = _attrs({"event.name": "user_prompt", "session.id": "numeric-session"})
+    attrs.append(
+        {
+            "key": "prompt_length",
+            "value": {"doubleValue": value}
+            if isinstance(value, float)
+            else {"stringValue": value},
+        }
+    )
+    tracker.record_prompt_event("claude-code", attrs, "numeric-session", user_id="user")
+    assert (
+        tracker.consume_for_usage_event(
+            "claude-code", [], "numeric-session", user_id="user"
+        )
+        == 0
+    )
 
 
 @pytest.mark.parametrize("source", ["codex", "opencode", "kilo"])

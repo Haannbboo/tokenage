@@ -33,6 +33,8 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
   const [sessionSortBy, setSessionSortBy] = useState('ended')
   const [sessionSortOrder, setSessionSortOrder] = useState<'asc' | 'desc'>('desc')
   const [sessionPage, setSessionPage] = useState(1)
+  const [retry, setRetry] = useState(0)
+  const loadMoreSessions = () => { if (sessionsError) setRetry(n => n + 1); else setSessionPage(page => page + 1) }
   const [hasMoreSessions, setHasMoreSessions] = useState(false)
   const since = useMemo(() => getSinceDate(opts.dateRange), [opts.dateRange, refreshTrigger])
   const query = sessionFilterQuery(opts.activeSource, activeDevice, activeFilter, since).toString()
@@ -70,6 +72,6 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
       setSessions(prev => sessionPage === 1 ? data.sessions : [...prev, ...data.sessions]); setHasMoreSessions(data.sessions.length === 50)
     }).catch(() => { if (!controller.signal.aborted) setSessionsError(true) }).finally(() => { if (!controller.signal.aborted) setSessionsLoading(false) })
     return () => controller.abort()
-  }, [query, bucketKey, sessionSortBy, sessionSortOrder, sessionPage, refreshTrigger])
-  return { sessions, sessionsLoading, sessionsError, distribution, distributionLoading, distributionError, hasMoreSessions, sessionSortBy, sessionSortOrder, handleSessionSort, setSessionPage }
+  }, [query, bucketKey, sessionSortBy, sessionSortOrder, sessionPage, refreshTrigger, retry])
+  return { sessions, sessionsLoading, sessionsError, distribution, distributionLoading, distributionError, hasMoreSessions, sessionSortBy, sessionSortOrder, handleSessionSort, setSessionPage, loadMoreSessions }
 }

@@ -48,6 +48,15 @@ it('scales activity to listed starts and ends and clips earlier sessions', () =>
   vi.useRealTimers()
 })
 
+it('shows a bar for a lone session started before the range', () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2025-10-22T12:00:00Z'))
+  state.dateRange = '24h'
+  state.sessions = [{ session_id: 'pre', started: Date.parse('2025-10-21T11:00:00Z') * 1000, ended: Date.parse('2025-10-22T07:00:00Z') * 1000, client_source: 'test', request_count: 1, total_cost_usd: 0 }]
+  const view = render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  expect(parseFloat(view.container.querySelector<HTMLElement>('.session-span i')!.style.width)).toBeGreaterThan(0)
+  state.dateRange = 'all'; vi.useRealTimers()
+})
+
 it('labels the descending ended sort as Last used', () => {
   render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
   expect(screen.getByRole('button', { name: 'Last used ↓' })).toBeTruthy()

@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { SessionsTab } from '../src/pages/SessionsTab'
 const state = vi.hoisted(() => ({ dateRange: 'all', sessions: [{ session_id: 'session-123456789', started: 1000000, ended: 2000000, client_source: 'test', request_count: 1, total_cost_usd: 0 }] }))
 vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn(), dateRange: state.dateRange, timezone: 'UTC' }) }))
-vi.mock('../src/hooks/useSessionsData', () => ({ useSessionsData: () => ({ sessions: state.sessions, distribution: null, sessionsLoading: false, sessionsError: false, hasMoreSessions: false, sessionSortBy: 'started', sessionSortOrder: 'asc', handleSessionSort: vi.fn(), setSessionPage: vi.fn() }) }))
+vi.mock('../src/hooks/useSessionsData', () => ({ useSessionsData: () => ({ sessions: state.sessions, distribution: null, sessionsLoading: false, sessionsError: false, hasMoreSessions: false, sessionSortBy: 'ended', sessionSortOrder: 'desc', handleSessionSort: vi.fn(), setSessionPage: vi.fn() }) }))
 vi.mock('../src/components/SessionDetail', () => ({ SessionDetail: () => createElement('div', null, 'detail opened') }))
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 it('copies the ID without toggling, while the row and keyboard toggle', () => {
@@ -41,4 +41,9 @@ it('scales activity to listed starts and ends and clips earlier sessions', () =>
   state.dateRange = 'all'; view.rerender(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
   expect(view.container.querySelector('.session-axis')?.textContent).toMatch(/11:00.*12:00/)
   vi.useRealTimers()
+})
+
+it('labels the descending ended sort as Last used', () => {
+  render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  expect(screen.getByRole('button', { name: 'Last used ↓' })).toBeTruthy()
 })

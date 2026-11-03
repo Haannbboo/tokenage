@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { createElement } from 'react'
 import { readFileSync } from 'node:fs'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { lanePositions, laneLayout, SessionLane } from '../src/components/SessionLane'
-import { applySessionBucket, sessionFilterQuery } from '../src/hooks/useSessionsData'
+import { gapLength, lanePositions, laneLayout, SessionLane } from '../src/components/SessionLane'
+import { applySessionBucket, sessionFilterQuery, useSessionsData } from '../src/hooks/useSessionsData'
 import { SessionDetail } from '../src/components/SessionDetail'
 import type { SessionSummary, UsageRow } from '../src/types'
 vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn() }) }))
@@ -87,7 +87,7 @@ it('shows a break only for compacted long idle gaps', () => {
   localStorage.removeItem('tokenage-session-gaps')
   const rows = [{ id: 'a', ts: 1_000_000, model: 'a', latency_ms: 0 }, { id: 'b', ts: 3_601_000_000, model: 'a', latency_ms: 0 }] as UsageRow[]
   const view = render(createElement(SessionLane, { rows, selected: null, onSelect: vi.fn() }))
-  expect(screen.getByText(/1h 0m idle/)).toBeTruthy()
+  expect(screen.getByText(/1h 0m gap/)).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Real time' }))
   expect(view.container.querySelector('.session-gap')).toBeNull()
   cleanup()
@@ -112,4 +112,16 @@ it('shows missing latency in the interaction and expanded detail', async () => {
   expect(row.children[4].textContent).toBe('—')
   fireEvent.click(row)
   await waitFor(() => expect([...view.container.querySelectorAll('.detail-group')].find(group => group.querySelector('.detail-label')?.textContent === 'Latency')?.querySelector('.detail-value')?.textContent).toBe('—'))
+})
+
+it('formats gap lengths with seconds below an hour', () => {
+  expect(gapLength(119500)).toBe('1m 59s')
+  expect(gapLength(8040000)).toBe('2h 14m')
+})
+
+it('defaults to the latest session first', () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ sessions: [] }) })))
+  const { result } = renderHook(() => useSessionsData({ activeSource: null, dateRange: 'all', bucket: null }))
+  expect(result.current.sessionSortBy).toBe('ended')
+  expect(result.current.sessionSortOrder).toBe('desc')
 })

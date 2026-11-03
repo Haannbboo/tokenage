@@ -1358,10 +1358,12 @@
 .expandable-row:focus-visible { outline:2px solid var(--color-green); outline-offset:-2px; }
 
 /* Sessions charts and timeline */
-.session-bars { overflow: hidden; gap: 2px; }
+.session-bars { overflow: visible; gap: 2px; padding: 0 8px; }
+.session-bars.dense { gap: 0; }
 .session-bar { flex: 1 1 0; min-width: 0; font-size: 12px; }
 .session-bar small { font-size: 12px; }
 .session-bar i { background: var(--color-blue); opacity: 1; }
+.session-bars.has-selection .session-bar:not(.active) i { opacity: .25; }
 .session-stack button { opacity: 1; }
 .session-bar { position: relative; padding-bottom: 16px; }
 .session-time-label { position: absolute !important; bottom: 0; left: 50%; width: max-content !important; max-width: 65px; transform: translateX(-50%); overflow: hidden !important; }
@@ -1373,6 +1375,9 @@
 .session-lane-tick:nth-last-child(5) { transform: none; }
 .session-lane-tick:last-child { transform: translateX(-100%); }
 .session-gap::before { content: '╱╱'; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); color: var(--text-primary); font-weight: bold; }
+.session-gap:nth-child(even) { top: 52px; }
+.session-gap:nth-child(even)::before { bottom: calc(100% + 14px); }
+.session-lane-tick { top: 68px; }
 .session-tools-more { border: 0; padding: 0; }
 .session-tools-more button { cursor: pointer; border: 0; padding: 0; background: none; color: inherit; font: inherit; }
 .session-tools-more:focus-within .tooltip-text:not([popover]) { visibility: visible; opacity: 1; }

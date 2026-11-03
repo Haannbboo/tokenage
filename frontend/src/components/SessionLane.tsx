@@ -48,7 +48,7 @@ export function laneLayout(rows: UsageRow[], compact: boolean, width = 1000) {
   return { ...lane, marks, ticks, width: actualWidth }
 }
 function axisTime(ms: number, tz?: string) { return new Intl.DateTimeFormat(undefined, { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(ms)) }
-function idle(ms: number) { const m = Math.floor(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m` }
+export function gapLength(ms: number) { const seconds = Math.floor(ms / 1000); const m = Math.floor(seconds / 60); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m ${seconds % 60}s` }
 export function SessionLane({ rows, selected, hovered, onHover, onSelect, tz }: { rows: UsageRow[]; selected: string | null; hovered?: string | null; onHover?: (id: string | null) => void; onSelect: (id: string) => void; tz?: string }) {
   const [compact, setCompact] = useState(() => { try { return localStorage.getItem('tokenage-session-gaps') !== 'real' } catch { return true } })
   const hasCuts = useMemo(() => lanePositions(rows, true).cuts.length > 0, [rows])
@@ -66,7 +66,7 @@ export function SessionLane({ rows, selected, hovered, onHover, onSelect, tz }: 
     {[true, false].map(value => <button key={String(value)} className="btn-ghost" aria-pressed={compact === value} onClick={() => { setCompact(value); try { localStorage.setItem('tokenage-session-gaps', value ? 'compact' : 'real') } catch { /* storage unavailable */ } }}>{t(value ? 'Compact' : 'Real time')}</button>)}
   </div>}</div><div className="session-model-legend">{[...modelColors].map(([model, color]) => <span key={model}><i style={{ background: color }} />{model}</span>)}</div>
   <div className="session-lane-scroll"><div className="session-lane"><div className="session-lane-track">
-    {layout.cuts.map(cut => <span key={cut.x} className="session-gap" style={{ left: `${(cut.x + MAX_GAP / 2) / layout.total * 100}%` }}>⫽ {idle(cut.end - cut.start)} {t('idle')}</span>)}
+    {layout.cuts.map(cut => <span key={cut.x} className="session-gap" style={{ left: `${(cut.x + MAX_GAP / 2) / layout.total * 100}%` }}>{gapLength(cut.end - cut.start)} {t('gap')}</span>)}
     {layout.marks.map(({ row, px, pxWidth }) => <span key={row.id} className="session-mark-wrap" style={{ left: `${px / layout.width * 100}%`, width: `${pxWidth / layout.width * 100}%` }}>
       <button className={`session-mark${selected === row.id || hovered === row.id ? ' selected' : ''}${(row.status ?? 200) >= 400 ? ' error' : ''}`} style={{ background: (row.status ?? 200) >= 400 ? 'var(--color-red, #dc2626)' : modelColors.get(row.model) }} onMouseEnter={() => onHover?.(row.id)} onMouseLeave={() => onHover?.(null)} onFocus={() => onHover?.(row.id)} onBlur={() => onHover?.(null)} onClick={() => onSelect(row.id)} aria-label={`${formatTime(row.ts, tz)} ${row.model} ${row.status ?? 200}`} />
 

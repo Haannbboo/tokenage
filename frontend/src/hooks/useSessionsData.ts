@@ -30,7 +30,7 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
   const [distributionLoading, setDistributionLoading] = useState(true)
   const [sessionsError, setSessionsError] = useState(false)
   const [distributionError, setDistributionError] = useState(false)
-  const [sessionSortBy, setSessionSortBy] = useState('started')
+  const [sessionSortBy, setSessionSortBy] = useState('ended')
   const [sessionSortOrder, setSessionSortOrder] = useState<'asc' | 'desc'>('desc')
   const [sessionPage, setSessionPage] = useState(1)
   const [hasMoreSessions, setHasMoreSessions] = useState(false)

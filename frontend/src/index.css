@@ -554,5 +554,7 @@ a {
 
 .session-context { margin: 16px 0; }
 .session-context svg { display: block; width: 100%; height: auto; }
+.session-context-plot { position: relative; }
+.session-context-model { display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 .session-context svg text { fill: var(--text-secondary); }
 .session-detail, .device-detail { position: sticky; left: 0; width: min(100%, calc(100vw - 32px)); box-sizing: border-box; }

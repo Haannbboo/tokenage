@@ -1,11 +1,11 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionSummary, UsageRow } from '../types'
 import type { TimelineTool } from './RequestTimeline'
 import { RequestDetail } from './RequestDetail'
 import { SessionLane } from './SessionLane'
 import { renderRequestCell } from './RequestCell'
 import { useApp } from '../contexts/AppContext'
-import { formatCost, formatDuration, formatNumber } from '../utils'
+import { distinctColors, formatCost, formatDuration, formatNumber, modelColor } from '../utils'
 import { t } from '../i18n'
 import { expandableRowProps } from '../expandableRow'
 import { SessionContextChart, type SessionContext } from './SessionContextChart'
@@ -64,9 +64,11 @@ export function SessionDetail({ session, tz, onNavigateToLogs }: { session: Sess
   }
   const hoverMark = (id: string | null) => { setHovered(id); if (id) scrollToRow(id) }
   const selectMark = (id: string) => { setSelected(id); scrollToRow(id) }
+  // The same model colours as the timeline legend.
+  const modelColors = useMemo(() => distinctColors([...new Set(rows?.map(row => row.model))].sort(), modelColor), [rows])
   const stats = [[t('Duration'), formatDuration(Math.round(session.duration_s))], [t('Requests'), formatNumber(session.request_count)], [t('Tokens'), formatNumber(session.total_tokens)], [t('Peak context'), context ? formatNumber(context.peak_tokens) : '—'], [t('Cost'), formatCost(session.total_cost_usd, 2)], [t('Models'), session.models?.length ? session.models.join(', ') : session.model || '—']]
   return <div className="session-detail"><div className="session-stats">{stats.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
-    {contextError ? <p role="alert">{t('Failed to fetch context size')}</p> : !context ? <p>{t('Loading...')}</p> : <SessionContextChart data={context} tz={tz} />}
+    {contextError ? <p role="alert">{t('Failed to fetch context size')}</p> : !context ? <p>{t('Loading...')}</p> : <SessionContextChart data={context} tz={tz} hoveredId={hovered} hoveredTs={rows?.find(row => row.id === hovered)?.ts} linkedRange={rows?.length && rows.length < context.request_count ? { from: Math.min(...rows.map(row => row.ts)), to: Math.max(...rows.map(row => row.ts)) } : null} onHover={hoverMark} colorOf={model => modelColors.get(model) ?? modelColor(model)} />}
     {rowsError ? <p role="alert">{t('Failed to fetch interactions')}</p> : !rows ? <p>{t('Loading...')}</p> : rows.length === 0 ? <p>{t('No interactions found.')}</p> : <>
       <SessionLane rows={rows} selected={selected} hovered={hovered} onHover={hoverMark} onSelect={selectMark} tz={tz} />
       <div className="session-interactions" ref={listRef}><table className="table"><thead><tr>{['Time', 'Model', 'Tokens', 'Cost', 'Latency', 'Status', 'Tools'].map(label => <th key={label}>{t(label)}</th>)}</tr></thead><tbody>{rows.map(row => <Fragment key={row.id}><tr id={`session-request-${row.id}`} {...expandableRowProps(selected === row.id, () => setSelected(selected === row.id ? null : row.id), hovered === row.id ? 'session-row-hovered' : '')} onMouseEnter={() => setHovered(row.id)} onMouseLeave={() => setHovered(null)} onFocus={() => setHovered(row.id)} onBlur={() => setHovered(null)}>

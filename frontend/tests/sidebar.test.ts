@@ -73,7 +73,7 @@ it('collapses to the icon rail and remembers it', async () => {
   await open('/dashboard')
   await waitFor(() => expect(document.querySelector('.app')!.classList.contains('is-collapsed')).toBe(true))
   fireEvent.keyDown(document.body, { key: '[' })
-  expect(document.querySelector('.app')!.classList.contains('is-collapsed')).toBe(false)
+  await waitFor(() => expect(document.querySelector('.app')!.classList.contains('is-collapsed')).toBe(false))
 })
 
 it('opens the account menu and closes it on Escape', async () => {

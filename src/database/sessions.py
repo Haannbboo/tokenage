@@ -297,22 +297,6 @@ def upsert_session_from_tool_call(tool_call: ToolCall, *, session: Session) -> N
     session.flush()
 
 
-def summarize_session_tool_calls(
-    session_id: str, user_id: str, db_path: str | None = None
-) -> list[dict[str, Any]] | None:
-    """Return [{tool_name, count}] for a session, or None if it doesn't exist."""
-    engine = get_engine(db_path)
-    with Session(engine) as session:
-        rec = get_session_record(session, session_id, user_id=user_id)
-        if not rec:
-            return None
-        tools = _load_tool_calls_json(rec.tool_calls_json)
-        return [
-            {"tool_name": name, "count": count}
-            for name, count in sorted(tools.items(), key=lambda x: -x[1])
-        ]
-
-
 def rebuild_sessions_from_usage(db_path: str | None = None) -> int:
     """Clear and rebuild sessions table from usage rows. Returns count of sessions."""
     engine = get_engine(db_path)

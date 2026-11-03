@@ -219,16 +219,11 @@ def test_foreign_ids_and_filters_cannot_expand_scope(
         assert run["summary"]["requests"] == 0
         assert run["rows"] == []
         assert client.get(f"/usage/{owner}-0/tool-calls").json() == []
-        assert client.get(f"/sessions/{owner}-session-0/tool-calls").json() == []
         assert client.get(f"/sessions/{owner}-session-0/context").json() == {
             "points": [],
             "peak_tokens": 0,
             "request_count": 0,
         }
-        assert (
-            client.get(f"/sessions/{owner}-session-0/tool-calls/summary").status_code
-            == 404
-        )
         assert client.get("/usage", params={"tool_name": f"{owner}-tool"}).json() == []
         assert client.get(
             "/usage/count", params={"tool_name": f"{owner}-tool"}
@@ -256,9 +251,6 @@ def test_foreign_ids_and_filters_cannot_expand_scope(
         )
     assert len(client.get("/usage", params={"user_id": user_ids["b"]}).json()) == 2
     assert len(client.get("/usage/a-0/tool-calls").json()) == 1
-    assert client.get("/sessions/a-session-0/tool-calls/summary").json() == [
-        {"tool_name": "shared-tool", "count": 1}
-    ]
 
 
 def test_tool_queries_require_matching_owner(

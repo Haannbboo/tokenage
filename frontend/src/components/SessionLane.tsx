@@ -47,11 +47,11 @@ export function SessionLane({ rows, selected, hovered, onHover, onSelect, tz }: 
     return colors
   }, [rows])
   return <div><div className="session-lane-heading"><span>{t('Timeline')}</span></div><div className="session-model-legend">{[...modelColors].map(([model, color]) => <span key={model}><i style={{ background: color }} />{model}</span>)}</div>
-  <div className="session-lane-scroll"><div className="session-lane"><div className={`session-lane-track${hovered ? ' has-hover' : ''}`}>
+  <div className="session-lane"><div className={`session-lane-track${hovered ? ' has-hover' : ''}`}>
     {layout.marks.map(({ row, px, pxWidth }) => <span key={row.id} className="session-mark-wrap" style={{ left: `${px / layout.width * 100}%`, width: `${pxWidth / layout.width * 100}%` }}>
       <button className={`session-mark${selected === row.id || hovered === row.id ? ' selected' : ''}${(row.status ?? 200) >= 400 ? ' error' : ''}`} style={{ background: (row.status ?? 200) >= 400 ? 'var(--color-red, #dc2626)' : modelColors.get(row.model) }} onMouseEnter={() => onHover?.(row.id)} onMouseLeave={() => onHover?.(null)} onFocus={() => onHover?.(row.id)} onBlur={() => onHover?.(null)} onClick={() => onSelect(row.id)} aria-label={`${formatTime(row.ts, tz)} ${row.model} ${row.status ?? 200}`} />
 
     </span>)}
     {layout.ticks.map((tick, i) => <span key={i} className="session-lane-tick" style={{ left: `${tick.x / layout.width * 100}%` }}>{axisTime(tick.time, tz)}</span>)}
-  </div></div></div></div>
+  </div></div></div>
 }

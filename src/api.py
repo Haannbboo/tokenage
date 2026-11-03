@@ -54,7 +54,6 @@ from .database import (
     load_model_price_overrides,
     recalculate_usage_cost,
     reprice_estimated_rows,
-    summarize_session_tool_calls,
     summarize_sessions,
     summarize_tool_calls,
     summarize_usage_by_model,
@@ -594,7 +593,7 @@ def get_sessions(
     view: str = "summary",
     sort_by: str = "ended",
     sort_order: str = "desc",
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
     if view not in {"summary", "selector"}:
@@ -749,21 +748,6 @@ def get_usage_tool_calls(request: Request, usage_id: str):
 @app.get("/sessions/{session_id}/context")
 def get_session_context(request: Request, session_id: str):
     return aggregate_session_context(session_id, _request_user_id(request))
-
-
-@app.get("/sessions/{session_id}/tool-calls")
-def get_session_tool_calls(request: Request, session_id: str):
-    return fetch_tool_calls(session_id=session_id, user_id=_request_user_id(request))
-
-
-@app.get("/sessions/{session_id}/tool-calls/summary")
-def get_session_tool_calls_summary(request: Request, session_id: str):
-    summary = summarize_session_tool_calls(
-        session_id, user_id=_request_user_id(request)
-    )
-    if summary is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return summary
 
 
 def _pricing_entry(resolved_cost) -> dict:

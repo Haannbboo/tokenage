@@ -3,9 +3,9 @@ import { createElement } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SessionsTab } from '../src/pages/SessionsTab'
-const state = vi.hoisted(() => ({ dateRange: 'all', sessions: [{ session_id: 'session-123456789', started: 1000000, ended: 2000000, client_source: 'test', request_count: 1, total_cost_usd: 0 }] }))
-vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn(), dateRange: state.dateRange, timezone: 'UTC' }) }))
-vi.mock('../src/hooks/useSessionsData', () => ({ useSessionsData: () => ({ sessions: state.sessions, distribution: null, sessionsLoading: false, sessionsError: false, hasMoreSessions: false, sessionSortBy: 'ended', sessionSortOrder: 'desc', handleSessionSort: vi.fn(), setSessionPage: vi.fn() }) }))
+const state = vi.hoisted(() => ({ dateRange: 'all', activeSource: null as string | null, distribution: null as any, bucket: null as any, sessions: [{ session_id: 'session-123456789', started: 1000000, ended: 2000000, client_source: 'test', request_count: 1, total_cost_usd: 0 }] }))
+vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn(), dateRange: state.dateRange, activeSource: state.activeSource, timezone: 'UTC' }) }))
+vi.mock('../src/hooks/useSessionsData', () => ({ useSessionsData: (opts: any) => ({ ...(state.bucket = opts.bucket, {}), sessions: state.sessions, distribution: state.distribution, sessionsLoading: false, sessionsError: false, hasMoreSessions: false, sessionSortBy: 'ended', sessionSortOrder: 'desc', handleSessionSort: vi.fn(), setSessionPage: vi.fn() }) }))
 vi.mock('../src/components/SessionDetail', () => ({ SessionDetail: () => createElement('div', null, 'detail opened') }))
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 it('copies the ID without toggling, while the row and keyboard toggle', () => {
@@ -46,4 +46,18 @@ it('scales activity to listed starts and ends and clips earlier sessions', () =>
 it('labels the descending ended sort as Last used', () => {
   render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
   expect(screen.getByRole('button', { name: 'Last used ↓' })).toBeTruthy()
+})
+
+it('clears the chart bucket when the date range or source changes', () => {
+  state.distribution = { over_time: [{ key: 'a', period: '2025-10-22', start: 's', end: 'e', session_count: 1 }], by_agent: [{ key: 'codex', session_count: 1, cost_share: 1 }], by_duration: [], by_cost: [] }
+  const view = render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  fireEvent.click(view.container.querySelector('.session-bar')!)
+  expect(state.bucket?.kind).toBe('time')
+  state.dateRange = '24h'; view.rerender(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  expect(state.bucket).toBeNull()
+  fireEvent.click(view.container.querySelector('.session-stack button')!)
+  expect(state.bucket?.kind).toBe('agent')
+  state.activeSource = 'claude'; view.rerender(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  expect(state.bucket).toBeNull()
+  state.distribution = null
 })

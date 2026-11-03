@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useApp } from '../contexts/AppContext'
 import { useSessionsData, type SessionBucket } from '../hooks/useSessionsData'
 import { ClickToCopy } from '../components/CopyButton'
@@ -10,6 +10,7 @@ import { formatCost, formatNumber, formatTime, getSourceIcon, resolveTimezone, g
 export function SessionsTab({ onNavigateToLogs }: { onNavigateToLogs: (filters?: { sessionFilter?: string }) => void }) {
   const { activeSource, dateRange, timezone, showToast } = useApp()
   const [bucket, setBucket] = useState<SessionBucket | null>(null)
+  useEffect(() => { setBucket(null) }, [dateRange, activeSource])
   const [hoveredAgent, setHoveredAgent] = useState<string | null>(null)
   const [open, setOpen] = useState<string | null>(null)
   const { sessions, sessionsLoading, sessionsError, distribution, distributionLoading, distributionError, hasMoreSessions, sessionSortBy, sessionSortOrder, handleSessionSort, setSessionPage } = useSessionsData({ activeSource, dateRange, bucket })

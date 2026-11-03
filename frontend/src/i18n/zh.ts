@@ -13,7 +13,6 @@ export const zh: Record<string, string> = {
   'of cost': '费用占比',
   'Activity': '活动',
   'Live': '活跃',
-  'Copy session ID': '复制会话 ID',
   'Request': '请求',
   'Context size': '上下文大小',
   'Peak context': '上下文峰值',

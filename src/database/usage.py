@@ -1435,16 +1435,12 @@ TOOL_CALLS_QUERY_LIMIT = 500
 
 def fetch_tool_calls(
     *,
-    usage_id: str | None = None,
-    session_id: str | None = None,
+    usage_id: str,
     user_id: str,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return tool calls for a single usage row or session, ordered by ts."""
-    column = ToolCall.usage_id if usage_id is not None else ToolCall.session_id
-    value = usage_id if usage_id is not None else session_id
-    filters = [column == value]
-    filters.append(ToolCall.user_id == user_id)
+    """Return tool calls for a single usage row, ordered by ts."""
+    filters = [ToolCall.usage_id == usage_id, ToolCall.user_id == user_id]
     query = (
         select(
             ToolCall.tool_use_id,

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { formatNumber, formatTime } from '../utils'
 import { t } from '../i18n'
 
-export type ContextPoint = { request: number; ts: number; context_tokens: number }
+type ContextPoint = { request: number; ts: number; context_tokens: number }
 export type SessionContext = { points: ContextPoint[]; peak_tokens: number; request_count: number }
 const compact = (value: number) => value >= 1000 ? `${Math.round(value / 1000)}k` : String(value)
 
@@ -28,7 +28,7 @@ export function SessionContextChart({ data, tz }: { data: SessionContext; tz?: s
   const active = hover === null ? null : points?.[hover]
   const tooltip = active && `${t('Request')} ${formatNumber(active.request)} · ${formatTime(active.ts, tz)} · ${formatNumber(active.context_tokens)}`
   const tooltipWidth = Math.min(width - 8, (tooltip?.length || 0) * 7 + 12)
-  return <div className="session-context" ref={wrapper}>{points?.length >= 2 && peakPoint && <><strong>{t('Context size')}</strong><svg viewBox={`0 0 ${width} 200`} role="img" aria-label={t('Context size')} fontSize="12" onMouseLeave={() => setHover(null)} onMouseMove={e => {
+  return <div className="session-context" ref={wrapper}>{points?.length >= 2 && peak > 0 && peakPoint && <><strong>{t('Context size')}</strong><svg viewBox={`0 0 ${width} 200`} role="img" aria-label={t('Context size')} fontSize="12" onMouseLeave={() => setHover(null)} onMouseMove={e => {
     const rect = e.currentTarget.getBoundingClientRect()
     const target = 1 + Math.max(0, Math.min(1, ((e.clientX - rect.left) / rect.width * width - left) / (right - left))) * (count - 1)
     let best = 0

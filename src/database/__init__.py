@@ -39,7 +39,6 @@ from .sessions import (
     fetch_sessions,
     get_session_record,
     rebuild_sessions_from_usage,
-    summarize_session_tool_calls,
     summarize_sessions,
     upsert_session_from_usage,
 )
@@ -115,7 +114,6 @@ __all__ = [
     "record_usage",
     "resolve_base_url_id",
     "select",
-    "summarize_session_tool_calls",
     "summarize_sessions",
     "summarize_tool_calls",
     "summarize_usage_by_provider",

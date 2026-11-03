@@ -44,6 +44,7 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
   }, [sessionSortBy])
   const previousFilter = useRef(`${query}|${bucketKey}`)
   useEffect(() => { setSessionPage(1); setSessions([]) }, [query, bucketKey])
+  useEffect(() => { setSessionPage(1) }, [refreshTrigger])
   useEffect(() => {
     const controller = new AbortController()
     const params = new URLSearchParams(query)

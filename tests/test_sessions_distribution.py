@@ -121,8 +121,11 @@ def test_time_bucket_click_timezone_and_combined_filters(
         "until": "2026-04-26",
     }
     charts = client.get("/sessions/distribution", params=params).json()
-    assert sum(row["session_count"] for row in charts["over_time"]) >= 4
-    for row in charts["over_time"]:
+    over_time = charts["over_time"]
+    assert sum(row["session_count"] for row in over_time) >= 4
+    # Non-empty buckets plus the clipped first and last; empty ones add ~700 requests.
+    checked = [row for row in over_time if row["session_count"]]
+    for row in checked + over_time[:1] + over_time[-1:]:
         page = client.get(
             "/sessions",
             params={
@@ -615,3 +618,9 @@ def test_session_context_preserves_46_requests(sessions_api):
     assert result["request_count"] == 46
     assert len(result["points"]) == 46
     assert [p["request"] for p in result["points"]] == list(range(1, 47))
+
+
+def test_sessions_rejects_out_of_range_paging(sessions_api):
+    client, _ = sessions_api
+    for params in ({"limit": 0}, {"limit": 501}, {"limit": -1}, {"offset": -1}):
+        assert client.get("/sessions", params=params).status_code == 422

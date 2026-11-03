@@ -113,6 +113,8 @@ it('draws 46 requests as one continuous context path', () => {
   expect(paths[0].getAttribute('d')?.match(/L/g)).toHaveLength(45)
   view.rerender(createElement(SessionContextChart, { data: { ...data, points: points.slice(0, 1) } }))
   expect(view.container.querySelector('svg')).toBeNull()
+  view.rerender(createElement(SessionContextChart, { data: { points: points.map(p => ({ ...p, context_tokens: 0 })), peak_tokens: 0, request_count: 46 } }))
+  expect(view.container.querySelector('svg')).toBeNull()
 })
 
 it('fetches context for the expanded session', async () => {

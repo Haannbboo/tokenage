@@ -81,7 +81,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
   cleanup:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # After every publish on push, plus the weekly schedule as a fallback.
+    # always(): publish is skipped on schedule/dispatch, which would skip this too.
+    needs: publish
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.publish.result == 'success'))
     permissions:
       packages: write
     concurrency:

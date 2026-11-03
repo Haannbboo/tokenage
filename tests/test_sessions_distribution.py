@@ -582,7 +582,8 @@ def test_session_context_buckets_and_cap(sessions_api):
         session.commit()
     result = client.get("/sessions/context/context").json()
     assert len(result["points"]) <= 200
-    assert result["points"][0] == {"request": 1, "ts": TS, "context_tokens": 12}
+    # Each point names the bucket's peak request: request 3 holds 12 in 1-3.
+    assert result["points"][0] == {"request": 3, "ts": TS + 2, "context_tokens": 12}
     assert result["request_count"] == 401
     assert result["peak_tokens"] == 410
     assert result["points"][-1]["context_tokens"] == 410
@@ -603,7 +604,7 @@ def test_session_context_preserves_46_requests(sessions_api):
                 Usage(
                     id=f"short-{i}",
                     user_id="test-user",
-                    session_id="short",
+                    session_id="short/1",
                     model="test",
                     provider="test",
                     endpoint="otlp",
@@ -614,7 +615,7 @@ def test_session_context_preserves_46_requests(sessions_api):
             ]
         )
         session.commit()
-    result = client.get("/sessions/short/context").json()
+    result = client.get("/sessions/short%2F1/context").json()
     assert result["request_count"] == 46
     assert len(result["points"]) == 46
     assert [p["request"] for p in result["points"]] == list(range(1, 47))

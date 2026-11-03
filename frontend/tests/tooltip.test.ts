@@ -75,6 +75,8 @@ it('shows, repositions and hides a popover, then removes listeners', () => {
     expect(disconnect).toHaveBeenCalledOnce()
     button.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
     expect(show).toHaveBeenCalledTimes(2)
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(hide).toHaveBeenCalledOnce()
     button.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
     expect(hide).toHaveBeenCalledTimes(2)
     button.dispatchEvent(new MouseEvent('click', { bubbles: true }))

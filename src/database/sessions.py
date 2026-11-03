@@ -781,40 +781,47 @@ def aggregate_session_context(
     session_id: str, user_id: str, db_path: str | None = None
 ) -> dict[str, Any]:
     """Return per-bucket maximum context in request order."""
-    conditions = (Usage.session_id == session_id, Usage.user_id == user_id)
+    numbered = (
+        select(
+            Usage.ts.label("ts"),
+            (
+                func.coalesce(Usage.prompt_tokens, 0)
+                + func.coalesce(Usage.cache_creation_tokens, 0)
+            ).label("context"),
+            func.row_number().over(order_by=(Usage.ts, Usage.id)).label("request"),
+            func.count().over().label("total"),
+        )
+        .where(Usage.session_id == session_id, Usage.user_id == user_id)
+        .subquery()
+    )
+    # Width comes from the same snapshot as the numbering, so a concurrent
+    # insert cannot add a 201st bucket.
+    width = (numbered.c.total + MAX_CONTEXT_POINTS - 1) // MAX_CONTEXT_POINTS
+    bucketed = select(
+        numbered,
+        func.row_number()
+        .over(
+            partition_by=(numbered.c.request - 1) // width,
+            order_by=(numbered.c.context.desc(), numbered.c.request),
+        )
+        .label("rank"),
+    ).subquery()
     with get_engine(db_path).connect() as connection:
-        count = connection.scalar(
-            select(func.count()).select_from(Usage).where(*conditions)
-        )
-        if not count:
-            return {"points": [], "peak_tokens": 0, "request_count": 0}
-        width = max(1, math.ceil(count / MAX_CONTEXT_POINTS))
-        numbered = (
-            select(
-                Usage.ts.label("ts"),
-                (
-                    func.coalesce(Usage.prompt_tokens, 0)
-                    + func.coalesce(Usage.cache_creation_tokens, 0)
-                ).label("context"),
-                func.row_number().over(order_by=(Usage.ts, Usage.id)).label("request"),
-            )
-            .where(*conditions)
-            .subquery()
-        )
-        bucket = (numbered.c.request - 1) // width
         rows = connection.execute(
             select(
-                func.min(numbered.c.request).label("request"),
-                func.min(numbered.c.ts).label("ts"),
-                func.max(numbered.c.context).label("peak"),
+                bucketed.c.request, bucketed.c.ts, bucketed.c.context, bucketed.c.total
             )
-            .group_by(bucket)
-            .order_by(bucket)
+            .where(bucketed.c.rank == 1)
+            .order_by(bucketed.c.request)
         ).all()
+    if not rows:
+        return {"points": [], "peak_tokens": 0, "request_count": 0}
+    # Each point is the bucket's peak request, so its number and time match its value.
     points = [
-        {"request": row.request, "ts": row.ts, "context_tokens": int(row.peak)}
+        {"request": row.request, "ts": row.ts, "context_tokens": int(row.context)}
         for row in rows
     ]
+    count = rows[0].total
     return {
         "points": points,
         "peak_tokens": max(p["context_tokens"] for p in points),

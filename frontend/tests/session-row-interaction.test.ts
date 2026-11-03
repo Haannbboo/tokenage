@@ -40,6 +40,11 @@ it('scales activity to listed starts and ends and clips earlier sessions', () =>
   expect(view.container.querySelector('.session-axis')?.textContent).toMatch(/08:00.*12:00/)
   state.dateRange = 'all'; view.rerender(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
   expect(view.container.querySelector('.session-axis')?.textContent).toMatch(/11:00.*12:00/)
+  state.dateRange = '24h'
+  state.sessions = [{ session_id: 'pre', started: time(-13), ended: time(7), client_source: 'test', request_count: 1, total_cost_usd: 0 }, state.sessions[1]]
+  view.rerender(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  expect(view.container.querySelector('.session-axis')?.textContent).toMatch(/07:00.*09:00/)
+  state.dateRange = 'all'
   vi.useRealTimers()
 })
 

@@ -745,7 +745,7 @@ def get_usage_tool_calls(request: Request, usage_id: str):
     return fetch_tool_calls(usage_id=usage_id, user_id=_request_user_id(request))
 
 
-@app.get("/sessions/{session_id}/context")
+@app.get("/sessions/{session_id:path}/context")
 def get_session_context(request: Request, session_id: str):
     return aggregate_session_context(session_id, _request_user_id(request))
 

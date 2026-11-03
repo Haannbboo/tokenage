@@ -5,8 +5,9 @@ import { formatTime, PALETTE } from '../utils'
 import { t } from '../i18n'
 
 export function lanePositions(rows: UsageRow[]) {
-  const sorted = [...rows].sort((a, b) => a.ts / 1000 - (a.latency_ms ?? 0) - (b.ts / 1000 - (b.latency_ms ?? 0)))
-  const start = sorted.length ? sorted[0].ts / 1000 - Math.max(sorted[0].latency_ms ?? 0, 0) : 0
+  const startOf = (row: UsageRow) => row.ts / 1000 - Math.max(row.latency_ms ?? 0, 0)
+  const sorted = [...rows].sort((a, b) => startOf(a) - startOf(b))
+  const start = sorted.length ? startOf(sorted[0]) : 0
   const marks = sorted.map(row => {
     const end = row.ts / 1000
     const width = Math.max(row.latency_ms ?? 0, 0)

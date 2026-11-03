@@ -102,7 +102,50 @@ it('uses a drawer on phones: Escape, the scrim and navigation close it', async (
   expect(sidebar.getAttribute('role')).toBeNull()
 
   await press(menu)
+  await press(screen.getByRole('link', { name: 'Request Logs' }))
+  expect(sidebar.getAttribute('role')).toBeNull()
+
+  await press(menu)
   await press(screen.getByRole('link', { name: 'Sessions' }))
   expect(window.location.pathname).toBe('/sessions')
   expect(sidebar.getAttribute('role')).toBeNull()
+})
+
+it('resets phone and tablet overlays when leaving their viewport', async () => {
+  let width = 400
+  const listeners = new Set<() => void>()
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: Number(/max-width: (\d+)px/.exec(query)?.[1] ?? 0) >= width,
+    addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+  }))
+  await open('/dashboard')
+  fireEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+  const resize = (next: number) => act(() => { width = next; listeners.forEach(listener => listener()) })
+  resize(800)
+  fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar' }))
+  resize(1200)
+  resize(800)
+  expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy()
+  resize(400)
+  expect(document.getElementById('sidebar')!.hasAttribute('inert')).toBe(true)
+})
+
+it('closes the tablet overlay when clicking the current page link', async () => {
+  stubViewport(800)
+  await open('/dashboard')
+  fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar' }))
+  fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }))
+  expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy()
+})
+
+it('exposes settings sections as pressed buttons', async () => {
+  await open('/settings')
+  const pricing = screen.getByRole('button', { name: 'Pricing' })
+  const services = screen.getByRole('button', { name: 'Services' })
+  expect(services.getAttribute('aria-pressed')).toBe('true')
+  fireEvent.click(pricing)
+  expect(pricing.getAttribute('aria-pressed')).toBe('true')
+  expect(services.getAttribute('aria-pressed')).toBe('false')
+  expect(screen.queryByRole('tablist')).toBeNull()
 })

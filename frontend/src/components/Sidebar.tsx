@@ -60,7 +60,7 @@ function ThemeLangButtons() {
   </>
 }
 
-function AccountMenu() {
+function AccountMenu({ onNavigate }: { onNavigate: () => void }) {
   const { auth, signOut } = useApp()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -92,7 +92,7 @@ function AccountMenu() {
       {open && (
         <div id="account-menu" className="menu account-menu">
           <div className="menu-meta"><b>{name}</b>{user.email !== name && <span>{user.email}</span>}</div>
-          <Link className="menu-item" to="/settings" onClick={() => close()}><Icon name="settings" />{t('Settings')}</Link>
+          <Link className="menu-item" to="/settings" onClick={() => { close(); onNavigate() }}><Icon name="settings" />{t('Settings')}</Link>
           {auth.provider === 'google' && (
             <button type="button" className="menu-item" onClick={() => void signOut()}><Icon name="signOut" />{t('Sign out')}</button>
           )}
@@ -102,10 +102,10 @@ function AccountMenu() {
   )
 }
 
-function SidebarLink({ to, label, icon }: { to: string; label: string; icon: IconName }) {
+function SidebarLink({ to, label, icon, onNavigate }: { to: string; label: string; icon: IconName; onNavigate: () => void }) {
   return (
     <li>
-      <NavLink to={to} className="sidebar-link" aria-label={t(label)} data-tip={t(label)}>
+      <NavLink to={to} onClick={onNavigate} className="sidebar-link" aria-label={t(label)} data-tip={t(label)}>
         <Icon name={icon} /><span className="sidebar-label">{t(label)}</span>
       </NavLink>
     </li>
@@ -124,6 +124,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Tablets show the icon rail; expanding it overlays the page until dismissed.
   const [tabletOpen, setTabletOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  if (!phone && drawerOpen) setDrawerOpen(false)
+  if (!tablet && tabletOpen) setTabletOpen(false)
   const collapsed = phone ? false : tablet ? !tabletOpen : pinnedCollapsed
 
   const toggleCollapsed = useCallback(() => {
@@ -138,6 +140,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     setDrawerOpen(false)
     menuButtonRef.current?.focus()
   }, [])
+  const closeNavigation = () => { setDrawerOpen(false); setTabletOpen(false) }
   const closeOverlay = useCallback(() => setTabletOpen(false), [])
   useDismiss(sidebarRef, phone && drawerOpen, closeDrawer)
   useDismiss(sidebarRef, tablet && tabletOpen, closeOverlay)
@@ -192,7 +195,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         onKeyDown={trapFocus}
       >
         <div className="sidebar-brand">
-          <Link to="/dashboard" className="sidebar-logo" aria-label="tokenage">
+          <Link to="/dashboard" onClick={closeNavigation} className="sidebar-logo" aria-label="tokenage">
             <pre aria-hidden="true">{ASCII_ART}</pre>
             <span className="sidebar-monogram" aria-hidden="true">T</span>
           </Link>
@@ -210,11 +213,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           )}
         </div>
-        <AccountMenu />
+        <AccountMenu onNavigate={closeNavigation} />
         <nav className="sidebar-nav" aria-label={t('Main')}>
           <div className="section-label">{t('Workspace')}</div>
           <ul className="sidebar-list">
-            {WORKSPACE.map(item => <SidebarLink key={item.to} {...item} />)}
+            {WORKSPACE.map(item => <SidebarLink key={item.to} {...item} onNavigate={closeNavigation} />)}
             <li>
               <span className="sidebar-link is-disabled" role="link" aria-disabled="true" aria-label={`${t('Projects')} · ${t('Soon')}`} data-tip={`${t('Projects')} · ${t('Soon')}`}>
                 <Icon name="projects" /><span className="sidebar-label">{t('Projects')}</span><span className="pill">{t('Soon')}</span>
@@ -222,7 +225,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </li>
           </ul>
           <ul className="sidebar-list sidebar-foot">
-            <SidebarLink {...SETTINGS} />
+            <SidebarLink {...SETTINGS} onNavigate={closeNavigation} />
           </ul>
         </nav>
         <div className="sidebar-utils">

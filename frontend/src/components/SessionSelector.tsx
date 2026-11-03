@@ -16,7 +16,10 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
   const [search, setSearch] = useState('')
   const ref = useRef<HTMLDivElement>(null)
 
-  const close = useCallback(() => setIsOpen(false), [])
+  const close = useCallback((event?: Event) => {
+    if (event instanceof KeyboardEvent) ref.current?.querySelector('input')?.focus()
+    setIsOpen(false)
+  }, [])
   useDismiss(ref, isOpen, close)
 
   const grouped = useMemo(() => {

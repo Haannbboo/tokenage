@@ -891,6 +891,7 @@ def test_sessions_api_calls_still_get_json(api_module, monkeypatch):
         {"accept": "*/*", "sec-fetch-mode": "cors"},
         {"accept": "application/json, text/html"},
         {"accept": "text/html;q=0"},
+        {"accept": "text/html;q=0."},
     ):
         response = client.get("/sessions", headers=headers)
         assert response.status_code == 200

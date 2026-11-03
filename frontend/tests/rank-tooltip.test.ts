@@ -59,6 +59,15 @@ describe('rank row interaction', () => {
     expect(first.classList.contains('is-active')).toBe(false)
   })
 
+  it('restores the focused row when the pointer leaves', () => {
+    const [first, second] = renderChart()
+    first.focus()
+    fireEvent.mouseEnter(second)
+    fireEvent.mouseLeave(second.parentElement!)
+    expect(first.classList.contains('is-active')).toBe(true)
+    expect(screen.getByRole('tooltip').textContent).toContain('claude-opus-5-5')
+  })
+
   it('tracks duplicate names as separate rows on hover and focus', () => {
     render(createElement(HorizontalBarChart, { title: 'Top', items: [
       { ...item, name: 'MiniMax', tokens: 10 },

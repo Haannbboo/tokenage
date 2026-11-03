@@ -400,7 +400,7 @@ export function distinctColors(keys: string[], colorOf: (key: string) => string)
     taken.set(color, n + 1)
     if (n === 0) return [key, color]
     const toward = n % 2 ? 'var(--card-bg)' : 'var(--text-primary)'
-    return [key, `color-mix(in oklab, ${color} ${Math.max(45, 100 - 25 * Math.ceil(n / 2))}%, ${toward})`]
+    return [key, `color-mix(in oklab, ${color} ${100 / (1 + Math.ceil(n / 2) / 3)}%, ${toward})`]
   }))
 }
 

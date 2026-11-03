@@ -144,6 +144,11 @@ describe('trend colours', () => {
     expect(new Set(colours.values()).size).toBe(4)
   })
 
+  it('keeps eight same-hue series distinct', () => {
+    const series = Array.from({ length: 8 }, (_, i) => ({ key: `claude-${i}`, model: `claude-${i}` }))
+    expect(new Set(trendSeriesColors(series).values()).size).toBe(8)
+  })
+
   it('defines every identity hue for light and dark', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
     const [light, dark] = css.split('[data-theme="dark"]')

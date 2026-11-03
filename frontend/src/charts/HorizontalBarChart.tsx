@@ -198,7 +198,10 @@ export function HorizontalBarChart({
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>{t('No data available')}</div>
           </div>
         ) : (
-          <ol className={`rank-list${activeItem ? ' has-active' : ''}`} onMouseLeave={() => setActive(null)}>
+          <ol className={`rank-list${activeItem ? ' has-active' : ''}`} onMouseLeave={() => {
+            const focused = [...rowRefs.current].find(([, row]) => row === document.activeElement)
+            setActive(focused ? { index: focused[0], x: null } : null)
+          }}>
           {sorted.map((s, index) => {
             const currentVal = metricValue(s, metric)
             const percentage = (currentVal / maxValue) * 100

@@ -9,7 +9,10 @@ export function isPageNavigation(method = 'GET', headers = {}) {
   if (headers['sec-fetch-mode'] === 'navigate') return true
   const accept = String(headers.accept ?? '')
   const [media, ...params] = accept.split(',')[0].toLowerCase().split(';')
-  return media.trim() === 'text/html' && !params.some(p => /^q=0(?:\.0{1,3})?$/.test(p.trim()))
+  return media.trim() === 'text/html' && !params.some(p => {
+    const match = /^q=([0-9]+(?:\.[0-9]*)?)$/.exec(p.trim())
+    return match !== null && Number(match[1]) === 0
+  })
 }
 
 export function shouldProxyApiRequest(requestUrl, { method, headers } = {}) {

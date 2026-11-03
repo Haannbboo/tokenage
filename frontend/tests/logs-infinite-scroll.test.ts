@@ -255,6 +255,19 @@ describe('Request Logs table', () => {
     expect(screen.queryByRole('button', { name: 'All Sessions' })).toBeNull()
   })
 
+  it('returns focus to session search on Escape but not pointer dismissal', () => {
+    render(createElement(SessionSelector, { sessions: [], sessionFilter: null, onChange: vi.fn(), sourceColors: {} }))
+    const input = screen.getByRole('textbox', { name: 'Search session ID…' })
+    act(() => input.focus())
+    act(() => screen.getByRole('button', { name: 'All Sessions' }).focus())
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(document.activeElement).toBe(input)
+    expect(screen.queryByRole('button', { name: 'All Sessions' })).toBeNull()
+    fireEvent.focus(input)
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('button', { name: 'All Sessions' })).toBeNull()
+  })
+
   it('keeps all log filters independent of the dashboard date range', async () => {
     app.dateRange = '24h'
     const api = mockHistory()

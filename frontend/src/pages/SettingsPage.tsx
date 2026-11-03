@@ -57,7 +57,7 @@ export function SettingsPage() {
   return (
     <div className="settings-page">
       <PageHeader title="Settings" description="Services, pricing and devices." />
-      <div className="tab-toggle settings-sections" role="tablist" aria-label={t('Settings')}>
+      <div className="tab-toggle settings-sections">
         {[
           { id: 'pricing', label: t('Pricing') },
           { id: 'services', label: t('Services') },
@@ -66,8 +66,7 @@ export function SettingsPage() {
           <button
             key={section.id}
             type="button"
-            role="tab"
-            aria-selected={activeSection === section.id}
+            aria-pressed={activeSection === section.id}
             className={`tab-toggle-btn ${activeSection === section.id ? 'active' : ''}`}
             onClick={() => setSearchParams({ section: section.id })}
           >

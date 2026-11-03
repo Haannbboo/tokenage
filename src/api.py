@@ -1132,9 +1132,18 @@ def _is_page_navigation(request: Request) -> bool:
         return True
     accept = request.headers.get("accept", "")
     media, *params = accept.split(",", 1)[0].lower().split(";")
-    return media.strip() == "text/html" and not any(
-        p.strip() in ("q=0", "q=0.0", "q=0.00", "q=0.000") for p in params
-    )
+
+    def zero_quality(param: str) -> bool:
+        name, separator, value = param.strip().partition("=")
+        if (
+            name != "q"
+            or not separator
+            or not re.fullmatch(r"[0-9]+(?:\.[0-9]*)?", value)
+        ):
+            return False
+        return float(value) == 0
+
+    return media.strip() == "text/html" and not any(zero_quality(p) for p in params)
 
 
 def _serves_spa_page(request: Request) -> bool:

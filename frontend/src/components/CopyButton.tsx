@@ -48,13 +48,26 @@ export function copyTextToClipboard(text: string, onCopy?: (msg: string) => void
 }
 
 export function ClickToCopy({ text, children, onCopy }: { text: string, children: React.ReactNode, onCopy?: (msg: string) => void }) {
-  const handleCopy = (e: React.MouseEvent) => {
+  const handleCopy = (e: React.SyntheticEvent) => {
+    // Inside an expandable row: copying must not toggle it.
     e.stopPropagation();
     copyTextToClipboard(text, onCopy);
   };
 
+  // A span with button semantics keeps the inline text look.
   return (
-    <span className="click-to-copy" onClick={handleCopy} title="Click to copy">
+    <span
+      className="click-to-copy"
+      role="button"
+      tabIndex={0}
+      onClick={handleCopy}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        handleCopy(e);
+      }}
+      title="Click to copy"
+    >
       {children}
     </span>
   );

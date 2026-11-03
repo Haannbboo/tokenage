@@ -3,7 +3,7 @@ import { createElement } from 'react'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TrendChart } from '../src/charts/TrendChart'
-import { trendDotScale } from '../src/charts/trendScale'
+import { trendDotScale, trendLabelIndices } from '../src/charts/trendScale'
 import type { DailyUsage } from '../src/types'
 
 vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ timezone: 'UTC', theme: 'light' }) }))
@@ -60,4 +60,22 @@ it('refetches the model split on refresh even when the filter values are unchang
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
   rerender(createElement(TrendChart, { ...props, filterParams: { since: null } }))
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+})
+
+describe('trend x-axis labels', () => {
+  it('thins labels to fit the width, keeping the first and last', () => {
+    const phone = trendLabelIndices(24, 300)
+    expect(phone[0]).toBe(0)
+    expect(phone[phone.length - 1]).toBe(23)
+    expect(phone.length * 44).toBeLessThanOrEqual(300 + 44)
+    const wide = trendLabelIndices(24, 1200)
+    expect(wide.length).toBeLessThanOrEqual(13)
+    expect(wide.length).toBeGreaterThan(phone.length)
+    expect(trendLabelIndices(7, 1200)).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(trendLabelIndices(1, 300)).toEqual([0])
+    expect(trendLabelIndices(0, 300)).toEqual([])
+    // No two shown labels closer than half a step.
+    const gaps = phone.slice(1).map((n, i) => n - phone[i])
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(Math.ceil(24 / Math.floor(300 / 44)) / 2)
+  })
 })

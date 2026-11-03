@@ -8,7 +8,7 @@ import { useApp } from '../contexts/AppContext'
 import { ChartTooltip, TooltipRow, TooltipDivider, TooltipTitle } from './ChartTooltip'
 import { TREND_NEUTRAL, trendSeriesColors } from './trendColors'
 import { sortTrendRows, trendTooltipX } from './trendTooltip'
-import { trendDotScale } from './trendScale'
+import { trendDotScale, trendLabelIndices } from './trendScale'
 import { getLang, LANG_LOCALES, t } from '../i18n/index.ts'
 
 type ModelBucketRow = {
@@ -527,10 +527,8 @@ export function TrendChart({
               paddingLeft: `${(paddingX / 1000) * 100}%`,
               paddingRight: `${(paddingX / 1000) * 100}%`
             }}>
-              {filled.map((d, i) => {
-                if (filled.length > 12 && i % Math.ceil(filled.length / 12) !== 0 && i !== filled.length - 1) {
-                  return null;
-                }
+              {trendLabelIndices(filled.length, plotWidth * (1 - 2 * paddingX / 1000)).map(i => {
+                const d = filled[i];
                 const label = d.period.includes(':')
                   ? d.period.split(' ')[1]
                   : d.period.split('-').slice(1).join('/');

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formatCompact, formatCost, formatLatency, formatNumber, formatRate, formatThroughput } from '../utils'
+import { formatCompact, formatCost, formatLatency, formatNumber, formatRate, formatThroughput, ToolBadge } from '../utils'
 import { ChartTooltip, TooltipDivider, TooltipRow } from './ChartTooltip'
 import { t } from '../i18n/index.ts'
 
@@ -29,11 +29,13 @@ export function HorizontalBarChart({
   items,
   metric,
   mono = false,
+  toolBadges = false,
   children,
 }: {
   title: string
   items: BarItem[]
   mono?: boolean
+  toolBadges?: boolean
   metric: Metric
   children?: React.ReactNode
 }) {
@@ -106,14 +108,14 @@ export function HorizontalBarChart({
             return (
               <li
                 key={`${s.name}-${index}`}
-                className="rank-row"
+                className={`rank-row${toolBadges ? ' rank-row-tools' : ''}`}
                 onMouseEnter={() => setHoveredItem(s.name)}
                 onMouseLeave={() => setHoveredItem((current) => current === s.name ? null : current)}
               >
                 <span className="rank-n">{index + 1}</span>
-                <span className="rank-mark">{s.icon ?? <i style={{ background: s.color }} />}</span>
+                {!toolBadges && <span className="rank-mark">{s.icon ?? <i style={{ background: s.color }} />}</span>}
                 <span className="rank-name" title={s.name}>
-                  <span className={mono ? 'mono' : undefined}>{s.name}</span>
+                  {toolBadges ? <ToolBadge name={s.name} /> : <span className={mono ? 'mono' : undefined}>{s.name}</span>}
                   {sub && <small>{sub}</small>}
                 </span>
                 <span className="rank-value">

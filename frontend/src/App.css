@@ -615,6 +615,8 @@ img[src^="/models/"] { filter: saturate(0.7); }
 .tab-toggle.compact .tab-toggle-btn { padding: 2px 8px; font-size: 11px; }
 .rank-list { display: flex; flex-direction: column; gap: 12px; max-height: 320px; margin: 0; padding: 2px 0 0; overflow-y: auto; list-style: none; }
 .rank-row { display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 5px; font-size: 12px; }
+.rank-row-tools { grid-template-columns: 14px minmax(0, 1fr) auto; }
+.rank-row-tools .rank-bar { grid-column: 2 / -1; }
 .rank-n { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
 .rank-mark { display: flex; justify-content: center; }
 .rank-mark > i { width: 7px; height: 7px; border-radius: 50%; }

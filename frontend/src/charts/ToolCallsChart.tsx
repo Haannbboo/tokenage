@@ -65,7 +65,7 @@ export function ToolCallsChart({
     <HorizontalBarChart
       title={t('Tool Calls')}
       items={items}
-      mono
+      toolBadges
       metric={metric}
     >
       <div className="top-list-controls">

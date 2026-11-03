@@ -136,7 +136,7 @@ export function SettingsPage() {
                       {expandedDeviceId === device.id && (
                         <tr className="expanded-row">
                           <td colSpan={7}>
-                            <div className="expanded-detail" style={{ gridTemplateColumns: '1fr' }}>
+                            <div className="expanded-detail device-detail" style={{ padding: '12px 12px 16px' }}>
                               <DeviceStatusDetail status={deviceReport(device.id)} />
                             </div>
                           </td>

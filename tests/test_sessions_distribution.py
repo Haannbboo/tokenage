@@ -555,3 +555,63 @@ def test_chart_rejects_too_many_time_buckets(sessions_api):
         params={"granularity": "15m", "since": "2020-01-01", "until": "2027-01-01"},
     )
     assert response.status_code == 400
+
+
+def test_session_context_buckets_and_cap(sessions_api):
+    from src.database.models import Usage
+
+    client, db = sessions_api
+    with Session(db.database_module.get_engine()) as session:
+        for i in range(401):
+            session.add(
+                Usage(
+                    id=f"context-{i}",
+                    user_id="test-user",
+                    session_id="context",
+                    model="test",
+                    provider="test",
+                    endpoint="otlp",
+                    ts=TS + i,
+                    prompt_tokens=i,
+                    cache_creation_tokens=None if i % 2 else 10,
+                )
+            )
+        session.commit()
+    result = client.get("/sessions/context/context").json()
+    assert len(result["points"]) <= 200
+    assert result["points"][0] == {"request": 1, "ts": TS, "context_tokens": 12}
+    assert result["request_count"] == 401
+    assert result["peak_tokens"] == 410
+    assert result["points"][-1]["context_tokens"] == 410
+    assert client.get("/sessions/missing/context").json() == {
+        "points": [],
+        "peak_tokens": 0,
+        "request_count": 0,
+    }
+
+
+def test_session_context_preserves_46_requests(sessions_api):
+    from src.database.models import Usage
+
+    client, db = sessions_api
+    with Session(db.database_module.get_engine()) as session:
+        session.add_all(
+            [
+                Usage(
+                    id=f"short-{i}",
+                    user_id="test-user",
+                    session_id="short",
+                    model="test",
+                    provider="test",
+                    endpoint="otlp",
+                    ts=TS + i * 1000000,
+                    prompt_tokens=i,
+                )
+                for i in range(46)
+            ]
+        )
+        session.commit()
+    result = client.get("/sessions/short/context").json()
+    assert result["request_count"] == 46
+    assert len(result["points"]) == 46
+    assert [p["request"] for p in result["points"]] == list(range(1, 47))

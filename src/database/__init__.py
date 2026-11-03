@@ -32,6 +32,7 @@ from .models import (
 )
 from .sessions import (
     SessionFilters,
+    aggregate_session_context,
     aggregate_session_distribution,
     count_sessions,
     fetch_session_selector_rows,
@@ -86,6 +87,7 @@ __all__ = [
     "User",
     "UserModelPrice",
     "aggregate_daily_by_dimension",
+    "aggregate_session_context",
     "aggregate_session_distribution",
     "aggregate_usage_by_period",
     "count_sessions",

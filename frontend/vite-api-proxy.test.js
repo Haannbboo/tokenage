@@ -21,6 +21,7 @@ test('shouldProxyApiRequest matches config, usage and session routes', () => {
   assert.equal(shouldProxyApiRequest('/sessions/distribution?granularity=hour&time_bucket=1776420000000000'), true)
   assert.equal(shouldProxyApiRequest('/usage?session_id=s&limit=30&before=123:id'), true)
   assert.equal(shouldProxyApiRequest('/usage/id/tool-calls'), true)
+  assert.equal(shouldProxyApiRequest('/sessions/123/context'), true)
   assert.equal(shouldProxyApiRequest('/sessions/summary'), true)
   assert.equal(shouldProxyApiRequest('/sessions/123/evaluation'), true)
   assert.equal(shouldProxyApiRequest('/sessions/123/evaluation-jobs'), true)

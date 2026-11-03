@@ -497,3 +497,8 @@ a {
 .table tbody tr.expandable-row {
   cursor: pointer;
 }
+
+.session-context { margin: 16px 0; }
+.session-context svg { display: block; width: 100%; height: auto; }
+.session-context svg text { fill: var(--text-secondary); }
+.session-detail { position: sticky; left: 0; width: min(100%, calc(100vw - 32px)); box-sizing: border-box; }

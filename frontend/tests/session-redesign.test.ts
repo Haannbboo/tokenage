@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testin
 import { afterEach, expect, it, vi } from 'vitest'
 import { lanePositions, laneLayout, SessionLane } from '../src/components/SessionLane'
 import { applySessionBucket, sessionFilterQuery, useSessionsData } from '../src/hooks/useSessionsData'
+import { SessionContextChart } from '../src/components/SessionContextChart'
 import { SessionDetail } from '../src/components/SessionDetail'
 import type { SessionSummary, UsageRow } from '../src/types'
 vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn() }) }))
@@ -104,4 +105,25 @@ it('defaults to the latest session first', () => {
   const { result } = renderHook(() => useSessionsData({ activeSource: null, dateRange: 'all', bucket: null }))
   expect(result.current.sessionSortBy).toBe('ended')
   expect(result.current.sessionSortOrder).toBe('desc')
+})
+
+
+it('draws 46 requests as one continuous context path', () => {
+  const points = Array.from({ length: 46 }, (_, i) => ({ request: i + 1, ts: 1000 + i, context_tokens: i === 20 ? 439000 : i * 100 }))
+  const data = { points, peak_tokens: 439000, request_count: 46 }
+  const view = render(createElement(SessionContextChart, { data }))
+  expect(screen.getByText('Peak 439k')).toBeTruthy()
+  expect(screen.getByText('600k')).toBeTruthy()
+  const paths = view.container.querySelectorAll('path[stroke]')
+  expect(paths).toHaveLength(1)
+  expect(paths[0].getAttribute('d')?.match(/L/g)).toHaveLength(45)
+  view.rerender(createElement(SessionContextChart, { data: { ...data, points: points.slice(0, 1) } }))
+  expect(view.container.querySelector('svg')).toBeNull()
+})
+
+it('fetches context for the expanded session', async () => {
+  const fetchMock = vi.fn(async (url: string) => ({ ok: true, json: async () => url.endsWith('/context') ? { points: [], peak_tokens: 0 } : [] }))
+  vi.stubGlobal('fetch', fetchMock)
+  render(createElement(SessionDetail, { session: { session_id: 'a/b', duration_s: 1, request_count: 0, total_tokens: 0, total_cost_usd: 0 } as SessionSummary, onNavigateToLogs: vi.fn() }))
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/sessions/a%2Fb/context', expect.objectContaining({ signal: expect.any(AbortSignal) })))
 })

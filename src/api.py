@@ -36,6 +36,7 @@ from .database import (
     SessionFilters,
     User,
     aggregate_daily_by_dimension,
+    aggregate_session_context,
     aggregate_session_distribution,
     aggregate_usage_by_period,
     count_sessions,
@@ -743,6 +744,11 @@ for _path in RETIRED_EVALUATION_PATHS:
 @app.get("/usage/{usage_id}/tool-calls")
 def get_usage_tool_calls(request: Request, usage_id: str):
     return fetch_tool_calls(usage_id=usage_id, user_id=_request_user_id(request))
+
+
+@app.get("/sessions/{session_id}/context")
+def get_session_context(request: Request, session_id: str):
+    return aggregate_session_context(session_id, _request_user_id(request))
 
 
 @app.get("/sessions/{session_id}/tool-calls")

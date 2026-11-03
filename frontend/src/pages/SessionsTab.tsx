@@ -23,7 +23,7 @@ export function SessionsTab({ onNavigateToLogs }: { onNavigateToLogs: (filters?:
   const min = inRangeStarts.length ? Math.min(...inRangeStarts) : rangeStart ?? 0
   const max = ends.length ? Math.max(...ends) : min, span = Math.max(1, max - min)
   const agentName = (source: string | null | undefined) => source ? getAgentDisplayName(source) === source ? sessionAgentName(source) : getAgentDisplayName(source) : t('Unknown')
-  const agentColor = (source: string | null | undefined) => getSourceBadgeText(source ?? '')
+  const agentColor = (source: string | null | undefined) => source === 'codex' ? 'var(--text-secondary)' : getSourceBadgeText(source ?? '')
   const shortTimeLabel = (row: { period?: string; start?: string; end?: string }) => {
     const date = new Date(row.start ?? '')
     if (Number.isNaN(date.valueOf())) return row.period ?? ''

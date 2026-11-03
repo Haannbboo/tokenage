@@ -788,3 +788,51 @@ def _active_session_buckets(
         )
     _format_periods(rows, fmt, 1_000_000)
     return rows
+
+
+MAX_CONTEXT_POINTS = 200
+
+
+def aggregate_session_context(
+    session_id: str, user_id: str, db_path: str | None = None
+) -> dict[str, Any]:
+    """Return per-bucket maximum context in request order."""
+    conditions = (Usage.session_id == session_id, Usage.user_id == user_id)
+    with get_engine(db_path).connect() as connection:
+        count = connection.scalar(
+            select(func.count()).select_from(Usage).where(*conditions)
+        )
+        if not count:
+            return {"points": [], "peak_tokens": 0, "request_count": 0}
+        width = max(1, math.ceil(count / MAX_CONTEXT_POINTS))
+        numbered = (
+            select(
+                Usage.ts.label("ts"),
+                (
+                    func.coalesce(Usage.prompt_tokens, 0)
+                    + func.coalesce(Usage.cache_creation_tokens, 0)
+                ).label("context"),
+                func.row_number().over(order_by=(Usage.ts, Usage.id)).label("request"),
+            )
+            .where(*conditions)
+            .subquery()
+        )
+        bucket = (numbered.c.request - 1) // width
+        rows = connection.execute(
+            select(
+                func.min(numbered.c.request).label("request"),
+                func.min(numbered.c.ts).label("ts"),
+                func.max(numbered.c.context).label("peak"),
+            )
+            .group_by(bucket)
+            .order_by(bucket)
+        ).all()
+    points = [
+        {"request": row.request, "ts": row.ts, "context_tokens": int(row.peak)}
+        for row in rows
+    ]
+    return {
+        "points": points,
+        "peak_tokens": max(p["context_tokens"] for p in points),
+        "request_count": count,
+    }

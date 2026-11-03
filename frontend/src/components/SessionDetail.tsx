@@ -7,11 +7,14 @@ import { renderRequestCell } from './RequestCell'
 import { useApp } from '../contexts/AppContext'
 import { formatCost, formatDuration, formatLatency, formatNumber, formatTime } from '../utils'
 import { t } from '../i18n'
+import { SessionContextChart, type SessionContext } from './SessionContextChart'
 
 type Tool = TimelineTool & { usage_id: string | null }
 export function SessionDetail({ session, tz, onNavigateToLogs }: { session: SessionSummary; tz?: string; onNavigateToLogs: (filters: { sessionFilter: string }) => void }) {
   const { showToast } = useApp()
   const listRef = useRef<HTMLDivElement>(null)
+  const [context, setContext] = useState<SessionContext | null>(null)
+  const [contextError, setContextError] = useState(false)
   const [rows, setRows] = useState<UsageRow[] | null>(null)
   const [tools, setTools] = useState<Tool[] | null>(null)
   const [rowsError, setRowsError] = useState(false)
@@ -23,6 +26,8 @@ export function SessionDetail({ session, tz, onNavigateToLogs }: { session: Sess
   const [callsError, setCallsError] = useState(false)
   useEffect(() => {
     const c = new AbortController()
+    setContext(null); setContextError(false)
+    fetch(`/sessions/${encodeURIComponent(session.session_id)}/context`, { signal: c.signal }).then(r => { if (!r.ok) throw new Error(); return r.json() }).then(setContext).catch(() => { if (!c.signal.aborted) setContextError(true) })
     const query = new URLSearchParams({ session_id: session.session_id, limit: '30' })
     fetch(`/usage?${query}`, { signal: c.signal }).then(r => { if (!r.ok) throw new Error(); return r.json() }).then(setRows).catch(() => { if (!c.signal.aborted) setRowsError(true) })
     fetch(`/sessions/${encodeURIComponent(session.session_id)}/tool-calls`, { signal: c.signal }).then(r => { if (!r.ok) throw new Error(); return r.json() }).then(setTools).catch(() => { if (!c.signal.aborted) setToolsError(true) })
@@ -57,8 +62,9 @@ export function SessionDetail({ session, tz, onNavigateToLogs }: { session: Sess
   }
   const hoverMark = (id: string | null) => { setHovered(id); if (id) scrollToRow(id) }
   const selectMark = (id: string) => { setSelected(id); scrollToRow(id) }
-  const stats = [[t('Duration'), formatDuration(Math.round(session.duration_s))], [t('Requests'), formatNumber(session.request_count)], [t('Tokens'), formatNumber(session.total_tokens)], [t('Cost'), formatCost(session.total_cost_usd, 2)], [t('Models'), session.models?.length ? session.models.join(', ') : session.model || '—']]
+  const stats = [[t('Duration'), formatDuration(Math.round(session.duration_s))], [t('Requests'), formatNumber(session.request_count)], [t('Tokens'), formatNumber(session.total_tokens)], [t('Peak context'), context ? formatNumber(context.peak_tokens) : '—'], [t('Cost'), formatCost(session.total_cost_usd, 2)], [t('Models'), session.models?.length ? session.models.join(', ') : session.model || '—']]
   return <div className="session-detail"><div className="session-stats">{stats.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
+    {contextError ? <p role="alert">{t('Failed to fetch context size')}</p> : !context ? <p>{t('Loading...')}</p> : <SessionContextChart data={context} tz={tz} />}
     {rowsError ? <p role="alert">{t('Failed to fetch interactions')}</p> : !rows ? <p>{t('Loading...')}</p> : rows.length === 0 ? <p>{t('No interactions found.')}</p> : <>
       <SessionLane rows={rows} selected={selected} hovered={hovered} onHover={hoverMark} onSelect={selectMark} tz={tz} />
       <div className="session-interactions" ref={listRef}><table className="table"><thead><tr>{['Time', 'Model', 'Tokens', 'Cost', 'Latency', 'Status', 'Tools'].map(label => <th key={label}>{t(label)}</th>)}</tr></thead><tbody>{rows.map(row => <Fragment key={row.id}><tr id={`session-request-${row.id}`} className={`expandable-row${hovered === row.id ? ' session-row-hovered' : ''}`} tabIndex={0} aria-expanded={selected === row.id} onMouseEnter={() => setHovered(row.id)} onMouseLeave={() => setHovered(null)} onFocus={() => setHovered(row.id)} onBlur={() => setHovered(null)} onClick={() => setSelected(selected === row.id ? null : row.id)} onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSelected(selected === row.id ? null : row.id) } }}>

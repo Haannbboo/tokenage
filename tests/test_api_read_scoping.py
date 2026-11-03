@@ -220,6 +220,11 @@ def test_foreign_ids_and_filters_cannot_expand_scope(
         assert run["rows"] == []
         assert client.get(f"/usage/{owner}-0/tool-calls").json() == []
         assert client.get(f"/sessions/{owner}-session-0/tool-calls").json() == []
+        assert client.get(f"/sessions/{owner}-session-0/context").json() == {
+            "points": [],
+            "peak_tokens": 0,
+            "request_count": 0,
+        }
         assert (
             client.get(f"/sessions/{owner}-session-0/tool-calls/summary").status_code
             == 404

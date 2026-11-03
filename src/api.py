@@ -1127,9 +1127,10 @@ _SPA_API_SHARED_PAGES = ("/sessions",)
 
 
 def _is_page_navigation(request: Request) -> bool:
-    """A browser navigation: Sec-Fetch-Mode, or Accept that leads with HTML."""
-    if request.headers.get("sec-fetch-mode") == "navigate":
-        return True
+    """A browser navigation: Sec-Fetch-Mode, or (without it) Accept that leads with HTML."""
+    mode = request.headers.get("sec-fetch-mode")
+    if mode is not None:
+        return mode == "navigate"
     accept = request.headers.get("accept", "")
     media, *params = accept.split(",", 1)[0].lower().split(";")
 

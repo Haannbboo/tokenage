@@ -140,7 +140,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     setDrawerOpen(false)
     menuButtonRef.current?.focus()
   }, [])
-  const closeNavigation = () => { setDrawerOpen(false); setTabletOpen(false) }
+  // The drawer goes inert once a link navigates, so hand focus back to the menu button.
+  const closeNavigation = () => { if (drawerOpen) closeDrawer(); setTabletOpen(false) }
   const closeOverlay = useCallback(() => setTabletOpen(false), [])
   useDismiss(sidebarRef, phone && drawerOpen, closeDrawer)
   useDismiss(sidebarRef, tablet && tabletOpen, closeOverlay)

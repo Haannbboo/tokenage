@@ -109,6 +109,7 @@ it('uses a drawer on phones: Escape, the scrim and navigation close it', async (
   await press(menu)
   await press(screen.getByRole('link', { name: 'Request Logs' }))
   expect(sidebar.getAttribute('role')).toBeNull()
+  expect(document.activeElement).toBe(menu)
 
   await press(menu)
   await press(screen.getByRole('link', { name: 'Sessions' }))

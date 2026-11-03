@@ -889,6 +889,7 @@ def test_sessions_api_calls_still_get_json(api_module, monkeypatch):
     for headers in (
         {},
         {"accept": "*/*", "sec-fetch-mode": "cors"},
+        {"accept": "text/html", "sec-fetch-mode": "cors"},
         {"accept": "application/json, text/html"},
         {"accept": "text/html;q=0"},
         {"accept": "text/html;q=0."},
@@ -908,7 +909,11 @@ def test_sessions_api_calls_still_get_json(api_module, monkeypatch):
     monkeypatch.setitem(
         api_module.CONFIG, "auth", {"provider": "google", "allowlist": []}
     )
-    for headers in ({}, {"accept": "application/json"}):
+    for headers in (
+        {},
+        {"accept": "application/json"},
+        {"accept": "text/html", "sec-fetch-mode": "cors"},
+    ):
         response = client.get("/sessions", headers=headers)
         assert response.status_code == 401
         assert response.json() == api_module.AUTH_GATE_LOGIN_REQUIRED

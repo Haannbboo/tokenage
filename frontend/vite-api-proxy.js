@@ -6,7 +6,8 @@ const SHARED_PAGES = new Set(['/sessions'])
 
 export function isPageNavigation(method = 'GET', headers = {}) {
   if (method !== 'GET') return false
-  if (headers['sec-fetch-mode'] === 'navigate') return true
+  const mode = headers['sec-fetch-mode']
+  if (mode !== undefined) return mode === 'navigate'
   const accept = String(headers.accept ?? '')
   const [media, ...params] = accept.split(',')[0].toLowerCase().split(';')
   return media.trim() === 'text/html' && !params.some(p => {

@@ -974,7 +974,6 @@ img[src^="/models/"] { filter: saturate(0.7); }
   border-bottom: 1px dotted var(--text-muted);
   padding-bottom: 2px;
   cursor: default;
-  z-index: 10;
 }
 
 .has-tooltip .tooltip-text {

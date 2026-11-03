@@ -102,11 +102,23 @@ def _codex_event_ts_ms(attrs: list) -> int | None:
 
 
 def _optional_int(value) -> int | None:
+    # Metadata uses this lenient helper; token counts use strict int() at their call sites.
     if value is None or value == "":
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _optional_int_attr(
+    attrs: list, key: str, *, default: int | None = None
+) -> int | None:
+    try:
+        value = _attr(attrs, key)
+        return default if value is None else _optional_int(value)
+    except (TypeError, ValueError, OverflowError):
+        # _attr also converts intValue, which can itself be malformed.
         return None
 
 
@@ -295,7 +307,7 @@ class PromptLengthTracker:
         user_id: str,
     ) -> None:
         """Store prompt_length from prompt-only events for later usage rows."""
-        prompt_length = _attr(attrs, "prompt_length")
+        prompt_length = _optional_int_attr(attrs, "prompt_length")
         if prompt_length is None:
             return
 
@@ -308,7 +320,7 @@ class PromptLengthTracker:
             return
 
         state = self._state.get(key, {"values": []})
-        state["values"].append(int(prompt_length))
+        state["values"].append(prompt_length)
         self._state[key] = state
 
     def consume_for_usage_event(
@@ -319,9 +331,9 @@ class PromptLengthTracker:
         user_id: str,
     ) -> int:
         """Return the prompt length for a usage row, preferring an inline value when present."""
-        prompt_length = _attr(attrs, "prompt_length")
+        prompt_length = _optional_int_attr(attrs, "prompt_length")
         if prompt_length is not None:
-            return int(prompt_length)
+            return prompt_length
 
         key = self._key_for(service_name, attrs, session_id, user_id)
         if key is None:
@@ -385,11 +397,8 @@ def _extract_claude_fields(
     output_tokens = _attr(attrs, "output_tokens")
     cache_read = _attr(attrs, "cache_read_tokens")
     cache_create = _attr(attrs, "cache_creation_tokens")
-    status = _attr(attrs, "status_code")
-    try:
-        ttft_ms = _optional_int(_attr(attrs, "ttft_ms"))
-    except (TypeError, ValueError, OverflowError):
-        ttft_ms = None
+    status = _optional_int_attr(attrs, "status_code")
+    ttft_ms = _optional_int_attr(attrs, "ttft_ms")
     if ttft_ms is not None and ttft_ms <= 0:
         ttft_ms = None
 
@@ -422,7 +431,7 @@ def _extract_claude_fields(
         "reasoning_tokens": None,
         "tool_tokens": None,
         "total_tokens": total,
-        "latency_ms": _attr(attrs, "duration_ms"),
+        "latency_ms": _optional_int_attr(attrs, "duration_ms"),
         "ttft_ms": ttft_ms,
         "status": status,
         "base_url": metadata.base_url,
@@ -448,14 +457,14 @@ def _extract_opencode_fields(
     reasoning = _attr(attrs, "reasoning_token_count")
     cached = _attr(attrs, "cached_token_count")
     cache_create = _attr(attrs, "cache_creation_token_count")
-    prompt_length = _attr(attrs, "prompt_length")
-    duration_ms = _attr(attrs, "duration_ms")
-    ttft_ms = _attr(attrs, "ttft_ms")
-    status = _attr(attrs, "http.response.status_code")
+    prompt_length = _optional_int_attr(attrs, "prompt_length", default=0)
+    duration_ms = _optional_int_attr(attrs, "duration_ms")
+    ttft_ms = _optional_int_attr(attrs, "ttft_ms")
+    status = _optional_int_attr(attrs, "http.response.status_code")
     if status is None:
-        status = _attr(attrs, "status_code")
+        status = _optional_int_attr(attrs, "status_code")
     if status is None:
-        status = _attr(attrs, "http.status_code")
+        status = _optional_int_attr(attrs, "http.status_code")
     provider_from_attr = _attr(attrs, "provider")
     model = _attr(attrs, "model") or f"{client_source}-unknown"
     usage_session_id = _attr(attrs, "session.id") or session_id or None
@@ -496,7 +505,7 @@ def _extract_opencode_fields(
         "session_id": usage_session_id,
         "endpoint": "otlp",
         "prompt_tokens": prompt_tokens,
-        "prompt_length": int(prompt_length) if prompt_length is not None else 0,
+        "prompt_length": prompt_length,
         "completion_tokens": completion_tokens,
         "cached_tokens": cached_tokens,
         "cache_creation_tokens": int(cache_create)
@@ -505,9 +514,9 @@ def _extract_opencode_fields(
         "reasoning_tokens": int(reasoning) if reasoning is not None else None,
         "tool_tokens": None,
         "total_tokens": normalized_total,
-        "latency_ms": int(duration_ms) if duration_ms is not None else None,
-        "ttft_ms": int(ttft_ms) if ttft_ms is not None else None,
-        "status": int(status) if status is not None else None,
+        "latency_ms": duration_ms,
+        "ttft_ms": ttft_ms,
+        "status": status,
         "base_url": metadata.base_url,
         "base_url_provider": metadata.provider,
         "base_url_source": metadata.source,
@@ -587,20 +596,20 @@ def _handle_codex_state_event(attrs: list, user_id: str) -> bool:
         return True
 
     if event_kind == CODEX_API_REQUEST_EVENT or event_name == CODEX_API_REQUEST_EVENT:
-        duration = _attr(attrs, "duration_ms")
+        duration = _optional_int_attr(attrs, "duration_ms")
         entry = _codex_state_for(attrs, user_id)
         if entry is not None and duration is not None:
             key, state = entry
-            state["duration_ms"] = int(duration)
+            state["duration_ms"] = duration
             codex_state[key] = state
         return True
 
     if event_kind == "response.created":
-        duration = _attr(attrs, "duration_ms")
+        duration = _optional_int_attr(attrs, "duration_ms")
         entry = _codex_state_for(attrs, user_id)
         if entry is not None and duration is not None:
             key, state = entry
-            state["ttft_ms"] = int(duration)
+            state["ttft_ms"] = duration
             codex_state[key] = state
         return True
 
@@ -641,10 +650,10 @@ def _extract_codex_fields(
     cached_tokens = _attr(attrs, "cached_token_count")
     reasoning_tokens = _attr(attrs, "reasoning_token_count")
     tool_tokens = _attr(attrs, "tool_token_count")
-    latency_ms = _attr(attrs, "duration_ms")
-    status = _attr(attrs, "http.response.status_code")
+    latency_ms = _optional_int_attr(attrs, "duration_ms")
+    status = _optional_int_attr(attrs, "http.response.status_code")
     # Codex >=0.157 reports time-to-first-token directly on response.completed.
-    ttft_ms = _attr(attrs, "ttft_ms")
+    ttft_ms = _optional_int_attr(attrs, "ttft_ms")
 
     # Turn the cached request start/duration into a per-request latency. Codex
     # never reports total duration on response.completed itself.
@@ -692,8 +701,8 @@ def _extract_codex_fields(
         else None,
         "tool_tokens": int(tool_tokens) if tool_tokens is not None else None,
         "total_tokens": total_tokens,
-        "latency_ms": int(latency_ms) if latency_ms is not None else None,
-        "ttft_ms": int(ttft_ms) if ttft_ms is not None else None,
+        "latency_ms": latency_ms,
+        "ttft_ms": ttft_ms,
         "cache_creation_tokens": None,
         "status": status,
         "base_url": metadata.base_url,
@@ -759,7 +768,7 @@ def _parse_log_record(
                 usage_id=usage_id,
                 session_id=session_id or usage_session_id,
                 tool_name=entry["tool_name"],
-                duration_ms=_optional_int(_attr(attrs, "duration_ms")),
+                duration_ms=_optional_int_attr(attrs, "duration_ms"),
                 user_id=user_id,
                 client_source="claude-code",
                 ts=entry["ts"],
@@ -780,7 +789,7 @@ def _parse_log_record(
     elif event_name == "codex.tool_result" and service_name in CODEX_SERVICE_NAMES:
         conv_id = _attr(attrs, "conversation.id")
         call_id = _attr(attrs, "call_id") or ""
-        duration_ms = _optional_int(_attr(attrs, "duration_ms"))
+        duration_ms = _optional_int_attr(attrs, "duration_ms")
         matched_buffer = _buffer_tool_duration(
             _codex_tool_buffer,
             _scoped_id(conv_id, user_id) if conv_id else None,
@@ -811,7 +820,7 @@ def _parse_log_record(
                 tool_name=tool_name,
                 tool_use_id=_attr(attrs, "call_id") or _fallback_tool_use_id(),
                 ts=ts_attr,
-                duration_ms=_optional_int(_attr(attrs, "duration_ms")),
+                duration_ms=_optional_int_attr(attrs, "duration_ms"),
             )
 
     if (

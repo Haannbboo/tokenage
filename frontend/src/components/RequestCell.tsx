@@ -106,6 +106,12 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                 )}
               </div>
             </div>
+            <div className="tok-bar" aria-hidden="true">
+              <div className="tok-bar-cached" style={{ width: `${(value(row.cached_tokens) / (value(row.total_tokens) || 1)) * 100}%` }} />
+              <div className="tok-bar-input" style={{ width: `${(Math.max(0, value(row.prompt_tokens) - value(row.cached_tokens)) / (value(row.total_tokens) || 1)) * 100}%` }} />
+              <div className="tok-bar-write" style={{ width: `${(value(row.cache_creation_tokens) / (value(row.total_tokens) || 1)) * 100}%` }} />
+              <div className="tok-bar-output" style={{ width: `${(value(row.completion_tokens) / (value(row.total_tokens) || 1)) * 100}%` }} />
+            </div>
           </td>
         )
       case 'output':
@@ -119,6 +125,11 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                 </div>
               )}
             </div>
+            {value(row.reasoning_tokens) > 0 && (
+              <div className="tok-bar" aria-hidden="true">
+                <div className="tok-bar-reasoning" style={{ width: `${Math.min((value(row.reasoning_tokens) / (value(row.completion_tokens) || 1)) * 100, 100)}%` }} />
+              </div>
+            )}
           </td>
         )
       case 'cost':

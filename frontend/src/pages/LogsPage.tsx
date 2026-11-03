@@ -338,19 +338,6 @@ export function LogsPage() {
             showAllColumns={showAllColumns}
            />
            <RefreshButton onClick={requestUsageRefresh} />
-           <button
-            type="button"
-            className="btn-ghost"
-            onClick={() => {
-              setActiveFilter(null)
-              setActiveSource(null)
-              setActiveDevice(null)
-              setSessionFilter(null)
-              setToolFilter(null)
-            }}
-           >
-             {t('Reset')}
-           </button>
         </div>
       </div>
 

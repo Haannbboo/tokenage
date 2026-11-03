@@ -270,8 +270,7 @@ describe('Request Logs table', () => {
     app.dateRange = '7d'
     view.rerender(logsPage())
     expect(filterCalls().length).toBe(count)
-    fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
-    expect(app.setDateRange).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Reset' })).toBeNull()
   })
 
   it('keeps the default dashboard summary and sources scoped to the global date range', async () => {

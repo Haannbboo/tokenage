@@ -974,7 +974,6 @@ _QUEUE_ATTRIBUTES = frozenset(
         "session.id",
         "status_code",
         "tool_name",
-        "tool_token_count",
         "tool_use_id",
         "ttft_ms",
     ]

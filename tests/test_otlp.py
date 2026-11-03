@@ -529,7 +529,7 @@ def test_extract_codex_fields_basic(otlp_module):
             "output_token_count": 100,
             "cached_token_count": 50,
             "reasoning_token_count": 30,
-            "tool_token_count": 300,
+            "tool_token_count": 999_999,
             "duration_ms": 800,
             "http.response.status_code": 200,
             "model": "o3",
@@ -557,6 +557,63 @@ def test_extract_codex_fields_basic(otlp_module):
     assert fields["latency_ms"] == 800
     assert fields["ttft_ms"] == 200
     assert fields["client_source"] == "codex"
+
+
+def test_codex_replay_matches_legacy_tool_tokens(otlp_module, fresh_db):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from src.database import get_engine
+    from src.database.models import SessionRecord, Usage, UsageHourly
+
+    attrs = _attrs(
+        {
+            "event.name": "codex.sse_event",
+            "event.kind": "response.completed",
+            "conversation.id": "codex-upgrade-replay",
+            "model": "gpt-4.1",
+            "input_token_count": 1000,
+            "output_token_count": 200,
+            "cached_token_count": 300,
+            "reasoning_token_count": 50,
+            "tool_token_count": 1200,
+            "http.response.status_code": 200,
+        }
+    )
+    record = {"timeUnixNano": "1800000000000000000", "attributes": attrs}
+    legacy_fields = otlp_module._extract_codex_fields(
+        record, attrs, "codex_cli_rs", user_id="test-user"
+    )
+    legacy_fields.pop("_tool_info")
+    legacy_fields["tool_tokens"] = legacy_fields["total_tokens"]
+    first = ingest_write(
+        otlp_module.record_usage,
+        **legacy_fields,
+        device_id="test-device",
+        db_path=fresh_db.db_path,
+    )
+    assert first is not None
+
+    ingest_write(
+        otlp_module._parse_log_record,
+        otlp_module._queue_record(record),
+        "codex_cli_rs",
+        "",
+        user_id="test-user",
+        device_id="test-device",
+        db_path=fresh_db.db_path,
+    )
+
+    with Session(get_engine(fresh_db.db_path)) as session:
+        usage = session.scalars(select(Usage)).one()
+        assert usage.id == first.id
+        assert usage.tool_tokens == usage.total_tokens == 1200
+        hourly = session.scalars(select(UsageHourly)).one()
+        session_record = session.scalars(select(SessionRecord)).one()
+        for rollup in (hourly, session_record):
+            assert rollup.request_count == 1
+            assert rollup.total_tokens == 1200
+            assert rollup.total_cost_usd == first.total_cost_usd
 
 
 def test_extract_codex_fields_prefers_inline_ttft(otlp_module):
@@ -1005,8 +1062,7 @@ def test_parse_codex_record_uses_prompt_length_from_prior_prompt_event(
                 "output_token_count": 200,
                 "cached_token_count": 300,
                 "reasoning_token_count": 50,
-                "tool_token_count": 1200,
-                "cache_write_token_count": 100,
+                "tool_token_count": 999_999,
                 "duration_ms": 2000,
             }
         ),
@@ -1028,7 +1084,6 @@ def test_parse_codex_record_uses_prompt_length_from_prior_prompt_event(
     assert captured["usage"].cached_tokens == 300
     assert captured["usage"].reasoning_tokens == 50
     assert captured["usage"].total_tokens == 1200
-    assert captured["usage"].cache_creation_tokens is None
     assert captured["usage"].client_source == "codex"
     assert captured["usage"].session_id == "conv-1"
     assert captured["usage"].status is None

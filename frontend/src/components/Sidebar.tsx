@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation } from 'react-router-dom'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 import { useDismiss } from '../hooks/useDismiss'
+import { useDevices } from '../hooks/useDevices'
 import { useVersion } from '../hooks/useVersion'
 import { Icon, type IconName } from './Icon'
 import { UserAvatar } from './UserAvatar'
@@ -62,6 +63,8 @@ function ThemeLangButtons() {
 
 function AccountMenu({ onNavigate }: { onNavigate: () => void }) {
   const { auth, signOut } = useApp()
+  // Local-auth browsers signed in by a login link have a current web session to end.
+  const { webSessions } = useDevices(!!auth.user && auth.provider !== 'google')
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -93,7 +96,7 @@ function AccountMenu({ onNavigate }: { onNavigate: () => void }) {
         <div id="account-menu" className="menu account-menu">
           <div className="menu-meta"><b>{name}</b>{user.email !== name && <span>{user.email}</span>}</div>
           <Link className="menu-item" to="/settings" onClick={() => { close(); onNavigate() }}><Icon name="settings" />{t('Settings')}</Link>
-          {auth.provider === 'google' && (
+          {(auth.provider === 'google' || webSessions?.some(session => session.current)) && (
             <button type="button" className="menu-item" onClick={() => void signOut()}><Icon name="signOut" />{t('Sign out')}</button>
           )}
         </div>

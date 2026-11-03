@@ -1161,41 +1161,39 @@ def _serves_spa_page(request: Request) -> bool:
     )
 
 
+class SPACatchAllMiddleware(BaseHTTPMiddleware):
+    """Rewrite non-API, non-file requests to /index.html for SPA routing."""
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        requested = path.lstrip("/")
+        serving_index = path == "/index.html"
+        shared_page = path in _SPA_API_SHARED_PAGES
+        if request.scope.get("spa_shared_page", False) or (
+            request.method in ("GET", "HEAD")
+            and _index_html.is_file()
+            and not any(path.startswith(p) for p in _SPA_API_PREFIXES)
+            and not Path(requested).suffix
+            and not (_frontend_dist / requested).is_file()
+        ):
+            request.scope["path"] = "/index.html"
+            serving_index = True
+        response = await call_next(request)
+        if shared_page:
+            # Same URL, page or JSON by request headers: keep caches apart.
+            response.headers["Vary"] = ", ".join(
+                v for v in (response.headers.get("Vary"), "Accept, Sec-Fetch-Mode") if v
+            )
+        if serving_index:
+            # index.html references content-hashed asset filenames that
+            # change every build; it must always revalidate (cheap, via
+            # the ETag/Last-Modified StaticFiles already sets) so a stale
+            # cached copy never keeps pointing at a deleted JS/CSS bundle.
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 if _SPA_SERVED:
-
-    class SPACatchAllMiddleware(BaseHTTPMiddleware):
-        """Rewrite non-API, non-file requests to /index.html for SPA routing."""
-
-        async def dispatch(self, request: Request, call_next):
-            path = request.url.path
-            requested = path.lstrip("/")
-            serving_index = path == "/index.html"
-            shared_page = path in _SPA_API_SHARED_PAGES
-            if request.scope.get("spa_shared_page", False) or (
-                request.method in ("GET", "HEAD")
-                and _index_html.is_file()
-                and not any(path.startswith(p) for p in _SPA_API_PREFIXES)
-                and not Path(requested).suffix
-                and not (_frontend_dist / requested).is_file()
-            ):
-                request.scope["path"] = "/index.html"
-                serving_index = True
-            response = await call_next(request)
-            if shared_page:
-                # Same URL, page or JSON by request headers: keep caches apart.
-                response.headers["Vary"] = ", ".join(
-                    v
-                    for v in (response.headers.get("Vary"), "Accept, Sec-Fetch-Mode")
-                    if v
-                )
-            if serving_index:
-                # index.html references content-hashed asset filenames that
-                # change every build; it must always revalidate (cheap, via
-                # the ETag/Last-Modified StaticFiles already sets) so a stale
-                # cached copy never keeps pointing at a deleted JS/CSS bundle.
-                response.headers["Cache-Control"] = "no-cache"
-            return response
-
     app.add_middleware(SPACatchAllMiddleware)
     app.mount(
         "/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend"

@@ -4,18 +4,21 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import App from '../src/App'
 
-function stubApi() {
+function stubApi(provider = 'google', webSessions: { current: boolean }[] = []) {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} })
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const path = new URL(String(input), window.location.origin).pathname
-    const data = path === '/auth/me' ? { provider: 'google', user: { id: 'u', email: 'a@example.com', name: 'Ada' } }
+    const data = path === '/auth/me' ? { provider, user: { id: 'u', email: 'a@example.com', name: 'Ada' } }
+      : path === '/auth/devices' ? { devices: [], web_sessions: webSessions }
       : path === '/version' ? { name: 'tokenage', version: '9.9.9' }
       : path === '/sessions' ? { sessions: [], total: 0 }
       : path === '/sessions/distribution' ? { over_time: [], by_agent: [], by_duration: [], by_cost: [] }
       : []
     return { ok: true, status: 200, json: async () => data } as Response
-  }))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
 }
 
 function stubViewport(width: number) {
@@ -85,6 +88,40 @@ it('opens the account menu and closes it on Escape', async () => {
   fireEvent.keyDown(document, { key: 'Escape' })
   expect(screen.queryByText('a@example.com')).toBeNull()
   expect(document.activeElement).toBe(trigger)
+})
+
+it('offers Sign out to a local-auth browser signed in by login link', async () => {
+  stubApi('local', [{ current: true }])
+  await open('/dashboard')
+  fireEvent.click(screen.getByRole('button', { name: 'Account: Ada' }))
+  expect(await screen.findByRole('button', { name: 'Sign out' })).toBeTruthy()
+})
+
+it('hides Sign out for the local owner without a web session', async () => {
+  const fetchMock = stubApi('local', [{ current: false }])
+  await open('/dashboard')
+  fireEvent.click(screen.getByRole('button', { name: 'Account: Ada' }))
+  await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith('/auth/devices'))).toBe(true))
+  expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull()
+})
+
+it('Escape closes only the topmost layer: the account menu, then the drawer', async () => {
+  stubViewport(400)
+  await open('/logs')
+  const sidebar = document.getElementById('sidebar')!
+  const menu = screen.getByRole('button', { name: 'Open menu' })
+  await act(async () => { fireEvent.click(menu) })
+  await waitFor(() => expect(sidebar.getAttribute('role')).toBe('dialog'))
+  const trigger = screen.getByRole('button', { name: 'Account: Ada' })
+  fireEvent.click(trigger)
+  expect(screen.getByText('a@example.com')).toBeTruthy()
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(screen.queryByText('a@example.com')).toBeNull()
+  expect(sidebar.getAttribute('role')).toBe('dialog')
+  expect(document.activeElement).toBe(trigger)
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(sidebar.getAttribute('role')).toBeNull()
+  expect(document.activeElement).toBe(menu)
 })
 
 it('uses a drawer on phones: Escape, the scrim and navigation close it', async () => {

@@ -72,7 +72,7 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
             <span style={{
               padding: '2px 6px',
               borderRadius: '4px',
-              background: sourceColors[selected.client_source] + '22',
+              background: `color-mix(in oklch, ${sourceColors[selected.client_source] || 'var(--text-secondary)'} 13%, transparent)`,
               color: sourceColors[selected.client_source] || 'var(--text-secondary)',
               fontSize: '10px',
               fontWeight: 700,
@@ -183,7 +183,7 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
                   <span style={{
                     padding: '2px 6px',
                     borderRadius: '4px',
-                    background: sourceColors[group.source] + '22',
+                    background: `color-mix(in oklch, ${sourceColors[group.source] || 'var(--text-primary)'} 13%, transparent)`,
                     color: sourceColors[group.source] || 'var(--text-primary)',
                     fontSize: '10px',
                     fontWeight: 600,

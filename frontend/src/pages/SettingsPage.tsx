@@ -66,13 +66,7 @@ export function SettingsPage() {
 
       {activeSection === 'pricing' && <PricingPage />}
 
-      {activeSection === 'services' && (
-        <>
-          <TimezoneSelector />
-
-
-        </>
-      )}
+      {activeSection === 'services' && <TimezoneSelector />}
 
       {activeSection === 'devices' && (
         <>
@@ -135,7 +129,7 @@ export function SettingsPage() {
                       </tr>
                       {expandedDeviceId === device.id && (
                         <tr className="expanded-row">
-                          <td colSpan={7}>
+                          <td colSpan={6}>
                             <div className="expanded-detail device-detail" style={{ padding: '12px 12px 16px' }}>
                               <DeviceStatusDetail status={deviceReport(device.id)} />
                             </div>
@@ -145,7 +139,7 @@ export function SettingsPage() {
                     </Fragment>
                   )) : (
                     <tr>
-                      <td colSpan={7} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
+                      <td colSpan={6} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
                         {devices ? t('No devices found.') : t('Loading...')}
                       </td>
                     </tr>

@@ -76,7 +76,7 @@ Version format: `MAJOR.MINOR.PATCH` (e.g. `0.1.180`).
 
 `tokenage --version` prints the client version and commit, and appends `· server <VERSION>` when the server component is installed.
 
-The version is exposed via `GET /version` (the API app) and displayed in Settings → Services in the frontend.
+The version is exposed via `GET /version` (the API app) and shown in the frontend's sidebar footer.
 
 Any new API route consumed by the frontend must be added to `frontend/vite-api-proxy.js` and its proxy route tests.
 

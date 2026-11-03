@@ -391,6 +391,12 @@ def _extract_claude_fields(
     cache_read = _attr(attrs, "cache_read_tokens")
     cache_create = _attr(attrs, "cache_creation_tokens")
     status = _attr(attrs, "status_code")
+    try:
+        ttft_ms = _optional_int(_attr(attrs, "ttft_ms"))
+    except (TypeError, ValueError, OverflowError):
+        ttft_ms = None
+    if ttft_ms is not None and ttft_ms <= 0:
+        ttft_ms = None
 
     # prompt_tokens = raw input + cache reads (what the model actually processed)
     prompt_tokens = (int(input_tokens or 0)) + (int(cache_read or 0))
@@ -422,7 +428,7 @@ def _extract_claude_fields(
         "tool_tokens": None,
         "total_tokens": total,
         "latency_ms": _attr(attrs, "duration_ms"),
-        "ttft_ms": None,
+        "ttft_ms": ttft_ms,
         "status": status,
         "base_url": metadata.base_url,
         "base_url_provider": metadata.provider,

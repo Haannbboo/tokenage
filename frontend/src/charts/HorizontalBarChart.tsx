@@ -141,6 +141,7 @@ export function HorizontalBarChart({
   metric,
   mono = false,
   toolBadges = false,
+  status,
   children,
 }: {
   title: string
@@ -148,6 +149,8 @@ export function HorizontalBarChart({
   mono?: boolean
   toolBadges?: boolean
   metric: Metric
+  /** Shown instead of the list while the items load or after they fail. */
+  status?: React.ReactNode
   children?: React.ReactNode
 }) {
   // The row shown as active: hovered, focused or tapped. Tracked by row key
@@ -203,7 +206,7 @@ export function HorizontalBarChart({
       </div>
       {children}
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {sorted.length === 0 ? (
+        {status ?? (sorted.length === 0 ? (
           <div style={{ padding: '20px' }}>
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>{t('No data available')}</div>
           </div>
@@ -251,7 +254,7 @@ export function HorizontalBarChart({
             })
           }
           </ol>
-        )}
+        ))}
       </div>
       {activeItem && createPortal(
         <ChartTooltip ref={tipRef} id={tipId} role="tooltip" className="rank-tip">

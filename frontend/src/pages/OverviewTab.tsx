@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useCountUp } from '../useCountUp'
 import { TrendChart } from '../charts/TrendChart'
+import { ReadState } from '../components/ReadState'
 import { TopUsageChart } from '../charts/TopUsageChart'
 import { ToolCallsChart } from '../charts/ToolCallsChart'
 import { DailyHeatmap } from '../charts/DailyHeatmap'
@@ -30,6 +31,12 @@ type OverviewTabProps = {
   heatmapData: any[]
   dashboardInitialLoading: boolean
   dashboardRefreshing: boolean
+  summaryPending: boolean
+  dashboardError: string | null
+  dailyError: boolean
+  dailyPending: boolean
+  heatmapError: boolean
+  onRetry: () => void
   dateRange: DateRangeOption
   dashboardFilterParams: any
   totals: any
@@ -57,6 +64,12 @@ export function OverviewTab({
   heatmapData,
   dashboardInitialLoading,
   dashboardRefreshing,
+  summaryPending,
+  dashboardError,
+  dailyError,
+  dailyPending,
+  heatmapError,
+  onRetry,
   dateRange,
   dashboardFilterParams,
   totals,
@@ -92,7 +105,8 @@ export function OverviewTab({
   // /usage/daily only returns periods that have usage; the missing buckets are
   // filled in so the sparklines sit on a real time axis.
   const granularity = rangeGranularity(dateRange)
-  const filledUsage = useMemo(() => fillPeriodGaps(dailyUsage, granularity), [dailyUsage, granularity])
+  // Rows of another view would draw the old range's sparklines: none until the new ones land.
+  const filledUsage = useMemo(() => fillPeriodGaps(dailyPending ? [] : dailyUsage, granularity), [dailyUsage, dailyPending, granularity])
 
   // The hovered period is a wall-clock label in the display timezone, so "now"
   // has to be read in that same clock.
@@ -116,8 +130,10 @@ export function OverviewTab({
   return (
     <>
 
-      {dashboardInitialLoading ? (
-        <div />
+      {dashboardError ? (
+        <ReadState error={dashboardError} onRetry={onRetry} />
+      ) : dashboardInitialLoading ? (
+        <ReadState />
       ) : showFirstRunOnboarding ? (
         <div style={{
           display: 'flex',
@@ -383,6 +399,7 @@ export function OverviewTab({
           cursorIdx={cursorIdx}
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}
+          pending={summaryPending}
         >
           {t('Avg $/M tokens:')} <span>{formatRate(totals.avgEffectivePricePerMillion)}</span>
         </StatTile>
@@ -397,6 +414,7 @@ export function OverviewTab({
           cursorIdx={cursorIdx}
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}
+          pending={summaryPending}
         >
           {/* cache_creation_tokens folds into "In" (fresh input, billed
               differently from cache-read) so In + Out reconciles with
@@ -413,6 +431,7 @@ export function OverviewTab({
           cursorIdx={cursorIdx}
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}
+          pending={summaryPending}
         >
           {t('Avg:')} <span>{formatCompact(totals.avgTokensPerRequest)} {t('tokens/req')}</span>
         </StatTile>
@@ -427,6 +446,7 @@ export function OverviewTab({
           cursorIdx={cursorIdx}
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}
+          pending={summaryPending}
         >
           {t('Cached:')} {formatCompact(totals.cachedTokens)} {t('of')} {formatCompact(totalInputTokens)} {t('tokens')}
         </StatTile>
@@ -440,6 +460,7 @@ export function OverviewTab({
           cursorIdx={cursorIdx}
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}
+          pending={summaryPending}
         />
           </>
       </div>
@@ -450,6 +471,7 @@ export function OverviewTab({
             summary={summary}
             theme={theme}
             filterParams={dashboardFilterParams}
+            summaryPending={summaryPending}
           />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -466,11 +488,19 @@ export function OverviewTab({
             granularity={granularity}
             periodCount={rangePeriodCount(dateRange)}
             showDots={dateRange !== 'all'}
+            totals={dailyError ? 'failed' : dailyPending ? 'pending' : 'ready'}
+            onRetryTotals={onRetry}
           />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <DailyHeatmap mode="activity" data={heatmapData} />
-            <DailyHeatmap mode="success-rate" data={heatmapData} />
+            {heatmapError ? (
+              <div className="widget" style={{ flex: 1 }}>
+                <ReadState error={t('Failed to load activity')} onRetry={onRetry} />
+              </div>
+            ) : <>
+              <DailyHeatmap mode="activity" data={heatmapData} />
+              <DailyHeatmap mode="success-rate" data={heatmapData} />
+            </>}
           </div>
       </div>
       </div>

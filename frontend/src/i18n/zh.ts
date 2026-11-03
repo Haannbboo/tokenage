@@ -219,6 +219,11 @@ export const zh: Record<string, string> = {
   // Error messages
   'Failed to fetch dashboard data': '获取仪表盘数据失败',
   'Retry': '重试',
+  'Failed to load tool calls': '加载工具调用失败',
+  'Failed to load usage trend': '加载用量趋势失败',
+  'Failed to load activity': '加载活动数据失败',
+  'Failed to load devices': '加载设备失败',
+  'Failed to load web sessions': '加载网页会话失败',
   'Failed to fetch log data': '获取日志数据失败',
   'Unknown error': '未知错误',
 

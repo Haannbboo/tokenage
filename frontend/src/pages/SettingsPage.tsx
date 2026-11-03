@@ -2,6 +2,7 @@ import { Fragment, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { PricingPage } from './PricingPage'
 import { useApp } from '../contexts/AppContext'
+import { ReadState } from '../components/ReadState'
 import { useDevices } from '../hooks/useDevices'
 import { useDeviceStatuses } from '../hooks/useDeviceStatuses'
 import { t } from '../i18n/index.ts'
@@ -17,7 +18,9 @@ export function SettingsPage() {
   const activeSection = section && ['pricing', 'services', 'devices'].includes(section) ? section : 'services'
   const { showToast } = useApp()
   const authDevicesActive = activeSection === 'devices'
-  const { devices, webSessions, refresh: refreshDevices } = useDevices(authDevicesActive)
+  const { devices, webSessions, error: devicesError, loading: devicesLoading, refresh: refreshDevices } = useDevices(authDevicesActive)
+  // A reload after a revoke keeps the tables, with the dashboard's refresh sheen.
+  const devicesPanelClass = `panel refresh-sheen${devicesLoading && devices ? ' is-refreshing' : ''}`
   const { statuses } = useDeviceStatuses(authDevicesActive)
   const [expandedDeviceId, setExpandedDeviceId] = useState<string | null>(null)
   const [revokingDeviceId, setRevokingDeviceId] = useState<string | null>(null)
@@ -70,7 +73,7 @@ export function SettingsPage() {
 
       {activeSection === 'devices' && (
         <>
-        <div className="panel">
+        <div className={devicesPanelClass}>
             <div className="panel-tabs">
               <div className="tab active">{t('Clients')}</div>
             </div>
@@ -87,7 +90,9 @@ export function SettingsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {devices && devices.length > 0 ? devices.map((device) => (
+                  {devicesError || devices === null ? (
+                    <tr><td colSpan={6} style={{ padding: 0 }}><ReadState error={devicesError ? t('Failed to load devices') : null} onRetry={refreshDevices} /></td></tr>
+                  ) : devices && devices.length > 0 ? devices.map((device) => (
                     <Fragment key={device.id}>
                       <tr
                         {...(device.kind === 'client' ? expandableRowProps(expandedDeviceId === device.id, () => setExpandedDeviceId(expandedDeviceId === device.id ? null : device.id)) : {})}
@@ -140,7 +145,7 @@ export function SettingsPage() {
                   )) : (
                     <tr>
                       <td colSpan={6} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
-                        {devices ? t('No devices found.') : t('Loading...')}
+                        {t('No devices found.')}
                       </td>
                     </tr>
                   )}
@@ -148,7 +153,7 @@ export function SettingsPage() {
               </table>
             </div>
           </div>
-        <div className="panel" style={{ marginTop: '24px' }}>
+        <div className={devicesPanelClass} style={{ marginTop: '24px' }}>
             <div className="panel-tabs">
               <div className="tab active">{t('Web sessions')}</div>
             </div>
@@ -163,7 +168,9 @@ export function SettingsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {webSessions && webSessions.length > 0 ? webSessions.map((session) => (
+                  {devicesError || webSessions === null ? (
+                    <tr><td colSpan={4} style={{ padding: 0 }}><ReadState error={devicesError ? t('Failed to load web sessions') : null} onRetry={refreshDevices} /></td></tr>
+                  ) : webSessions && webSessions.length > 0 ? webSessions.map((session) => (
                     <tr key={session.id}>
                       <td style={{ fontWeight: 500 }}>
                         {session.device_name}
@@ -193,7 +200,7 @@ export function SettingsPage() {
                   )) : (
                     <tr>
                       <td colSpan={4} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
-                        {webSessions ? t('No web sessions found.') : t('Loading...')}
+                        {t('No web sessions found.')}
                       </td>
                     </tr>
                   )}

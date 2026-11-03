@@ -21,7 +21,7 @@ export function DashboardPage({ onNavigateToLogs }: Props) {
   // Dashboard data hook
   const {
     summary, selectorSummary, dailyUsage, heatmapData, totalTrackedEvents, sources,
-    dashboardInitialLoading, dashboardRefreshing,
+    dashboardInitialLoading, dashboardRefreshing, summaryPending, dashboardError, dailyError, dailyPending, heatmapError,
     providerColors, dashboardFilterParams, totals,
   } = useDashboardData()
 
@@ -67,6 +67,12 @@ export function DashboardPage({ onNavigateToLogs }: Props) {
         heatmapData={heatmapData}
         dashboardInitialLoading={dashboardInitialLoading}
         dashboardRefreshing={dashboardRefreshing}
+        summaryPending={summaryPending}
+        dashboardError={dashboardError}
+        dailyError={dailyError}
+        dailyPending={dailyPending}
+        heatmapError={heatmapError}
+        onRetry={requestUsageRefresh}
         dateRange={dateRange}
         dashboardFilterParams={dashboardFilterParams}
         totals={totals}

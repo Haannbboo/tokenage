@@ -1216,6 +1216,8 @@ img[src^="/models/"] { filter: saturate(0.7); }
   }
 }
 
+.refresh-sheen { position: relative; }
+
 .dashboard-refresh-surface {
   position: relative;
   display: flex;
@@ -1223,7 +1225,8 @@ img[src^="/models/"] { filter: saturate(0.7); }
   gap: 12px;
 }
 
-.dashboard-refresh-surface.is-refreshing::after {
+.dashboard-refresh-surface.is-refreshing::after,
+.refresh-sheen.is-refreshing::after {
   content: '';
   position: absolute;
   inset: -8px;
@@ -1282,11 +1285,13 @@ img[src^="/models/"] { filter: saturate(0.7); }
 
 @media (prefers-reduced-motion: reduce) {
   .btn-refresh.is-refreshing .refresh-icon,
-  .dashboard-refresh-surface.is-refreshing::after {
+  .dashboard-refresh-surface.is-refreshing::after,
+  .refresh-sheen.is-refreshing::after {
     animation: none;
   }
 
-  .dashboard-refresh-surface.is-refreshing::after {
+  .dashboard-refresh-surface.is-refreshing::after,
+  .refresh-sheen.is-refreshing::after {
     opacity: 0.25;
     transform: none;
   }
@@ -1619,3 +1624,9 @@ img[src^="/models/"] { filter: saturate(0.7); }
 /* Wide settings tables scroll inside their panel; chart labels never widen the page. */
 .settings-page .panel-body { overflow-x: auto; }
 .main { overflow-x: clip; }
+
+/* Loading / failed read placeholder (ReadState) */
+.read-state { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; padding: 40px 20px; color: var(--text-muted); font-size: 13px; text-align: center; }
+.read-state.is-error { color: var(--badge-error-text); }
+.read-state.is-compact { padding: 0 20px 8px; font-size: 12px; }
+.read-state button[aria-disabled="true"] { opacity: 0.5; cursor: wait; }

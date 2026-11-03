@@ -26,9 +26,23 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
   const [sources, setSources] = useState<string[]>([])
   const [dashboardInitialLoading, setDashboardInitialLoading] = useState(true)
   const [dashboardRefreshing, setDashboardRefreshing] = useState(false)
+  // A new range or filter is loading: the overview stays mounted, but its
+  // totals belong to the old view and must not read as current.
+  const [summaryPending, setSummaryPending] = useState(false)
+  // A failed summary replaces the overview with Retry; the trend and heatmap
+  // reads fail on their own panels. The count only feeds onboarding.
+  const [dashboardError, setDashboardError] = useState<string | null>(null)
+  const [dailyError, setDailyError] = useState(false)
+  const [heatmapError, setHeatmapError] = useState(false)
+  // The view the daily totals belong to: until it is the current one, the
+  // trend panel and the sparklines wait, as the summary does.
+  const [dailyView, setDailyView] = useState<string | null>(null)
 
   const dashboardRequestRef = useRef(0)
-  const dashboardHasLoadedRef = useRef(false)
+  // The view the shown data belongs to: a refresh of the same view keeps it on
+  // screen (dimmed); another view starts from a loading state.
+  const loadedViewRef = useRef<string | null>(null)
+  const view = JSON.stringify([activeFilter, activeSource, activeDevice, dateRange, tz])
 
   const providerColors = useMemo(() => Object.fromEntries(
     Array.from(new Set(summary.map(s => s.provider))).map(p => [p, providerColor(p)]),
@@ -40,10 +54,12 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
     client_source: activeSource,
     device_id: activeDevice,
     since: getSinceDate(dateRange),
-  }), [activeFilter, activeSource, activeDevice, dateRange, refreshTrigger])
+    // Not a query parameter: lets the panels tell a refresh from a new view.
+    view,
+  }), [activeFilter, activeSource, activeDevice, dateRange, refreshTrigger, view])
 
   const applyFilterParams = useCallback((url: URL) => {
-    const { model, ...filters } = dashboardFilterParams
+    const { model, view: _view, ...filters } = dashboardFilterParams
     appendModels(url.searchParams, model)
     for (const [key, value] of Object.entries(filters)) {
       if (value) url.searchParams.set(key, value)
@@ -59,8 +75,14 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
     const sig = { signal: controller.signal }
 
     async function fetchDashboard() {
-      const isInitialDashboardLoad = !dashboardHasLoadedRef.current
+      // Only with nothing on screen (first load, or after a failed summary)
+      // does the overview give way to a full loading state.
+      const isInitialDashboardLoad = loadedViewRef.current === null
+      setSummaryPending(!isInitialDashboardLoad && loadedViewRef.current !== view)
       setError(null)
+      setDashboardError(null)
+      setDailyError(false)
+      setHeatmapError(false)
       setDashboardInitialLoading(isInitialDashboardLoad)
       setDashboardRefreshing(!isInitialDashboardLoad)
       try {
@@ -83,39 +105,67 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
 
         const totalCountUrl = new URL('/usage/count', window.location.origin)
 
-        const responses = await Promise.all([
-          fetch(summaryUrl.toString(), sig),
-          includeDaily ? fetch(dailyUrl.toString(), sig) : null,
-          includeHeatmap ? fetch(heatmapUrl.toString(), sig) : null,
-          includeCount ? fetch(totalCountUrl.toString(), sig) : null,
+        const read = async (url: URL) => {
+          const response = await fetch(url.toString(), sig)
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          return response.json()
+        }
+        const skipped = Promise.resolve(null)
+        const summaryRead = read(summaryUrl) as Promise<UsageSummary[]>
+        // Settled apart from the summary: a slow trend or heatmap read must not
+        // hold the KPIs back, and its failure stays on its own panel.
+        const panelReads = Promise.allSettled([
+          includeDaily ? read(dailyUrl) as Promise<DailyUsage[]> : skipped,
+          includeHeatmap ? read(heatmapUrl) as Promise<DailyUsage[]> : skipped,
+          includeCount ? read(totalCountUrl) as Promise<{ total: number }> : skipped,
         ])
 
-        if (responses.some(r => r && !r.ok)) throw new Error(t('Failed to fetch dashboard data'))
-        const [summaryData, dailyData, heatmapRaw, totalCountData] =
-          await Promise.all(responses.map(r => r ? r.json() : null)) as [UsageSummary[], DailyUsage[] | null, DailyUsage[] | null, { total: number } | null]
-
+        const summaryData = await summaryRead
         if (!isCurrentRequest()) return
-
         setSummary(summaryData)
         if (!activeFilter) setSelectorSummary(summaryData)
-        if (dailyData) setDailyUsage(dailyData)
-        if (heatmapRaw) setHeatmapData(heatmapRaw)
-        if (totalCountData) setTotalTrackedEvents(totalCountData.total)
-        dashboardHasLoadedRef.current = true
+        loadedViewRef.current = view
+        setSummaryPending(false)
+        setDashboardInitialLoading(false)
+
+        const [dailyRead, heatmapRead, countRead] = await panelReads
+        if (!isCurrentRequest()) return
+        if (dailyRead.status === 'fulfilled') {
+          if (dailyRead.value) {
+            setDailyUsage(dailyRead.value)
+            setDailyView(view)
+          }
+        } else {
+          console.error('Failed to load usage trend:', dailyRead.reason)
+          setDailyError(true)
+        }
+        if (heatmapRead.status === 'fulfilled') {
+          if (heatmapRead.value) setHeatmapData(heatmapRead.value)
+        } else {
+          console.error('Failed to load activity:', heatmapRead.reason)
+          setHeatmapError(true)
+        }
+        if (countRead.status === 'fulfilled' && countRead.value) setTotalTrackedEvents(countRead.value.total)
       } catch (err) {
         if (!isCurrentRequest()) return
-        setError(err instanceof Error ? err.message : t('Unknown error'))
+        // The raw error may quote the response body: the console gets it, the UI a fixed message.
+        console.error('Failed to fetch dashboard data:', err)
+        setError(t('Failed to fetch dashboard data'))
+        setDashboardError(t('Failed to fetch dashboard data'))
+        // Whatever loaded before is now stale: the next read starts from a loading state.
+        loadedViewRef.current = null
       } finally {
         if (isCurrentRequest()) {
           setDashboardInitialLoading(false)
           setDashboardRefreshing(false)
+          setSummaryPending(false)
         }
       }
     }
 
     void fetchDashboard()
     return () => controller.abort()
-  }, [activeFilter, activeSource, activeDevice, dateRange, refreshTrigger, applyFilterParams, setError, tz, includeDaily, includeHeatmap, includeCount])
+  }, [activeFilter, activeSource, activeDevice, dateRange, refreshTrigger, applyFilterParams, setError, tz, includeDaily, includeHeatmap, includeCount, view])
 
   // Fetch the selector options without the model filter.
   useEffect(() => {
@@ -174,7 +224,8 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
 
   return {
     summary, selectorSummary, dailyUsage, heatmapData, totalTrackedEvents, sources,
-    dashboardInitialLoading, dashboardRefreshing,
+    dashboardInitialLoading, dashboardRefreshing, summaryPending, dashboardError, dailyError, heatmapError,
+    dailyPending: includeDaily && dailyView !== view,
     providerColors, dashboardFilterParams, totals,
   }
 }

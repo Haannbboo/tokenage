@@ -1,11 +1,12 @@
 import { appendModels } from '../modelFilter'
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import type { Theme } from '../theme'
 import type { UsageSummary } from '../types'
 import { formatModelName, formatProviderName, getModelIcon, getProviderIcon, getSourceIcon, modelColor, providerColor, sourceColor, nameColor, netThroughput, getTimezoneOffset, resolveTimezone } from '../utils'
 import { useApp } from '../contexts/AppContext'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
+import { ReadState } from '../components/ReadState'
 import { t } from '../i18n/index.ts'
 
 type Dimension = 'model' | 'provider' | 'source' | 'device'
@@ -41,12 +42,18 @@ type SourceSummaryRow = {
   failed_requests: number | null
 }
 
+// A stable default: a fresh {} per render would re-run the fetch effect forever.
+const NO_FILTERS = {}
+
 export function TopUsageChart({
   summary,
   theme,
-  filterParams = {},
+  filterParams = NO_FILTERS,
+  summaryPending = false,
 }: {
   summary: UsageSummary[]
+  /** `summary` still belongs to the previous view: the model and provider lists wait for it. */
+  summaryPending?: boolean
   theme: Theme
   filterParams?: {
     provider?: string
@@ -54,17 +61,26 @@ export function TopUsageChart({
     client_source?: string | null
     device_id?: string | null
     since?: string | null
+    view?: string
   }
 }) {
   const [dimension, setDimension] = useState<Dimension>('model')
   const [metric, setMetric] = useState<Metric>('tokens')
-  const [sourceSummary, setSourceSummary] = useState<SourceSummaryRow[]>([])
-  const [deviceRows, setDeviceRows] = useState<DeviceDailyRow[]>([])
+  // null while loading, so another range's rows never show as current.
+  const [sourceSummary, setSourceSummary] = useState<SourceSummaryRow[] | null>(null)
+  const [deviceRows, setDeviceRows] = useState<DeviceDailyRow[] | null>(null)
+  const [readError, setReadError] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  // A refresh of the same view keeps the rows (dimmed by the page); another view clears them.
+  const view = filterParams.view ?? filterParams
+  const sourceViewRef = useRef<unknown>(view)
+  const deviceViewRef = useRef<unknown>(view)
   const tzOffset = getTimezoneOffset(resolveTimezone(useApp().timezone))
 
   // Fetch source summary data when source dimension is selected
   useEffect(() => {
     if (dimension !== 'source') return
+    if (sourceViewRef.current !== view) { sourceViewRef.current = view; setSourceSummary(null) }
     const controller = new AbortController()
     async function fetchSourceSummary() {
       try {
@@ -76,21 +92,24 @@ export function TopUsageChart({
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
 
         const res = await fetch(url.toString(), { signal: controller.signal })
-        if (res.ok) {
-          setSourceSummary(await res.json())
-        }
+        if (!res.ok) throw new Error(String(res.status))
+        const rows = await res.json()
+        if (!controller.signal.aborted) setSourceSummary(rows)
       } catch {
-        // Ignore abort errors
+        if (!controller.signal.aborted) setReadError(true)
       }
     }
     fetchSourceSummary()
-    return () => controller.abort()
-  }, [dimension, filterParams])
+    return () => {
+      controller.abort()
+      setReadError(false)
+    }
+  }, [dimension, filterParams, attempt, view])
 
   useEffect(() => {
     if (dimension !== 'device') return
+    if (deviceViewRef.current !== view) { deviceViewRef.current = view; setDeviceRows(null) }
     const controller = new AbortController()
-    setDeviceRows([])
     async function fetchDeviceRows() {
       try {
         const url = new URL('/usage/daily-by-dimension', window.location.origin)
@@ -103,22 +122,24 @@ export function TopUsageChart({
         url.searchParams.set('tz_offset', tzOffset)
 
         const res = await fetch(url.toString(), { signal: controller.signal })
-        if (res.ok) {
-          const rows = await res.json()
-          if (!controller.signal.aborted) setDeviceRows(rows)
-        }
+        if (!res.ok) throw new Error(String(res.status))
+        const rows = await res.json()
+        if (!controller.signal.aborted) setDeviceRows(rows)
       } catch {
-        // Ignore abort errors
+        if (!controller.signal.aborted) setReadError(true)
       }
     }
     fetchDeviceRows()
-    return () => controller.abort()
-  }, [dimension, filterParams, tzOffset])
+    return () => {
+      controller.abort()
+      setReadError(false)
+    }
+  }, [dimension, filterParams, tzOffset, attempt, view])
 
   const items: BarItem[] = useMemo(() => {
     if (dimension === 'model') {
       const map = new Map<string, { tokens: number; completion: number; prompt: number; cached: number; cacheCreation: number; latency: number; cost: number; priceWeight: number; priceTokens: number; successful: number; total: number }>()
-      for (const s of summary) {
+      for (const s of summaryPending ? [] : summary) {
         const existing = map.get(s.model) || { tokens: 0, completion: 0, prompt: 0, cached: 0, cacheCreation: 0, latency: 0, cost: 0, priceWeight: 0, priceTokens: 0, successful: 0, total: 0 }
         const tokens = s.total_tokens ?? 0
         existing.tokens += tokens
@@ -160,7 +181,7 @@ export function TopUsageChart({
 
     if (dimension === 'provider') {
       const map = new Map<string, { tokens: number; completion: number; prompt: number; cached: number; cacheCreation: number; latency: number; cost: number; successful: number; total: number }>()
-      for (const s of summary) {
+      for (const s of summaryPending ? [] : summary) {
         const existing = map.get(s.provider) || { tokens: 0, completion: 0, prompt: 0, cached: 0, cacheCreation: 0, latency: 0, cost: 0, successful: 0, total: 0 }
         existing.tokens += s.total_tokens ?? 0
         existing.completion += s.completion_tokens ?? 0
@@ -193,7 +214,7 @@ export function TopUsageChart({
 
     if (dimension === 'device') {
       const map = new Map<string, { name: string; tokens: number; completion: number; prompt: number; cached: number; cacheCreation: number; latency: number; cost: number; successful: number; total: number }>()
-      for (const r of deviceRows) {
+      for (const r of deviceRows ?? []) {
         const key = r.dimension ?? 'unknown'
         const existing = map.get(key) || { name: r.dimension_name ?? t('Unknown'), tokens: 0, completion: 0, prompt: 0, cached: 0, cacheCreation: 0, latency: 0, cost: 0, successful: 0, total: 0 }
         existing.tokens += r.total_tokens ?? 0
@@ -227,7 +248,7 @@ export function TopUsageChart({
     }
 
     // source dimension
-    return sourceSummary.map(row => {
+    return (sourceSummary ?? []).map(row => {
       const name = row.client_source || 'unknown'
       const tokens = row.total_tokens ?? 0
       const cost = row.total_cost_usd ?? 0
@@ -253,7 +274,7 @@ export function TopUsageChart({
         failed: row.failed_requests ?? 0,
       }
     })
-  }, [summary, dimension, theme, sourceSummary, deviceRows])
+  }, [summary, summaryPending, dimension, theme, sourceSummary, deviceRows])
 
   const dimensionLabel = dimension === 'model' ? t('Models') : dimension === 'provider' ? t('Providers') : dimension === 'device' ? t('Devices') : t('Sources')
 
@@ -263,6 +284,9 @@ export function TopUsageChart({
       items={items}
       mono={dimension === 'model'}
       metric={metric}
+      status={readError || (summaryPending && (dimension === 'model' || dimension === 'provider')) || (dimension === 'source' && sourceSummary === null) || (dimension === 'device' && deviceRows === null)
+        ? <ReadState error={readError ? t('Failed to fetch dashboard data') : null} onRetry={() => setAttempt(a => a + 1)} />
+        : undefined}
     >
       <div className="top-list-controls">
         <div className="tab-toggle compact">

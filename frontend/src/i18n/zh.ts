@@ -332,8 +332,6 @@ export const zh: Record<string, string> = {
   'Google sign-in failed. Please try again.': 'Google 登录失败，请重试。',
   'Sign out': '退出登录',
   'Devices': '设备',
-  'Installed machines. Revoking a machine stops tracking immediately.': '已安装的设备。撤销设备后会立即停止追踪。',
-  'Browsers signed in to this account. A session idle for 30 days expires.': '已登录此账号的浏览器。闲置 30 天的会话会过期。',
   'Machine': '设备',
   'Installed version': '已安装版本',
   'Authorized': '已授权',
@@ -415,5 +413,4 @@ export const zh: Record<string, string> = {
   'Spend and token usage across all agents.': '所有代理的费用与 Token 用量。',
   'Every agent session with its requests and cost.': '每个代理会话及其请求与费用。',
   'Individual model requests, newest first.': '逐条模型请求，最新在前。',
-  'Services, pricing and devices.': '服务、定价与设备。',
 }

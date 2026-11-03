@@ -1,7 +1,6 @@
 import { Fragment, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { PricingPage } from './PricingPage'
-import { UserAvatar } from '../components/UserAvatar'
 import { useApp } from '../contexts/AppContext'
 import { useDevices } from '../hooks/useDevices'
 import { useDeviceStatuses } from '../hooks/useDeviceStatuses'
@@ -23,9 +22,7 @@ export function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const section = searchParams.get('section')
   const activeSection = section && ['pricing', 'services', 'devices'].includes(section) ? section : 'services'
-  const {
-    auth, showToast, signOut,
-  } = useApp()
+  const { showToast } = useApp()
   const versionData = useVersion()
   const authDevicesActive = activeSection === 'devices'
   const { devices, webSessions, refresh: refreshDevices } = useDevices(authDevicesActive)
@@ -56,7 +53,7 @@ export function SettingsPage() {
 
   return (
     <div className="settings-page">
-      <PageHeader title="Settings" description="Services, pricing and devices." />
+      <PageHeader title="Settings" />
       <div className="tab-toggle settings-sections">
         {[
           { id: 'pricing', label: t('Pricing') },
@@ -108,24 +105,10 @@ export function SettingsPage() {
       {activeSection === 'devices' && (
         <>
         <div className="panel">
-            <div className="panel-tabs" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div className="panel-tabs">
               <div className="tab active">{t('Machines')}</div>
-              {auth.user && (auth.provider === 'google' || webSessions?.some(session => session.current)) && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <UserAvatar user={auth.user} />
-                  <span className="user-email" title={auth.user.email}>
-                    {auth.user.name || auth.user.email}
-                  </span>
-                  <button className="btn-danger" onClick={() => void signOut()}>
-                    {t('Sign out')}
-                  </button>
-                </div>
-              )}
             </div>
             <div className="panel-body" style={{ padding: '0' }}>
-              <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                {t('Installed machines. Revoking a machine stops tracking immediately.')}
-              </div>
               <table className="table">
                 <thead>
                   <tr>
@@ -208,9 +191,6 @@ export function SettingsPage() {
               <div className="tab active">{t('Web sessions')}</div>
             </div>
             <div className="panel-body" style={{ padding: '0' }}>
-              <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                {t('Browsers signed in to this account. A session idle for 30 days expires.')}
-              </div>
               <table className="table">
                 <thead>
                   <tr>

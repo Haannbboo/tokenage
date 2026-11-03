@@ -5,13 +5,13 @@ import type { DateRangeOption } from '../types'
 import { Icon } from './Icon'
 
 /** Breadcrumb, title and description on the left; the page's own filters on the right. */
-export function PageHeader({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
+export function PageHeader({ title, description, children }: { title: string; description?: string; children?: ReactNode }) {
   return (
     <header className="page-header">
       <div className="page-header-text">
         <div className="crumb">tokenage › <b>{t(title)}</b></div>
         <h1>{t(title)}</h1>
-        <p>{t(description)}</p>
+        {description && <p>{t(description)}</p>}
       </div>
       {children && <div className="page-filters">{children}</div>}
     </header>

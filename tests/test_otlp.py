@@ -529,7 +529,7 @@ def test_extract_codex_fields_basic(otlp_module):
             "output_token_count": 100,
             "cached_token_count": 50,
             "reasoning_token_count": 30,
-            "tool_token_count": 10,
+            "tool_token_count": 300,
             "duration_ms": 800,
             "http.response.status_code": 200,
             "model": "o3",
@@ -552,7 +552,8 @@ def test_extract_codex_fields_basic(otlp_module):
     assert fields["completion_tokens"] == 100
     assert fields["cached_tokens"] == 50
     assert fields["reasoning_tokens"] == 30
-    assert fields["tool_tokens"] == 10
+    assert fields["tool_tokens"] is None
+    assert fields["total_tokens"] == 300
     assert fields["latency_ms"] == 800
     assert fields["ttft_ms"] == 200
     assert fields["client_source"] == "codex"
@@ -1000,11 +1001,12 @@ def test_parse_codex_record_uses_prompt_length_from_prior_prompt_event(
                 "event.kind": "response.completed",
                 "conversation.id": "conv-1",
                 "model": "gpt-5.4",
-                "input_token_count": 500,
-                "output_token_count": 100,
-                "cached_token_count": 10,
-                "reasoning_token_count": 20,
-                "tool_token_count": 5,
+                "input_token_count": 1000,
+                "output_token_count": 200,
+                "cached_token_count": 300,
+                "reasoning_token_count": 50,
+                "tool_token_count": 1200,
+                "cache_write_token_count": 100,
                 "duration_ms": 2000,
             }
         ),
@@ -1020,6 +1022,13 @@ def test_parse_codex_record_uses_prompt_length_from_prior_prompt_event(
     )
 
     assert captured["usage"].prompt_length == 88
+    assert captured["usage"].tool_tokens is None
+    assert captured["usage"].prompt_tokens == 1000
+    assert captured["usage"].completion_tokens == 200
+    assert captured["usage"].cached_tokens == 300
+    assert captured["usage"].reasoning_tokens == 50
+    assert captured["usage"].total_tokens == 1200
+    assert captured["usage"].cache_creation_tokens is None
     assert captured["usage"].client_source == "codex"
     assert captured["usage"].session_id == "conv-1"
     assert captured["usage"].status is None

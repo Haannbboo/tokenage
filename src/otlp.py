@@ -649,7 +649,6 @@ def _extract_codex_fields(
     output_tokens = _attr(attrs, "output_token_count")
     cached_tokens = _attr(attrs, "cached_token_count")
     reasoning_tokens = _attr(attrs, "reasoning_token_count")
-    tool_tokens = _attr(attrs, "tool_token_count")
     latency_ms = _optional_int_attr(attrs, "duration_ms")
     status = _optional_int_attr(attrs, "http.response.status_code")
     # Codex >=0.157 reports time-to-first-token directly on response.completed.
@@ -699,7 +698,8 @@ def _extract_codex_fields(
         "reasoning_tokens": int(reasoning_tokens)
         if reasoning_tokens is not None
         else None,
-        "tool_tokens": int(tool_tokens) if tool_tokens is not None else None,
+        # Codex tool_token_count is total usage, not a separate tool count.
+        "tool_tokens": None,
         "total_tokens": total_tokens,
         "latency_ms": latency_ms,
         "ttft_ms": ttft_ms,

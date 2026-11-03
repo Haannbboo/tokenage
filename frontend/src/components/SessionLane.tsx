@@ -35,10 +35,11 @@ export function laneLayout(rows: UsageRow[], width = 1000) {
   return { ...lane, marks, ticks, width: actualWidth }
 }
 function axisTime(ms: number, tz?: string) { return new Intl.DateTimeFormat(undefined, { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(ms)) }
-export function SessionLane({ rows, selected, hovered, onHover, onSelect, tz }: { rows: UsageRow[]; selected: string | null; hovered?: string | null; onHover?: (id: string | null) => void; onSelect: (id: string) => void; tz?: string }) {
+export function SessionLane({ rows, selected, hovered, onHover, onSelect, tz, colors }: { rows: UsageRow[]; selected: string | null; hovered?: string | null; onHover?: (id: string | null) => void; onSelect: (id: string) => void; tz?: string; /** Shared with the context chart; may hold models outside these rows. */ colors?: Map<string, string> }) {
   const layout = useMemo(() => laneLayout(rows), [rows])
-  const modelColors = useMemo(() => distinctColors([...new Set(rows.map(row => row.model))].sort(), modelColor), [rows])
-  return <div><div className="session-lane-heading"><span>{t('Timeline (latest {n} requests)').replace('{n}', String(rows.length))}</span></div><div className="session-model-legend">{[...modelColors].map(([model, color]) => <span key={model}><i style={{ background: color }} />{model}</span>)}</div>
+  const models = useMemo(() => [...new Set(rows.map(row => row.model))].sort(), [rows])
+  const modelColors = useMemo(() => colors ?? distinctColors(models, modelColor), [colors, models])
+  return <div><div className="session-lane-heading"><span>{t('Timeline (latest {n} requests)').replace('{n}', String(rows.length))}</span></div><div className="session-model-legend">{models.map(model => <span key={model}><i style={{ background: modelColors.get(model) }} />{model}</span>)}</div>
   <div className="session-lane"><div className={`session-lane-track${hovered ? ' has-hover' : ''}`}>
     {layout.marks.map(({ row, px, pxWidth }) => <span key={row.id} className="session-mark-wrap" style={{ left: `${px / layout.width * 100}%`, width: `${pxWidth / layout.width * 100}%` }}>
       <button className={`session-mark${selected === row.id || hovered === row.id ? ' selected' : ''}${(row.status ?? 200) >= 400 ? ' error' : ''}`} style={{ background: (row.status ?? 200) >= 400 ? 'var(--badge-error-text)' : modelColors.get(row.model) }} onMouseEnter={() => onHover?.(row.id)} onMouseLeave={() => onHover?.(null)} onFocus={() => onHover?.(row.id)} onBlur={() => onHover?.(null)} onClick={() => onSelect(row.id)} aria-label={`${formatTime(row.ts, tz)} ${row.model} ${row.status ?? 200}`} />

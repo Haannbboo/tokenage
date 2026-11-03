@@ -150,10 +150,12 @@ export function HorizontalBarChart({
   metric: Metric
   children?: React.ReactNode
 }) {
-  // The row shown as active: hovered, focused or tapped. x is the pointer, null when focused.
-  // Tracked by row key (name, plus which duplicate of it), so a re-sort keeps
-  // the tooltip on the same item.
-  const [active, setActive] = useState<{ key: string; x: number | null } | null>(null)
+  // The row shown as active: hovered, focused or tapped. Tracked by row key
+  // (name, plus which duplicate of it), so a re-sort keeps the tooltip on the same item.
+  const [active, setActive] = useState<{ key: string } | null>(null)
+  // The latest pointer x, null when focused: a ref, so moves neither re-render
+  // nor re-subscribe the scroll follower.
+  const pointerX = useRef<number | null>(null)
   const tipRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef(new Map<string, HTMLLIElement>())
   const tipId = useId()
@@ -175,7 +177,7 @@ export function HorizontalBarChart({
 
   useLayoutEffect(() => {
     const row = active && rowRefs.current.get(active.key)
-    if (tipRef.current && row) placeTip(tipRef.current, row, active.x)
+    if (tipRef.current && row) placeTip(tipRef.current, row, pointerX.current)
   })
 
   // Follow the row on scroll; hide once it leaves the list or the viewport.
@@ -187,7 +189,7 @@ export function HorizontalBarChart({
       const r = row.getBoundingClientRect()
       const list = row.parentElement!.getBoundingClientRect()
       if (r.bottom <= list.top || r.top >= list.bottom || r.bottom <= 0 || r.top >= innerHeight) setActive(null)
-      else placeTip(tipRef.current, row, active.x)
+      else placeTip(tipRef.current, row, pointerX.current)
     }
     window.addEventListener('scroll', follow, true)
     return () => window.removeEventListener('scroll', follow, true)
@@ -208,7 +210,8 @@ export function HorizontalBarChart({
         ) : (
           <ol className={`rank-list${activeItem ? ' has-active' : ''}`} onMouseLeave={() => {
             const focused = [...rowRefs.current].find(([, row]) => row === document.activeElement)
-            setActive(focused ? { key: focused[0], x: null } : null)
+            pointerX.current = null
+            setActive(focused ? { key: focused[0] } : null)
           }}>
           {sorted.map((s, index) => {
             const currentVal = metricValue(s, metric)
@@ -224,12 +227,12 @@ export function HorizontalBarChart({
                 className={`rank-row${toolBadges ? ' rank-row-tools' : ''}${isActive ? ' is-active' : ''}`}
                 tabIndex={0}
                 aria-describedby={isActive ? tipId : undefined}
-                onMouseEnter={(e) => setActive({ key: rowKey, x: e.clientX })}
-                onMouseMove={(e) => { if (isActive && tipRef.current) placeTip(tipRef.current, e.currentTarget, e.clientX) }}
-                onFocus={() => setActive((cur) => cur?.key === rowKey ? cur : { key: rowKey, x: null })}
+                onMouseEnter={(e) => { pointerX.current = e.clientX; setActive({ key: rowKey }) }}
+                onMouseMove={(e) => { pointerX.current = e.clientX; if (isActive && tipRef.current) placeTip(tipRef.current, e.currentTarget, e.clientX) }}
+                onFocus={() => setActive((cur) => { if (cur?.key === rowKey) return cur; pointerX.current = null; return { key: rowKey } })}
                 // A window blur (tab switch) keeps the row; focus moving elsewhere in the page hides it.
                 onBlur={() => { if (document.hasFocus()) setActive((cur) => cur?.key === rowKey ? null : cur) }}
-                onClick={(e) => setActive({ key: rowKey, x: e.clientX })}
+                onClick={(e) => { pointerX.current = e.clientX; setActive({ key: rowKey }) }}
                 onKeyDown={(e) => { if (e.key === 'Escape') setActive(null) }}
               >
                 <span className="rank-n">{index + 1}</span>

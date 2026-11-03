@@ -63,8 +63,9 @@ function ThemeLangButtons() {
 
 function AccountMenu({ onNavigate }: { onNavigate: () => void }) {
   const { auth, signOut } = useApp()
-  // Local-auth browsers signed in by a login link have a current web session to end.
-  const { webSessions } = useDevices(!!auth.user && auth.provider !== 'google')
+  // Local-auth browsers signed in by a login link have a current web session to
+  // end. If the list fails to load, offer Sign out rather than hide it.
+  const { webSessions, error: devicesError } = useDevices(!!auth.user && auth.provider !== 'google')
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -96,7 +97,7 @@ function AccountMenu({ onNavigate }: { onNavigate: () => void }) {
         <div id="account-menu" className="menu account-menu">
           <div className="menu-meta"><b>{name}</b>{user.email !== name && <span>{user.email}</span>}</div>
           <Link className="menu-item" to="/settings" onClick={() => { close(); onNavigate() }}><Icon name="settings" />{t('Settings')}</Link>
-          {(auth.provider === 'google' || webSessions?.some(session => session.current)) && (
+          {(auth.provider === 'google' || devicesError || webSessions?.some(session => session.current)) && (
             <button type="button" className="menu-item" onClick={() => void signOut()}><Icon name="signOut" />{t('Sign out')}</button>
           )}
         </div>

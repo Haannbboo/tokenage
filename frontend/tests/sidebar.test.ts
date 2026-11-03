@@ -4,11 +4,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import App from '../src/App'
 
-function stubApi(provider = 'google', webSessions: { current: boolean }[] = []) {
+function stubApi(provider = 'google', webSessions: { current: boolean }[] | 'error' | 'pending' = []) {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} })
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const path = new URL(String(input), window.location.origin).pathname
+    if (path === '/auth/devices' && webSessions === 'error') return { ok: false, status: 500, json: async () => ({}) } as Response
+    if (path === '/auth/devices' && webSessions === 'pending') return new Promise<Response>(() => {})
     const data = path === '/auth/me' ? { provider, user: { id: 'u', email: 'a@example.com', name: 'Ada' } }
       : path === '/auth/devices' ? { devices: [], web_sessions: webSessions }
       : path === '/version' ? { name: 'tokenage', version: '9.9.9' }
@@ -103,6 +105,18 @@ it('hides Sign out for the local owner without a web session', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Account: Ada' }))
   await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith('/auth/devices'))).toBe(true))
   expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull()
+})
+
+it('offers Sign out to local auth when the web session list fails, not while it loads', async () => {
+  stubApi('local', 'pending')
+  await open('/dashboard')
+  fireEvent.click(screen.getByRole('button', { name: 'Account: Ada' }))
+  expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull()
+  cleanup()
+  stubApi('local', 'error')
+  await open('/dashboard')
+  fireEvent.click(screen.getByRole('button', { name: 'Account: Ada' }))
+  expect(await screen.findByRole('button', { name: 'Sign out' })).toBeTruthy()
 })
 
 it('Escape closes only the topmost layer: the account menu, then the drawer', async () => {

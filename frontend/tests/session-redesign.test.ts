@@ -161,3 +161,19 @@ it('shades only the part of the chart the timeline and list cover', () => {
   view.rerender(createElement(SessionContextChart, { ...props, linkedRange: null }))
   expect(view.container.querySelector('.session-context-linked')).toBeNull()
 })
+
+it('updates the chart tooltip cost after a cost recalculation', async () => {
+  const context = { points: ['a', 'b'].map((id, i) => ({ request: i + 1, id, ts: 1_000_000 * (i + 1), model: 'm', cost_usd: 0.01, latency_ms: null, context_tokens: (i + 1) * 1000 })), peak_tokens: 2000, request_count: 2 }
+  const rows = ['b', 'a'].map((id, i) => ({ id, ts: 1_000_000 * (2 - i), model: 'm', status: 200, total_cost_usd: 0.01 }))
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => ({ ok: true, json: async () =>
+    init?.method === 'POST' ? { new_costs: { input_cost_usd: 0.5, output_cost_usd: 0.25, total_cost_usd: 0.75 } }
+      : url.endsWith('/context') ? context : rows })))
+  const view = render(createElement(SessionDetail, { session: { session_id: 's', duration_s: 1, request_count: 2, total_tokens: 0, total_cost_usd: 0 } as SessionSummary, onNavigateToLogs: vi.fn() }))
+  await waitFor(() => expect(document.getElementById('session-request-b')).toBeTruthy())
+  const svg = view.container.querySelector<SVGSVGElement>('.session-context svg')!
+  svg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 200, right: 800, bottom: 200, x: 0, y: 0, toJSON() {} })
+  fireEvent.click(document.getElementById('session-request-b')!.querySelector('button[aria-label="Click to recalculate"]')!)
+  await waitFor(() => expect(document.getElementById('session-request-b')!.textContent).toContain('$0.75'))
+  fireEvent.mouseMove(svg, { clientX: 790 })
+  expect(view.container.querySelector('.chart-tip')!.textContent).toContain('$0.75')
+})

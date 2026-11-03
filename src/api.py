@@ -176,7 +176,7 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             # usage_read_cors middleware can answer them; OPTIONS never
             # reaches route handlers with data.
             return await call_next(request)
-        if _is_public_path(request.url.path):
+        if _is_public_path(request.url.path) or _serves_spa_page(request):
             return await call_next(request)
         # Token lookup hits the database: keep it off the event loop, which the
         # mounted OTLP collector shares.
@@ -1104,8 +1104,37 @@ async def hosted_installer():
 
 # Serve built frontend if available (must come after all API routes)
 _frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-if _frontend_dist.is_dir():
-    _index_html = _frontend_dist / "index.html"
+_index_html = _frontend_dist / "index.html"
+_SPA_SERVED = _frontend_dist.is_dir()
+
+# SPA pages whose path is also an API route. The browser opening the page
+# gets index.html; fetches and CLI calls to the same path still get the API.
+_SPA_API_SHARED_PAGES = ("/sessions",)
+
+
+def _is_page_navigation(request: Request) -> bool:
+    """A browser navigation: Sec-Fetch-Mode, or Accept that leads with HTML."""
+    if request.headers.get("sec-fetch-mode") == "navigate":
+        return True
+    accept = request.headers.get("accept", "")
+    return accept.split(",", 1)[0].split(";", 1)[0].strip().lower() == "text/html"
+
+
+def _serves_spa_page(request: Request) -> bool:
+    """Whether the SPA catch-all serves index.html for a shared page path.
+
+    The auth gate lets these through: index.html is public, and the request
+    never reaches the API route it shares a path with."""
+    return (
+        _SPA_SERVED
+        and request.method == "GET"
+        and request.url.path in _SPA_API_SHARED_PAGES
+        and _is_page_navigation(request)
+        and _index_html.is_file()
+    )
+
+
+if _SPA_SERVED:
 
     class SPACatchAllMiddleware(BaseHTTPMiddleware):
         """Rewrite non-API, non-file requests to /index.html for SPA routing."""
@@ -1114,7 +1143,8 @@ if _frontend_dist.is_dir():
             path = request.url.path
             requested = path.lstrip("/")
             serving_index = path == "/index.html"
-            if (
+            shared_page = path in _SPA_API_SHARED_PAGES
+            if _serves_spa_page(request) or (
                 request.method in ("GET", "HEAD")
                 and _index_html.is_file()
                 and not any(path.startswith(p) for p in _SPA_API_PREFIXES)
@@ -1124,6 +1154,13 @@ if _frontend_dist.is_dir():
                 request.scope["path"] = "/index.html"
                 serving_index = True
             response = await call_next(request)
+            if shared_page:
+                # Same URL, page or JSON by request headers: keep caches apart.
+                response.headers["Vary"] = ", ".join(
+                    v
+                    for v in (response.headers.get("Vary"), "Accept, Sec-Fetch-Mode")
+                    if v
+                )
             if serving_index:
                 # index.html references content-hashed asset filenames that
                 # change every build; it must always revalidate (cheap, via

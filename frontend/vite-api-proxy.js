@@ -1,7 +1,19 @@
 import { resolveApiUrl } from './vite-api-url.js'
 
-export function shouldProxyApiRequest(requestUrl) {
+// SPA pages that share their path with an API route (mirrors
+// _SPA_API_SHARED_PAGES in src/api.py): a browser navigation gets the page.
+const SHARED_PAGES = new Set(['/sessions'])
+
+export function isPageNavigation(method = 'GET', headers = {}) {
+  if (method !== 'GET') return false
+  if (headers['sec-fetch-mode'] === 'navigate') return true
+  const accept = String(headers.accept ?? '')
+  return accept.split(',')[0].split(';')[0].trim().toLowerCase() === 'text/html'
+}
+
+export function shouldProxyApiRequest(requestUrl, { method, headers } = {}) {
   const pathname = new URL(requestUrl, 'http://localhost').pathname
+  if (SHARED_PAGES.has(pathname) && headers && isPageNavigation(method, headers)) return false
   return (
     pathname === '/pricing' ||
     pathname.startsWith('/pricing/') ||
@@ -70,7 +82,7 @@ function buildForwardHeaders(headers, remoteAddress) {
 
 export function createApiProxyMiddleware({ env, trackerConfigPath } = {}) {
   return async function apiProxyMiddleware(req, res, next) {
-    if (!req.url || !shouldProxyApiRequest(req.url)) {
+    if (!req.url || !shouldProxyApiRequest(req.url, { method: req.method, headers: req.headers })) {
       next()
       return
     }

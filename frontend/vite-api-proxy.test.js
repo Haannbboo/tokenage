@@ -47,6 +47,18 @@ test('shouldProxyApiRequest matches config, usage and session routes', () => {
   assert.equal(shouldProxyApiRequest('/assets/index.js'), false)
 })
 
+test('a browser navigation to /sessions gets the page, its API calls do not', () => {
+  const navigate = { method: 'GET', headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html,*/*;q=0.8' } }
+  assert.equal(shouldProxyApiRequest('/sessions', navigate), false)
+  assert.equal(shouldProxyApiRequest('/sessions?session=abc', navigate), false)
+  assert.equal(shouldProxyApiRequest('/sessions', { method: 'GET', headers: { accept: 'text/html' } }), false)
+  assert.equal(shouldProxyApiRequest('/sessions', { method: 'GET', headers: { 'sec-fetch-mode': 'cors', accept: '*/*' } }), true)
+  assert.equal(shouldProxyApiRequest('/sessions', { method: 'GET', headers: { accept: 'application/json' } }), true)
+  assert.equal(shouldProxyApiRequest('/sessions', { method: 'POST', headers: navigate.headers }), true)
+  assert.equal(shouldProxyApiRequest('/sessions/summary', navigate), true)
+  assert.equal(shouldProxyApiRequest('/usage', navigate), true)
+})
+
 test('resolveProxyRequestUrl re-reads tracker config for each request', () => {
   const root = mkdtempSync(join(tmpdir(), 'tokenage-vite-api-proxy-'))
   const configPath = join(root, 'config.yaml')

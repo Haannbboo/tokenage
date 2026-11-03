@@ -849,6 +849,63 @@ def test_spa_deep_links_serve_index_html(api_module):
         assert "text/html" in response.headers.get("content-type", "")
 
 
+_NAVIGATION = {"sec-fetch-mode": "navigate", "accept": "text/html,*/*;q=0.8"}
+
+
+def _require_frontend_dist(api_module):
+    if not api_module._index_html.is_file() or not api_module._SPA_SERVED:
+        pytest.skip("frontend/dist/index.html not built")
+
+
+def test_sessions_navigation_serves_the_page(api_module, monkeypatch):
+    """/sessions is a page and an API route: a browser opening it gets the SPA,
+    signed in or not, like any other page."""
+    _require_frontend_dist(api_module)
+    monkeypatch.setitem(
+        api_module.CONFIG, "auth", {"provider": "google", "allowlist": []}
+    )
+    client = TestClient(api_module.app)
+
+    for path, headers in (
+        ("/sessions", _NAVIGATION),
+        ("/sessions?session=abc", _NAVIGATION),
+        ("/sessions", {"accept": "text/html"}),  # no Fetch Metadata
+    ):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200, path
+        assert "text/html" in response.headers["content-type"]
+        assert "Sec-Fetch-Mode" in response.headers["vary"]
+
+
+def test_sessions_api_calls_still_get_json(api_module, monkeypatch):
+    """Fetches and CLI calls to /sessions reach the API and its auth gate."""
+    monkeypatch.setattr(api_module, "fetch_sessions", lambda **kw: [])
+    monkeypatch.setattr(api_module, "count_sessions", lambda **kw: 0)
+    client = TestClient(api_module.app)
+
+    for headers in (
+        {},
+        {"accept": "*/*", "sec-fetch-mode": "cors"},
+        {"accept": "application/json, text/html"},
+    ):
+        response = client.get("/sessions", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"sessions": [], "total": 0}
+
+    # Only GET navigations to exactly /sessions become the page.
+    for method, path in (("POST", "/sessions"), ("GET", "/sessions/summary")):
+        response = client.request(method, path, headers=_NAVIGATION)
+        assert "text/html" not in response.headers.get("content-type", "")
+
+    monkeypatch.setitem(
+        api_module.CONFIG, "auth", {"provider": "google", "allowlist": []}
+    )
+    for headers in ({}, {"accept": "application/json"}):
+        response = client.get("/sessions", headers=headers)
+        assert response.status_code == 401
+        assert response.json() == api_module.AUTH_GATE_LOGIN_REQUIRED
+
+
 def test_spa_deep_links_do_not_hijack_api_routes(api_module, monkeypatch):
     """SPA middleware must not rewrite API routes to index.html."""
     monkeypatch.setattr(api_module, "fetch_recent_usage", lambda **kwargs: [])

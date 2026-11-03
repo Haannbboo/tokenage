@@ -613,8 +613,9 @@ img[src^="/models/"] { filter: saturate(0.7); }
 .top-list { flex: 1; height: 100%; gap: 12px; }
 .top-list-controls { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 .tab-toggle.compact .tab-toggle-btn { padding: 2px 8px; font-size: 11px; }
-.rank-list { display: flex; flex-direction: column; gap: 12px; max-height: 320px; margin: 0; padding: 2px 0 0; overflow-y: auto; list-style: none; }
-.rank-row { display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 5px; font-size: 12px; }
+/* Rows bleed 8px into the card padding so the hover fill has room; 4px pad + 4px gap keeps the 12px rhythm. */
+.rank-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; margin: 0 -8px; padding: 2px 0; overflow-y: auto; list-style: none; }
+.rank-row { display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 5px; padding: 4px 8px; border-radius: var(--r-sm); font-size: 12px; cursor: default; transition: background-color 140ms ease-out; }
 .rank-row-tools { grid-template-columns: 14px minmax(0, 1fr) auto; }
 .rank-row-tools .rank-bar { grid-column: 2 / -1; }
 .rank-n { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
@@ -626,8 +627,43 @@ img[src^="/models/"] { filter: saturate(0.7); }
 .rank-value { display: inline-flex; align-items: baseline; gap: 8px; color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rank-value small { min-width: 38px; text-align: right; }
 .rank-bar { grid-column: 3 / -1; height: 4px; border-radius: 2px; background: var(--surface-sunken); overflow: hidden; }
-.rank-bar i { display: block; height: 100%; border-radius: 2px; transition: width 0.4s ease; }
-.rank-row:hover .rank-n { color: var(--text-primary); }
+.rank-bar i { display: block; height: 100%; border-radius: 2px; transition: width 0.4s ease, opacity 140ms ease-out; }
+/* Active row (hover, focus or tap): a light fill, its bar at full strength, the others recede. */
+.rank-row.is-active { background: var(--surface-sunken); }
+.rank-row.is-active .rank-n { color: var(--text-primary); }
+.rank-row.is-active .rank-bar { background: var(--border-color); }
+.rank-list.has-active .rank-row:not(.is-active) .rank-bar i { opacity: 0.4; }
+.rank-row:focus-visible { outline: 2px solid var(--color-green); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) {
+  .rank-row, .rank-bar i { transition: none; }
+}
+
+/* Request Logs Input/Output cells: the count, then cache/reasoning notes on the right. */
+.tok-cell { vertical-align: top; }
+.tok-split { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
+.tok-main { color: var(--text-secondary); font-weight: 600; }
+.tok-main small { margin-left: 4px; font-size: 10px; font-weight: 400; }
+.tok-notes { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; color: var(--text-secondary); font-size: 10px; font-weight: 500; white-space: nowrap; }
+.tok-cached { color: var(--color-green); }
+.tok-write { color: var(--color-yellow); }
+
+/* The one chart tooltip look: Top lists, trend, heatmap. Callers position it. */
+.chart-tip { z-index: 200; min-width: 168px; max-width: calc(100vw - 8px); box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: var(--r-md); background: var(--card-bg); color: var(--text-primary); box-shadow: var(--shadow-menu); font-size: 12px; line-height: 1.4; font-variant-numeric: tabular-nums; pointer-events: none; }
+.chart-tip-title { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 0 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border-color); font-weight: 600; font-size: 12px; }
+.chart-tip-title > .mono, .chart-tip-title > .entity-badge { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-tip-title > small { margin-left: auto; padding-left: 8px; color: var(--text-muted); font-weight: 400; font-size: 11px; }
+.chart-tip-row { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 3px; }
+.chart-tip-label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); white-space: nowrap; }
+.chart-tip-label > i { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+.chart-tip-value { text-align: right; white-space: nowrap; }
+.chart-tip-total { margin-bottom: 0; font-weight: 600; }
+.chart-tip-total .chart-tip-label { color: var(--text-primary); }
+.chart-tip-divider { margin: 6px 0; border-top: 1px solid var(--border-color); }
+.rank-tip { position: fixed; top: 0; left: 0; max-width: min(320px, calc(100vw - 8px)); animation: chart-tip-in 140ms ease-out; }
+.rank-tip.chart-tip-below { animation-name: chart-tip-in-below; }
+@keyframes chart-tip-in { from { opacity: 0; translate: 0 3px; } }
+@keyframes chart-tip-in-below { from { opacity: 0; translate: 0 -3px; } }
+@media (prefers-reduced-motion: reduce) { .rank-tip { animation: none; } }
 
 .sessions-table {
   table-layout: fixed;

@@ -5,7 +5,7 @@ import { fillGaps, formatCost, formatModelName, formatNumber, value, resolveTime
 import { fillPeriodGaps } from '../periodGaps'
 import { describePeriod, periodLabelText } from '../periodLabels'
 import { useApp } from '../contexts/AppContext'
-import { ChartTooltip, TooltipRow, TooltipDivider } from './ChartTooltip'
+import { ChartTooltip, TooltipRow, TooltipDivider, TooltipTitle } from './ChartTooltip'
 import { TREND_NEUTRAL, trendSeriesColors } from './trendColors'
 import { sortTrendRows, trendTooltipX } from './trendTooltip'
 import { trendDotScale } from './trendScale'
@@ -269,9 +269,7 @@ export function TrendChart({
                   animation: 'trend-tooltip-in 120ms ease-out',
                 }}
               >
-                <div style={{ fontWeight: 600, marginBottom: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', fontSize: '13px' }}>
-                  {hoveredPeriodLabel ?? hoveredData.period}
-                </div>
+                <TooltipTitle>{hoveredPeriodLabel ?? hoveredData.period}</TooltipTitle>
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'minmax(0, 1fr) auto auto',

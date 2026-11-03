@@ -117,6 +117,12 @@ export const zh: Record<string, string> = {
   'Count': '次数',
   'Total time': '总耗时',
   'Avg time': '平均耗时',
+  'Share': '占比',
+  'Price': '单价',
+  'Hit rate': '命中率',
+  'Successful': '成功',
+  'Success rate': '成功率',
+  'Calls': '调用次数',
 
   // Chart messages
   'Failed to load model breakdown': '加载模型明细失败',

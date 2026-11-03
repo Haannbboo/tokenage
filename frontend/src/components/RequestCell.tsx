@@ -85,117 +85,40 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
         )
       case 'input':
         return (
-          <td style={{ verticalAlign: 'top' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <div style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>
+          <td className="tok-cell">
+            <div className="tok-split">
+              <div className="tok-main">
                 {formatNumber(row.prompt_tokens)}
-                <span style={{ fontSize: '10px', fontWeight: 400, marginLeft: '4px', color: 'var(--text-secondary)' }}>{t('tokens')}</span>
+                <small>{t('tokens')}</small>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+              <div className="tok-notes">
                 {value(row.cached_tokens) > 0 && (
-                  <div style={{ fontSize: '10px', color: 'var(--color-green)', fontWeight: 500 }}>
+                  <div className="tok-cached">
                     {/* cache_creation_tokens is disjoint from prompt_tokens (Anthropic semantics),
                         so it's added to the denominator for a true hit rate. */}
                     {t('Cache read')} {formatNumber(row.cached_tokens)} ({Math.round((value(row.cached_tokens) / ((value(row.prompt_tokens) + value(row.cache_creation_tokens)) || 1)) * 100)}%)
                   </div>
                 )}
                 {value(row.cache_creation_tokens) > 0 && (
-                  <div style={{ fontSize: '10px', color: 'var(--color-yellow)', fontWeight: 500 }}>
+                  <div className="tok-write">
                     {t('Cache write')} {formatNumber(row.cache_creation_tokens)}
                   </div>
                 )}
               </div>
             </div>
-            <div className="has-tooltip" style={{ width: '100%', borderBottom: 'none' }}>
-              {(() => {
-                const promptUncached = Math.max(0, value(row.prompt_tokens) - value(row.cached_tokens));
-                const cacheCreation = value(row.cache_creation_tokens);
-                // total_tokens includes cache_creation_tokens for Anthropic responses,
-                // so it's rendered as its own segment or the bar won't fill correctly.
-                const total = value(row.total_tokens) || 1;
-                return (
-                  <>
-                    <div style={{
-                      width: '100%',
-                      height: '3px',
-                      background: 'var(--progress-bg)',
-                      borderRadius: '2px',
-                      marginTop: '4px',
-                      overflow: 'hidden',
-                      border: '1px solid var(--border-color)',
-                      display: 'flex'
-                    }}>
-                      <div style={{ height: '100%', background: 'var(--color-green)', width: `${(value(row.cached_tokens) / total) * 100}%` }} />
-                      <div style={{ height: '100%', background: 'var(--chart-2)', width: `${(promptUncached / total) * 100}%`, opacity: 0.7 }} />
-                      {cacheCreation > 0 && (
-                        <div style={{ height: '100%', background: 'var(--color-yellow)', width: `${(cacheCreation / total) * 100}%` }} />
-                      )}
-                      <div style={{ height: '100%', background: 'var(--color-blue)', width: `${(value(row.completion_tokens) / total) * 100}%` }} />
-                    </div>
-                    <div className="tooltip-text">
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                          <span style={{ color: 'var(--color-green)' }}>&bull; {t('Cached')}:</span>
-                          <span style={{ fontWeight: 600 }}>{formatNumber(row.cached_tokens)}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                          <span style={{ color: 'var(--chart-2)' }}>&bull; {t('Input')}:</span>
-                          <span style={{ fontWeight: 600 }}>{formatNumber(promptUncached)}</span>
-                        </div>
-                        {cacheCreation > 0 && (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                            <span style={{ color: 'var(--color-yellow)' }}>&bull; {t('Cache write')}:</span>
-                            <span style={{ fontWeight: 600 }}>{formatNumber(cacheCreation)}</span>
-                          </div>
-                        )}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                          <span style={{ color: 'var(--color-blue)' }}>&bull; {t('Output')}:</span>
-                          <span style={{ fontWeight: 600 }}>{formatNumber(row.completion_tokens)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
           </td>
         )
       case 'output':
         return (
-          <td style={{ verticalAlign: 'top' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <td className="tok-cell">
+            <div className="tok-split">
               <div>{formatNumber(row.completion_tokens)}</div>
               {value(row.reasoning_tokens) > 0 && (
-                <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                <div className="tok-notes">
                   {t('Reasoning')} {formatNumber(row.reasoning_tokens)} ({Math.min(Math.round((value(row.reasoning_tokens) / (value(row.completion_tokens) || 1)) * 100), 100)}%)
                 </div>
               )}
             </div>
-            {value(row.reasoning_tokens) > 0 && (
-              <div
-                style={{
-                  width: '100%',
-                  height: '3px',
-                  background: 'var(--progress-bg)',
-                  borderRadius: '2px',
-                  marginTop: '4px',
-                  overflow: 'hidden',
-                  border: '1px solid var(--border-color)',
-                  display: 'flex'
-                }}
-              >
-                {value(row.reasoning_tokens) > 0 && (
-                  <div
-                    title={`Reasoning: ${formatNumber(row.reasoning_tokens)} tokens`}
-                    style={{
-                      width: `${Math.min((value(row.reasoning_tokens) / (value(row.completion_tokens) || 1)) * 100, 100)}%`,
-                      height: '100%',
-                      background: 'var(--chart-2)'
-                    }}
-                  />
-                )}
-              </div>
-            )}
           </td>
         )
       case 'cost':

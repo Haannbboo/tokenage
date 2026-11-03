@@ -3,6 +3,7 @@ import type { DailyUsage } from '../types'
 import { formatCost, formatNumber, value, resolveTimezone } from '../utils'
 import { useApp } from '../contexts/AppContext'
 import { t } from '../i18n/index.ts'
+import { ChartTooltip, TooltipTitle } from './ChartTooltip'
 
 export function DailyHeatmap({
   mode,
@@ -263,28 +264,17 @@ export function DailyHeatmap({
         }
 
         return (
-          <div style={{
+          <ChartTooltip style={{
             position: 'absolute',
             left: hoveredCell.x,
             top: hoveredCell.y - 8,
             transform: 'translate(-50%, -100%)',
-            backgroundColor: 'var(--card-bg)',
-            color: 'var(--text-primary)',
-            padding: '10px 14px',
-            borderRadius: 'var(--r-md)',
-            fontSize: '12px',
-            zIndex: 200,
-            pointerEvents: 'none',
-            boxShadow: 'var(--shadow-menu)',
             minWidth: '180px',
-            border: '1px solid var(--border-color)',
             whiteSpace: 'nowrap',
           }}>
-            <div style={{ fontWeight: 600, marginBottom: '6px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>
-              {dateLabel}
-            </div>
+            <TooltipTitle>{dateLabel}</TooltipTitle>
             {content}
-          </div>
+          </ChartTooltip>
         )
       })()}
     </div>

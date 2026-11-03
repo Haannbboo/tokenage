@@ -152,6 +152,9 @@ export function TopUsageChart({
           : v.tokens > 0 ? (v.cost / v.tokens) * 1_000_000 : null,
         successRate: v.total > 0 ? (v.successful / v.total) * 100 : 100,
         cacheHitRate: (v.prompt + v.cacheCreation) > 0 ? (v.cached / (v.prompt + v.cacheCreation)) * 100 : 0,
+        cacheWriteTokens: v.cacheCreation,
+        successful: v.successful,
+        failed: v.total - v.successful,
       }))
     }
 
@@ -182,6 +185,9 @@ export function TopUsageChart({
         throughput: netThroughput(v.completion, v.latency),
         successRate: v.total > 0 ? (v.successful / v.total) * 100 : 100,
         cacheHitRate: (v.prompt + v.cacheCreation) > 0 ? (v.cached / (v.prompt + v.cacheCreation)) * 100 : 0,
+        cacheWriteTokens: v.cacheCreation,
+        successful: v.successful,
+        failed: v.total - v.successful,
       }))
     }
 
@@ -214,6 +220,9 @@ export function TopUsageChart({
         pricePerMillion: v.tokens > 0 ? (v.cost / v.tokens) * 1_000_000 : null,
         successRate: v.total > 0 ? (v.successful / v.total) * 100 : 100,
         cacheHitRate: (v.prompt + v.cacheCreation) > 0 ? (v.cached / (v.prompt + v.cacheCreation)) * 100 : 0,
+        cacheWriteTokens: v.cacheCreation,
+        successful: v.successful,
+        failed: v.total - v.successful,
       }))
     }
 
@@ -239,6 +248,9 @@ export function TopUsageChart({
         pricePerMillion: tokens > 0 ? (cost / tokens) * 1_000_000 : null,
         successRate: total > 0 ? ((row.successful_requests ?? 0) / total) * 100 : 100,
         cacheHitRate: (prompt + cacheCreation) > 0 ? (cached / (prompt + cacheCreation)) * 100 : 0,
+        cacheWriteTokens: cacheCreation,
+        successful: row.successful_requests ?? 0,
+        failed: row.failed_requests ?? 0,
       }
     })
   }, [summary, dimension, theme, sourceSummary, deviceRows])

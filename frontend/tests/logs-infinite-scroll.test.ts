@@ -4,17 +4,18 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@t
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UsageRow } from '../src/types'
 import { useLogsData } from '../src/hooks/useLogsData'
+import { useSessionsData } from '../src/hooks/useSessionsData'
 import { useDashboardData } from '../src/hooks/useDashboardData'
 import { useRequestLogColumns } from '../src/hooks/useRequestLogColumns'
 import { SessionSelector } from '../src/components/SessionSelector'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { LogsPage } from '../src/pages/LogsPage'
 
 const logsPage = () => createElement(MemoryRouter, { initialEntries: ['/logs'] }, createElement(LogsPage))
 
 const app = vi.hoisted(() => ({
   refreshTrigger: 0, setError: vi.fn(), showToast: vi.fn(), requestUsageRefresh: vi.fn(),
-  activeFilter: null as { models?: string[]; provider?: string } | null, activeSource: null as string | null, activeDevice: null,
+  activeFilter: null as { models?: string[]; provider?: string } | null, activeSource: null as string | null, activeDevice: null as string | null,
   dateRange: 'all', timezone: 'UTC', setActiveFilter: vi.fn(), setActiveSource: vi.fn(),
   setActiveDevice: vi.fn(), setDateRange: vi.fn(),
 }))
@@ -499,4 +500,33 @@ it('sends the provider to logs, dashboard, heatmap and chart filters', async () 
     expect(filtered.every(url => url.searchParams.get('provider') === 'openai' && !url.searchParams.has('model'))).toBe(true)
     expect(result.current.dashboardFilterParams.provider).toBe('openai')
   } finally { app.activeFilter = null }
+})
+
+
+it('uses the session URL parameter for usage and removes it when cleared', async () => {
+  const { fetchMock } = mockHistory([])
+  const Location = () => createElement('output', { 'data-testid': 'location' }, useLocation().search)
+  render(createElement(MemoryRouter, { initialEntries: ['/logs?session=abc'] }, createElement(LogsPage), createElement(Location)))
+  await waitFor(() => expect(usageCalls(fetchMock).some(url => url.searchParams.get('session_id') === 'abc')).toBe(true))
+  fireEvent.click(screen.getByRole('button', { name: 'Clear session filter' }))
+  await waitFor(() => expect(usageCalls(fetchMock).at(-1)?.searchParams.has('session_id')).toBe(false))
+  expect(screen.queryByRole('button', { name: 'Clear session filter' })).toBeNull()
+  expect(screen.getByTestId('location').textContent).toBe('')
+})
+
+
+it('sends session date, source, model and device filters to the sessions API', async () => {
+  app.activeDevice = 'device-1'
+  app.activeFilter = { models: ['model-1'] }
+  const { fetchMock } = mockHistory([])
+  renderHook(() => useSessionsData({ activeSource: 'agent-1', dateRange: '7d', bucket: null }))
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.map(([input]) => new URL(String(input), window.location.origin)).find(url => url.pathname === '/sessions')
+    expect(call?.searchParams.get('client_source')).toBe('agent-1')
+    expect(call?.searchParams.get('device_id')).toBe('device-1')
+    expect(call?.searchParams.get('model')).toBe('model-1')
+    expect(call?.searchParams.get('since')).toBeTruthy()
+  })
+  app.activeDevice = null
+  app.activeFilter = null
 })

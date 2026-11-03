@@ -8,7 +8,8 @@ export function isPageNavigation(method = 'GET', headers = {}) {
   if (method !== 'GET') return false
   if (headers['sec-fetch-mode'] === 'navigate') return true
   const accept = String(headers.accept ?? '')
-  return accept.split(',')[0].split(';')[0].trim().toLowerCase() === 'text/html'
+  const [media, ...params] = accept.split(',')[0].toLowerCase().split(';')
+  return media.trim() === 'text/html' && !params.some(p => /^q=0(?:\.0{1,3})?$/.test(p.trim()))
 }
 
 export function shouldProxyApiRequest(requestUrl, { method, headers } = {}) {

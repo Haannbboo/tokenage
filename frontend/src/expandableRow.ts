@@ -1,9 +1,9 @@
 import type { KeyboardEvent } from 'react'
 
 /** Props for a table row that expands on click, Enter or Space. */
-export function expandableRowProps(expanded: boolean, toggle: () => void) {
+export function expandableRowProps(expanded: boolean, toggle: () => void, extraClass = '') {
   return {
-    className: `expandable-row${expanded ? ' expanded' : ''}`,
+    className: `expandable-row${expanded ? ' expanded' : ''}${extraClass ? ` ${extraClass}` : ''}`,
     tabIndex: 0,
     'aria-expanded': expanded,
     onClick: toggle,

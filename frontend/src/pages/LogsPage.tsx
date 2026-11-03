@@ -39,14 +39,13 @@ export function LogsPage() {
   } = useDashboardData({ dateRange: 'all', includeDaily: false, includeHeatmap: false, includeCount: false })
 
   // Session filter state (local to logs view)
-  const [sessionFilter, setSessionFilter] = useState<string | null>(() => searchParams.get('session'))
-  useEffect(() => {
-    if ((searchParams.get('session') ?? null) === sessionFilter) return
+  const sessionFilter = searchParams.get('session')
+  const setSessionFilter = (id: string | null) => {
     const next = new URLSearchParams(searchParams)
-    if (sessionFilter) next.set('session', sessionFilter)
+    if (id) next.set('session', id)
     else next.delete('session')
     setSearchParams(next, { replace: true })
-  }, [sessionFilter, searchParams, setSearchParams])
+  }
 
   // Tool filter state (local to logs view)
   const [toolFilter, setToolFilter] = useState<string | null>(null)

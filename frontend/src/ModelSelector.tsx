@@ -59,7 +59,7 @@ export function ModelSelector({ activeFilter, summary, onChange }: {
     else toggle(models)
   }
   const isSelected = (name: string, model: string) => selectedProvider ? selectedProvider === name : selected.includes(model)
-  const close = useCallback(() => { setOpen(false); setSearch(''); triggerRef.current?.focus() }, [])
+  const close = useCallback((event?: Event) => { if (event instanceof KeyboardEvent) event.preventDefault(); setOpen(false); setSearch(''); triggerRef.current?.focus() }, [])
   const rootRef = useRef<HTMLDivElement>(null)
   useDismiss(rootRef, open, close)
   const navigate = (event: React.KeyboardEvent) => {

@@ -176,7 +176,8 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             # usage_read_cors middleware can answer them; OPTIONS never
             # reaches route handlers with data.
             return await call_next(request)
-        if _is_public_path(request.url.path) or _serves_spa_page(request):
+        request.scope["spa_shared_page"] = _serves_spa_page(request)
+        if _is_public_path(request.url.path) or request.scope["spa_shared_page"]:
             return await call_next(request)
         # Token lookup hits the database: keep it off the event loop, which the
         # mounted OTLP collector shares.
@@ -186,7 +187,13 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             # Middleware runs outside FastAPI's route exception handlers.
             return store_unavailable_response(request, exc)
         if resolved is None:
-            return JSONResponse(status_code=401, content=AUTH_GATE_LOGIN_REQUIRED)
+            return JSONResponse(
+                status_code=401,
+                content=AUTH_GATE_LOGIN_REQUIRED,
+                headers={"Vary": "Accept, Sec-Fetch-Mode"}
+                if request.url.path in _SPA_API_SHARED_PAGES
+                else None,
+            )
         user, auth_token = resolved
         if auth_token is not None:  # the loopback owner (no token) is exempt
             try:
@@ -200,7 +207,14 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(
                     status_code=429,
                     content={"detail": "rate limit exceeded"},
-                    headers={"Retry-After": str(retry_after)},
+                    headers={
+                        "Retry-After": str(retry_after),
+                        **(
+                            {"Vary": "Accept, Sec-Fetch-Mode"}
+                            if request.url.path in _SPA_API_SHARED_PAGES
+                            else {}
+                        ),
+                    },
                 )
         return await call_next(request)
 
@@ -1117,7 +1131,10 @@ def _is_page_navigation(request: Request) -> bool:
     if request.headers.get("sec-fetch-mode") == "navigate":
         return True
     accept = request.headers.get("accept", "")
-    return accept.split(",", 1)[0].split(";", 1)[0].strip().lower() == "text/html"
+    media, *params = accept.split(",", 1)[0].lower().split(";")
+    return media.strip() == "text/html" and not any(
+        p.strip() in ("q=0", "q=0.0", "q=0.00", "q=0.000") for p in params
+    )
 
 
 def _serves_spa_page(request: Request) -> bool:
@@ -1144,7 +1161,7 @@ if _SPA_SERVED:
             requested = path.lstrip("/")
             serving_index = path == "/index.html"
             shared_page = path in _SPA_API_SHARED_PAGES
-            if _serves_spa_page(request) or (
+            if request.scope.get("spa_shared_page", False) or (
                 request.method in ("GET", "HEAD")
                 and _index_html.is_file()
                 and not any(path.startswith(p) for p in _SPA_API_PREFIXES)

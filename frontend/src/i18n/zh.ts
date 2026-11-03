@@ -1,4 +1,6 @@
 export const zh: Record<string, string> = {
+  'No sessions found': '未找到会话',
+  'Search session ID…': '搜索会话 ID…',
   'Filter': '筛选',
 
   'Input cost': '输入费用',

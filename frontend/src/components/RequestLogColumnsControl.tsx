@@ -27,13 +27,18 @@ export function RequestLogColumnsControl({
 }: Props) {
   const [isOpen, setIsOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  const close = useCallback(() => setIsOpen(false), [])
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const close = useCallback((event: Event) => {
+    setIsOpen(false)
+    if (event instanceof KeyboardEvent) triggerRef.current?.focus()
+  }, [])
   useDismiss(ref, isOpen, close)
 
   return (
     <div className="request-log-columns" ref={ref}>
       <button
         type="button"
+        ref={triggerRef}
         className="btn-ghost request-log-columns-trigger"
         aria-expanded={isOpen}
         onClick={() => setIsOpen((open) => !open)}

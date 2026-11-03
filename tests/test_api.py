@@ -869,11 +869,14 @@ def test_sessions_navigation_serves_the_page(api_module, monkeypatch):
     for path, headers in (
         ("/sessions", _NAVIGATION),
         ("/sessions?session=abc", _NAVIGATION),
+        ("/%73essions", _NAVIGATION),
         ("/sessions", {"accept": "text/html"}),  # no Fetch Metadata
     ):
         response = client.get(path, headers=headers)
         assert response.status_code == 200, path
         assert "text/html" in response.headers["content-type"]
+        assert response.text == api_module._index_html.read_text()
+        assert "Accept" in response.headers["vary"]
         assert "Sec-Fetch-Mode" in response.headers["vary"]
 
 
@@ -887,10 +890,13 @@ def test_sessions_api_calls_still_get_json(api_module, monkeypatch):
         {},
         {"accept": "*/*", "sec-fetch-mode": "cors"},
         {"accept": "application/json, text/html"},
+        {"accept": "text/html;q=0"},
     ):
         response = client.get("/sessions", headers=headers)
         assert response.status_code == 200
         assert response.json() == {"sessions": [], "total": 0}
+        assert "Accept" in response.headers["vary"]
+        assert "Sec-Fetch-Mode" in response.headers["vary"]
 
     # Only GET navigations to exactly /sessions become the page.
     for method, path in (("POST", "/sessions"), ("GET", "/sessions/summary")):
@@ -904,6 +910,17 @@ def test_sessions_api_calls_still_get_json(api_module, monkeypatch):
         response = client.get("/sessions", headers=headers)
         assert response.status_code == 401
         assert response.json() == api_module.AUTH_GATE_LOGIN_REQUIRED
+        assert "Accept" in response.headers["vary"]
+        assert "Sec-Fetch-Mode" in response.headers["vary"]
+    for method, path in (
+        ("HEAD", "/sessions"),
+        ("GET", "/sessions/"),
+        ("GET", "/%73essions"),
+    ):
+        response = client.request(
+            method, path, headers={"accept": "application/json"}, follow_redirects=False
+        )
+        assert response.status_code == 401
 
 
 def test_spa_deep_links_do_not_hijack_api_routes(api_module, monkeypatch):

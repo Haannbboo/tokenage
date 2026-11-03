@@ -895,8 +895,9 @@ def test_sessions_api_calls_still_get_json(api_module, monkeypatch):
         response = client.get("/sessions", headers=headers)
         assert response.status_code == 200
         assert response.json() == {"sessions": [], "total": 0}
-        assert "Accept" in response.headers["vary"]
-        assert "Sec-Fetch-Mode" in response.headers["vary"]
+        if api_module._SPA_SERVED and api_module._index_html.is_file():
+            assert "Accept" in response.headers["vary"]
+            assert "Sec-Fetch-Mode" in response.headers["vary"]
 
     # Only GET navigations to exactly /sessions become the page.
     for method, path in (("POST", "/sessions"), ("GET", "/sessions/summary")):

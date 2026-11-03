@@ -277,7 +277,7 @@ export function TopUsageChart({
         alignItems: 'center',
         gap: '8px',
       }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', background: 'var(--tab-toggle-bg)', borderRadius: '6px', padding: '2px' }}>
+        <div className="tab-toggle">
           {(['model', 'provider', 'source', 'device'] as Dimension[]).map(d => (
             <button
               key={d}
@@ -288,7 +288,7 @@ export function TopUsageChart({
             </button>
           ))}
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', background: 'var(--tab-toggle-bg)', borderRadius: '6px', padding: '2px' }}>
+        <div className="tab-toggle">
           {(['tokens', 'cost', 'throughput', 'cacheHitRate', 'successRate'] as Metric[]).map(m => (
             <button
               key={m}

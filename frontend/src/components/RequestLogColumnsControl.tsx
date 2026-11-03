@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
+import { useDismiss } from '../hooks/useDismiss'
 import type { RequestLogColumnId } from '../hooks/useRequestLogColumns'
 import { t } from '../i18n/index.ts'
 
@@ -25,9 +26,12 @@ export function RequestLogColumnsControl({
   showAllColumns,
 }: Props) {
   const [isOpen, setIsOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const close = useCallback(() => setIsOpen(false), [])
+  useDismiss(ref, isOpen, close)
 
   return (
-    <div className="request-log-columns">
+    <div className="request-log-columns" ref={ref}>
       <button
         type="button"
         className="btn-ghost request-log-columns-trigger"
@@ -38,7 +42,7 @@ export function RequestLogColumnsControl({
       </button>
 
       {isOpen && (
-        <div className="request-log-columns-menu">
+        <div className="menu request-log-columns-menu">
           <div className="request-log-columns-list">
             {columns.map((column) => (
               <label key={column.id} className="request-log-columns-option">

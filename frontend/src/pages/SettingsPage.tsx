@@ -10,6 +10,8 @@ import { formatTime } from '../utils'
 import { TimezoneSelector } from '../components/TimezoneSelector'
 import { DeviceStatusDetail } from '../components/DeviceStatusDetail'
 import { useVersion } from '../hooks/useVersion'
+import { PageHeader } from '../components/PageHeader'
+import { expandableRowProps } from '../expandableRow'
 
 const DEVICE_KIND_LABELS: Record<string, string> = {
   client: 'Machine',
@@ -53,33 +55,25 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="settings-page" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      <div className="panel" style={{ overflow: 'hidden' }}>
-        <div
-          style={{
-            display: 'flex',
-            gap: '4px',
-            padding: '8px',
-            background: 'var(--tab-toggle-bg)',
-            borderRadius: '12px',
-            flexWrap: 'wrap',
-          }}
-        >
-          {[
-            { id: 'pricing', label: t('Pricing') },
-            { id: 'services', label: t('Services') },
-            { id: 'devices', label: t('Devices') },
-          ].map((section) => (
-            <button
-              key={section.id}
-              type="button"
-              className={`tab-toggle-btn ${activeSection === section.id ? 'active' : ''}`}
-              onClick={() => setSearchParams({ section: section.id })}
-            >
-              {section.label}
-            </button>
-          ))}
-        </div>
+    <div className="settings-page">
+      <PageHeader title="Settings" description="Services, pricing and devices." />
+      <div className="tab-toggle settings-sections" role="tablist" aria-label={t('Settings')}>
+        {[
+          { id: 'pricing', label: t('Pricing') },
+          { id: 'services', label: t('Services') },
+          { id: 'devices', label: t('Devices') },
+        ].map((section) => (
+          <button
+            key={section.id}
+            type="button"
+            role="tab"
+            aria-selected={activeSection === section.id}
+            className={`tab-toggle-btn ${activeSection === section.id ? 'active' : ''}`}
+            onClick={() => setSearchParams({ section: section.id })}
+          >
+            {section.label}
+          </button>
+        ))}
       </div>
 
       {activeSection === 'pricing' && <PricingPage />}
@@ -150,8 +144,7 @@ export function SettingsPage() {
                   {devices && devices.length > 0 ? devices.map((device) => (
                     <Fragment key={device.id}>
                       <tr
-                        className={device.kind === 'client' ? `expandable-row${expandedDeviceId === device.id ? ' expanded' : ''}` : undefined}
-                        onClick={device.kind === 'client' ? () => setExpandedDeviceId(expandedDeviceId === device.id ? null : device.id) : undefined}
+                        {...(device.kind === 'client' ? expandableRowProps(expandedDeviceId === device.id, () => setExpandedDeviceId(expandedDeviceId === device.id ? null : device.id)) : {})}
                       >
                         <td style={{ fontWeight: 700 }}>
                           {device.device_name ?? '—'}

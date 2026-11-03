@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useMemo, useCallback } from 'react'
+import { useDismiss } from '../hooks/useDismiss'
 import type { SessionSelectorRow } from '../types'
 import { shortSessionId, timeAgo, sessionAgentName } from '../utils'
 import { t } from '../i18n/index.ts'
@@ -15,15 +16,8 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
   const [search, setSearch] = useState('')
   const ref = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setIsOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+  const close = useCallback(() => setIsOpen(false), [])
+  useDismiss(ref, isOpen, close)
 
   const grouped = useMemo(() => {
     const map = new Map<string, SessionSelectorRow[]>()
@@ -65,9 +59,8 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
-          height: 35,
           paddingRight: '28px',
-          borderColor: isOpen ? 'var(--color-blue)' : undefined,
+          borderColor: isOpen ? 'var(--text-muted)' : undefined,
           cursor: 'text'
         }}
       >
@@ -121,19 +114,12 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
       </div>
 
       {isOpen && (
-        <div style={{
-          position: 'absolute',
+        <div className="menu" style={{
           top: 'calc(100% + 4px)',
           left: 0,
           right: 0,
-          zIndex: 100,
-          background: 'var(--card-bg)',
-          border: '1px solid var(--border-color)',
-          borderRadius: '8px',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
           maxHeight: 320,
           overflowY: 'auto',
-          padding: '4px'
         }}>
           <button
             onClick={() => { onChange(null); setIsOpen(false); setSearch('') }}

@@ -375,9 +375,7 @@ export function OverviewTab({
           <>
         <StatTile
           label={t('Estimated Cost')}
-          icon="$"
-          iconClass="icon-green"
-          color="var(--color-blue)"
+          color="var(--color-green)"
           points={costPoints}
           animatedValue={animatedCost}
           format={(v) => formatCost(v, 2)}
@@ -386,14 +384,12 @@ export function OverviewTab({
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}
         >
-          {t('Avg $/M tokens:')} <span style={{ color: 'var(--color-green)', fontWeight: 600 }}>{formatRate(totals.avgEffectivePricePerMillion)}</span>
+          {t('Avg $/M tokens:')} <span style={{ color: 'var(--color-green)', fontWeight: 500 }}>{formatRate(totals.avgEffectivePricePerMillion)}</span>
         </StatTile>
 
         <StatTile
           label={t('Token Usage')}
-          icon="#"
-          iconClass="icon-yellow"
-          color="var(--color-yellow)"
+          color="var(--chart-2)"
           points={tokenPoints}
           animatedValue={animatedTotalTokens}
           format={(v) => formatCompact(v)}
@@ -409,9 +405,7 @@ export function OverviewTab({
 
         <StatTile
           label={t('Requests')}
-          icon="↑"
-          iconClass="icon-green"
-          color="var(--color-pink)"
+          color="var(--chart-2)"
           points={requestPoints}
           animatedValue={animatedRequests}
           format={(v) => formatNumber(v)}
@@ -419,14 +413,12 @@ export function OverviewTab({
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}
         >
-          {t('Avg:')} <span style={{ color: 'var(--color-purple)', fontWeight: 600 }}>{formatCompact(totals.avgTokensPerRequest)} {t('tokens/req')}</span>
+          {t('Avg:')} <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatCompact(totals.avgTokensPerRequest)} {t('tokens/req')}</span>
         </StatTile>
 
         <StatTile
           label={t('Cache Hit Rate')}
-          icon="⚡"
-          iconClass="icon-green"
-          color="var(--color-green)"
+          color="var(--chart-2)"
           points={hitRatePoints}
           animatedValue={animatedHitRate}
           format={(v) => `${v.toFixed(1)}%`}
@@ -440,9 +432,7 @@ export function OverviewTab({
 
         <StatTile
           label={t('Avg Speed')}
-          icon="🚀"
-          iconClass="icon-purple"
-          color="var(--color-purple)"
+          color="var(--chart-2)"
           points={speedPoints}
           animatedValue={animatedThroughput}
           format={(v) => v > 0 ? formatThroughput(v) : '0.0 t/s'}

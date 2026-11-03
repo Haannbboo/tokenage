@@ -1,32 +1,41 @@
 :root {
-  --main-bg: #f4f9f8;
+  /* Crisp console palette: neutral greys, 1px hairlines, green only as an accent. */
+  --main-bg: #fafafa;
+  --sidebar-bg: #f5f5f5;
   --card-bg: #ffffff;
-  --border-color: #e2e8f0;
-  --surface-hover: #f8fafc;
-  --surface-active: #edfcf6;
+  --border-color: #e5e5e5;
+  --border-strong: #d4d4d4;
+  --surface-hover: #ececec;
+  --surface-active: #e5e5e5;
+  --surface-sunken: #f5f5f5;
   --input-bg: #ffffff;
 
-  --text-primary: #1e293b;
-  --text-secondary: #64748b;
-  --text-muted: #94a3b8;
+  --text-primary: #171717;
+  --text-secondary: #525252;
+  --text-muted: #8a8a8a;
 
   /* Accent colors */
   --color-blue: #3b82f6;
-  --color-green: #00b578;
+  --color-green: #047857;
   --color-yellow: #eab308;
   --color-pink: #f43f5e;
   --color-purple: #a855f7;
   --color-indigo: #6366f1;
+  --accent-bg: #ecfdf5;
+  --chart-2: #64748b;
 
   /* Component states */
-  --tab-active-bg: #eff6ff;
-  --tab-toggle-bg: #f1f5f9;
+  --tab-active-bg: var(--surface-active);
+  --tab-toggle-bg: var(--surface-sunken);
   --tab-toggle-active-bg: #ffffff;
-  --progress-bg: #f1f5f9;
-  --badge-success-bg: #dcfce7;
-  --badge-success-text: #15803d;
-  --badge-error-bg: #fee2e2;
+  --progress-bg: #f0f0f0;
+  --badge-success-bg: #ecfdf5;
+  --badge-success-text: #047857;
+  --badge-error-bg: #fef2f2;
   --badge-error-text: #b91c1c;
+  --btn-primary-bg: #171717;
+  --btn-primary-fg: #ffffff;
+  --scrim: rgba(0, 0, 0, 0.35);
 
   /* Icon box backgrounds */
   --icon-green-bg: #f0fdf4;
@@ -35,81 +44,89 @@
   --icon-purple-bg: #faf5ff;
 
   /* Chart colors */
-  --chart-grid: #f1f5f9;
+  --chart-grid: #f0f0f0;
   --chart-dot-fill: #ffffff;
-  --chart-footer-border: #f1f5f9;
+  --chart-footer-border: #f0f0f0;
   --heatmap-empty: #ebedf0;
-  --heatmap-label: #94a3b8;
+  --heatmap-label: #8a8a8a;
   --heatmap-cell-border: rgba(0, 0, 0, 0.06);
 
-  /* Shadows */
-  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.02);
-  --shadow-soft: 0 1px 2px -1px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05);
+  /* No shadows except menus and the phone drawer. */
+  --shadow-sm: none;
+  --shadow-soft: none;
+  --shadow-card: none;
+  --shadow-floating: none;
+  --shadow-premium: none;
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.12);
 
-  /* Sticky layout */
-  --navbar-top: 12px;
-  --navbar-height: 56px;
+  /* Sticky layout: no top bar on desktop; the phone top bar is 48px. */
+  --navbar-top: 0px;
+  --navbar-height: 0px;
   --sticky-gap: 8px;
   --sticky-nav-bottom: calc(var(--navbar-top) + var(--navbar-height) + var(--sticky-gap));
 
-  /* Soft Glass Design Tokens */
-  --glass-bg: rgba(255, 255, 255, 0.5);
-  --glass-border: rgba(255, 255, 255, 0.4);
-  --glass-blur: blur(8px);
-  --shadow-premium: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-  --shadow-floating: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
-  --radius-xl: 24px;
-  --radius-lg: 16px;
-  --radius-md: 12px;
+  /* Sticky surfaces (log filter bar, table header) */
+  --glass-bg: rgba(250, 250, 250, 0.94);
+  --glass-border: var(--border-color);
+  --glass-blur: blur(6px);
+  --radius-xl: 6px;
+  --radius-lg: 6px;
+  --radius-md: 6px;
+  --r-sm: 4px;
+  --r-md: 6px;
 
   /* Typography */
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
 }
 
+@media (max-width: 639px) {
+  :root { --navbar-height: 48px; }
+}
+
 [data-theme="dark"] {
-  --main-bg: #0f172a;
-  --card-bg: #1e293b;
-  --border-color: #334155;
-  --surface-hover: #334155;
-  --surface-active: #064e3b;
-  --input-bg: #1e293b;
+  --main-bg: #111111;
+  --sidebar-bg: #171717;
+  --card-bg: #161616;
+  --border-color: #262626;
+  --border-strong: #333333;
+  --surface-hover: #212121;
+  --surface-active: #262626;
+  --surface-sunken: #1c1c1c;
+  --input-bg: #161616;
 
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  --text-primary: #ededed;
+  --text-secondary: #a3a3a3;
+  --text-muted: #737373;
 
-  --tab-active-bg: #172554;
-  --tab-toggle-bg: #334155;
-  --tab-toggle-active-bg: #1e293b;
-  --progress-bg: #334155;
-  --badge-success-bg: #052e16;
-  --badge-success-text: #4ade80;
+  --color-green: #34d399;
+  --accent-bg: rgba(52, 211, 153, 0.12);
+  --chart-2: #94a3b8;
+
+  --tab-toggle-active-bg: #262626;
+  --progress-bg: #222222;
+  --badge-success-bg: rgba(52, 211, 153, 0.12);
+  --badge-success-text: #34d399;
   --badge-error-bg: #450a0a;
   --badge-error-text: #fca5a5;
+  --btn-primary-bg: #ededed;
+  --btn-primary-fg: #111111;
+  --scrim: rgba(0, 0, 0, 0.6);
 
   --icon-green-bg: #052e16;
   --icon-yellow-bg: #422006;
   --icon-pink-bg: #450a0a;
   --icon-purple-bg: #2e1065;
 
-  --chart-grid: #1e293b;
-  --chart-dot-fill: #1e293b;
-  --chart-footer-border: #334155;
-  --heatmap-empty: #1e293b;
-  --heatmap-label: #64748b;
+  --chart-grid: #222222;
+  --chart-dot-fill: #161616;
+  --chart-footer-border: #262626;
+  --heatmap-empty: #1f1f1f;
+  --heatmap-label: #737373;
   --heatmap-cell-border: rgba(255, 255, 255, 0.06);
 
-  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.2);
-  --shadow-soft: 0 1px 2px -1px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-floating: 0 20px 25px -5px rgba(0, 0, 0, 0.45), 0 8px 12px -6px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.07);
-
-  /* Soft Glass Design Tokens */
-  --glass-bg: rgba(15, 23, 42, 0.5);
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --shadow-premium: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2), 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --glass-bg: rgba(17, 17, 17, 0.94);
 }
 
 * {
@@ -122,21 +139,25 @@ body {
   background-color: var(--main-bg);
   color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 14px;
-  letter-spacing: -0.01em;
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Dark text on light reads thin when antialiased: a touch heavier, subpixel. */
+[data-theme="light"] body,
+:root:not([data-theme]) body {
+  font-weight: 450;
+  -webkit-font-smoothing: auto;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-green);
+  outline-offset: 2px;
 }
 
 button {
   color: inherit;
-}
-
-.widget {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.widget:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-floating);
 }
 
 button {
@@ -144,38 +165,13 @@ button {
   border: none;
   background: none;
   font: inherit;
-  transition: all 0.2s;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
 }
 
 a {
   text-decoration: none;
   color: inherit;
 }
-
-/* Staggered widget entrance animation */
-@keyframes widget-enter {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.widgets-grid > .widget {
-  /* `backwards` (not `forwards`): a filled animation keeps overriding the
-     :hover transform, which left these tiles unable to lift. */
-  animation: widget-enter 0.4s ease-out backwards;
-}
-
-.widgets-grid > .widget:nth-child(1) { animation-delay: 0.05s; }
-.widgets-grid > .widget:nth-child(2) { animation-delay: 0.1s; }
-.widgets-grid > .widget:nth-child(3) { animation-delay: 0.15s; }
-.widgets-grid > .widget:nth-child(4) { animation-delay: 0.2s; }
-.widgets-grid > .widget:nth-child(5) { animation-delay: 0.25s; }
-.widgets-grid > .widget:nth-child(6) { animation-delay: 0.3s; }
 
 /* Loading skeleton shimmer */
 @keyframes shimmer {
@@ -219,14 +215,12 @@ a {
 .table .expanded-detail {
   padding: 16px 20px;
   background: var(--card-bg);
-  border-left: 3px solid var(--color-blue);
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px 24px;
   font-size: 12px;
   color: var(--text-secondary);
   animation: expand-in 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: inset 0 1px 0 0 var(--border-color);
 }
 
 @keyframes expand-in {
@@ -285,15 +279,11 @@ a {
   padding: 12px 16px;
   background: var(--input-bg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--r-md);
   box-sizing: border-box;
 }
 
-[data-theme="dark"] .table .expanded-detail .request-timeline {
-  background: rgba(15, 23, 42, 0.6);
-  border-color: rgba(255, 255, 255, 0.08);
-}
+
 
 .request-timeline-header {
   display: flex;

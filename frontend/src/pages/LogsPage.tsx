@@ -1,5 +1,6 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type CSSProperties } from 'react'
 import { useWindowVirtualizer } from '@tanstack/react-virtual'
+import { useSearchParams } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
 import { useDashboardData } from '../hooks/useDashboardData'
 import { useLogsData } from '../hooks/useLogsData'
@@ -14,22 +15,12 @@ import { RequestDetail } from '../components/RequestDetail'
 import { t } from '../i18n/index.ts'
 import { shortSessionId, resolveTimezone } from '../utils'
 import { renderRequestCell } from '../components/RequestCell'
+import { PageHeader, RefreshButton, SourceFilter } from '../components/PageHeader'
+import { expandableRowProps } from '../expandableRow'
 
 export function LogsPage() {
-  // Read session filter from sessionStorage (set by Dashboard/Sessions tab navigation)
-  const storedSessionFilter = useMemo(() => {
-    try {
-      const raw = sessionStorage.getItem('tokenage-logs-filters')
-      if (raw) return JSON.parse(raw).sessionFilter ?? null
-    } catch { /* ignore */ }
-    return null
-  }, [])
-
-  // Clear the one-shot session filter after commit
-  useEffect(() => {
-    sessionStorage.removeItem('tokenage-logs-filters')
-  }, [])
-
+  // ?session=<id> deep-links the session filter; it stays in the URL so reload and Back keep it.
+  const [searchParams, setSearchParams] = useSearchParams()
   const { showToast, requestUsageRefresh, activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice, timezone, refreshTrigger } = useApp()
   const tz = resolveTimezone(timezone)
   const {
@@ -48,7 +39,14 @@ export function LogsPage() {
   } = useDashboardData({ dateRange: 'all', includeDaily: false, includeHeatmap: false, includeCount: false })
 
   // Session filter state (local to logs view)
-  const [sessionFilter, setSessionFilter] = useState<string | null>(storedSessionFilter)
+  const [sessionFilter, setSessionFilter] = useState<string | null>(() => searchParams.get('session'))
+  useEffect(() => {
+    if ((searchParams.get('session') ?? null) === sessionFilter) return
+    const next = new URLSearchParams(searchParams)
+    if (sessionFilter) next.set('session', sessionFilter)
+    else next.delete('session')
+    setSearchParams(next, { replace: true })
+  }, [sessionFilter, searchParams, setSearchParams])
 
   // Tool filter state (local to logs view)
   const [toolFilter, setToolFilter] = useState<string | null>(null)
@@ -285,6 +283,7 @@ export function LogsPage() {
 
   return (
     <div className="logs-page" style={{ '--logs-filter-height': `${filterHeight}px` } as CSSProperties}>
+      <PageHeader title="Request Logs" description="Individual model requests, newest first." />
       <div className="filter-bar" ref={filterBarRef}>
         <div className="filter-group">
           <div className="filter-label">{t('Model')}</div>
@@ -298,16 +297,7 @@ export function LogsPage() {
 
         <div className="filter-group">
           <div className="filter-label">{t('Source')}</div>
-          <select
-            className="input-plain"
-            value={activeSource || ''}
-            onChange={(e) => { setActiveSource(e.target.value || null); }}
-          >
-            <option value="">{t('All Sources')}</option>
-            {sources.map(source => (
-              <option key={source} value={source}>{source}</option>
-            ))}
-          </select>
+          <SourceFilter value={activeSource} sources={sources} onChange={setActiveSource} />
         </div>
 
         <div className="filter-group">
@@ -348,16 +338,10 @@ export function LogsPage() {
             resetColumns={resetColumns}
             showAllColumns={showAllColumns}
            />
+           <RefreshButton onClick={requestUsageRefresh} />
            <button
-            className="btn-ghost btn-refresh"
-            onClick={requestUsageRefresh}
-            aria-label={t('Refresh')}
-            title={t('Refresh')}
-           >
-             <span className="refresh-icon">&#x21bb;</span>
-           </button>
-           <button
-            style={{ padding: '8px 16px', background: 'var(--tab-toggle-bg)', color: 'var(--text-secondary)', borderRadius: '8px', fontSize: '12px', fontWeight: 600, border: '1px solid var(--border-color)' }}
+            type="button"
+            className="btn-ghost"
             onClick={() => {
               setActiveFilter(null)
               setActiveSource(null)
@@ -427,10 +411,9 @@ export function LogsPage() {
                 return (
                 <tbody key={row.id} data-index={virtualRow.index} ref={rowVirtualizer.measureElement}>
                   <tr
-                    className={`expandable-row${expandedRow === row.id ? ' expanded' : ''}`}
+                    {...expandableRowProps(expandedRow === row.id, () => setExpandedRow(expandedRow === row.id ? null : row.id))}
                     onMouseEnter={() => setHoveredSession(row.session_id ?? null)}
                     onMouseLeave={() => setHoveredSession(null)}
-                    onClick={() => setExpandedRow(expandedRow === row.id ? null : row.id)}
                   >
                     {effectiveVisibleColumns.map((column) => (
                       <Fragment key={column.id}>{renderRequestCell(row, column.id, { tz, colWidths, hoveredSession, setSessionFilter, recalculatingId, handleRecalculateCost })}</Fragment>

@@ -7,7 +7,10 @@ import { useLogsData } from '../src/hooks/useLogsData'
 import { useDashboardData } from '../src/hooks/useDashboardData'
 import { useRequestLogColumns } from '../src/hooks/useRequestLogColumns'
 import { SessionSelector } from '../src/components/SessionSelector'
+import { MemoryRouter } from 'react-router-dom'
 import { LogsPage } from '../src/pages/LogsPage'
+
+const logsPage = () => createElement(MemoryRouter, { initialEntries: ['/logs'] }, createElement(LogsPage))
 
 const app = vi.hoisted(() => ({
   refreshTrigger: 0, setError: vi.fn(), showToast: vi.fn(), requestUsageRefresh: vi.fn(),
@@ -227,7 +230,7 @@ describe('Request Logs table', () => {
       return fetchHistory(input)
     })
     app.requestUsageRefresh.mockClear()
-    render(createElement(LogsPage))
+    render(logsPage())
     expect(await screen.findByText('Failed to fetch log data')).toBeTruthy()
     expect(screen.queryByText('secret detail')).toBeNull()
     expect(screen.queryByText('No requests found for the selected filters.')).toBeNull()
@@ -254,7 +257,7 @@ describe('Request Logs table', () => {
   it('keeps all log filters independent of the dashboard date range', async () => {
     app.dateRange = '24h'
     const api = mockHistory()
-    const view = render(createElement(LogsPage))
+    const view = render(logsPage())
     await waitFor(() => expect(document.querySelector('tbody[data-index]')).toBeTruthy())
     expect(screen.queryByText('Date Range')).toBeNull()
     const filterCalls = () => api.fetchMock.mock.calls
@@ -264,7 +267,7 @@ describe('Request Logs table', () => {
     expect(filterCalls().every(url => !url.searchParams.has('since'))).toBe(true)
     const count = filterCalls().length
     app.dateRange = '7d'
-    view.rerender(createElement(LogsPage))
+    view.rerender(logsPage())
     expect(filterCalls().length).toBe(count)
     fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
     expect(app.setDateRange).not.toHaveBeenCalled()
@@ -318,7 +321,7 @@ describe('Request Logs table', () => {
     mockHistory([])
     const resize = mockTableWidth(350)
     localStorage.setItem('tokenage-request-log-columns', JSON.stringify(['time', 'model', 'session', 'speed']))
-    render(createElement(LogsPage))
+    render(logsPage())
     await screen.findByText('No requests found for the selected filters.')
     fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
     expect(columnHeaders()).toEqual(['Time', 'Model', 'Session'])
@@ -339,7 +342,7 @@ describe('Request Logs table', () => {
     mockTableWidth(350)
     const key = 'tokenage-request-log-columns'
     localStorage.setItem(key, JSON.stringify(['time', 'model', 'session', 'speed']))
-    const view = render(createElement(LogsPage))
+    const view = render(logsPage())
     await screen.findByText('No requests found for the selected filters.')
     fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
     fireEvent.click(columnCheckbox('Speed'))
@@ -350,7 +353,7 @@ describe('Request Logs table', () => {
       visibleColumnIds: ['time', 'model', 'session', 'speed'], pinnedColumnIds: ['speed'],
     })
     view.unmount()
-    render(createElement(LogsPage))
+    render(logsPage())
     await screen.findByText('No requests found for the selected filters.')
     expect(columnHeaders()).toEqual(['Time', 'Model', 'Speed'])
     fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
@@ -368,7 +371,7 @@ describe('Request Logs table', () => {
     localStorage.setItem('tokenage-request-log-columns', JSON.stringify({
       visibleColumnIds: ['time', 'model', 'session', 'speed'], pinnedColumnIds: ['session', 'speed'],
     }))
-    render(createElement(LogsPage))
+    render(logsPage())
     await screen.findByText('No requests found for the selected filters.')
     expect(columnHeaders()).toEqual(['Session', 'Speed'])
     const width = screen.getAllByRole('columnheader').reduce((sum, th) => sum + parseFloat(th.style.width), 0)
@@ -382,7 +385,7 @@ describe('Request Logs table', () => {
   it('keeps spacers in table coordinates and removes the bottom spacer at the last loaded row', async () => {
     tableHeaderHeight = 63
     mockHistory()
-    render(createElement(LogsPage))
+    render(logsPage())
     await waitFor(() => expect(document.querySelector('tbody[data-index]')).toBeTruthy())
     const assertSpacers = () => {
       const bodies = [...document.querySelectorAll<HTMLTableSectionElement>('tbody[data-index]')]
@@ -405,7 +408,7 @@ describe('Request Logs table', () => {
 
   it('loads from the sentinel and renders only a window after accumulating a long history', async () => {
     const api = mockHistory(rows(2000, 1000))
-    render(createElement(StrictMode, null, createElement(LogsPage)))
+    render(createElement(StrictMode, null, logsPage()))
     await waitFor(() => expect(intersections.size).toBe(1))
     const before = usageCalls(api.fetchMock).length
     await intersectSentinel()
@@ -427,7 +430,7 @@ describe('Request Logs table', () => {
 
   it('pauses the observer after a failed page and retries from the same cursor on demand', async () => {
     const api = mockHistory()
-    render(createElement(LogsPage))
+    render(logsPage())
     await waitFor(() => expect(intersections.size).toBe(1))
     api.fetchMock.mockRejectedValueOnce(new Error('offline'))
     await intersectSentinel()
@@ -442,11 +445,11 @@ describe('Request Logs table', () => {
 
   it('resets the scroll position on refresh', async () => {
     mockHistory()
-    const view = render(createElement(LogsPage))
+    const view = render(logsPage())
     await waitFor(() => expect(intersections.size).toBe(1))
     scrollWindowTo(1040)
     app.refreshTrigger++
-    view.rerender(createElement(LogsPage))
+    view.rerender(logsPage())
     await waitFor(() => expect(window.scrollY).toBe(124))
   })
 

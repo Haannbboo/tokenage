@@ -80,7 +80,7 @@ export function ToolCallsChart({
         display: 'flex',
         alignItems: 'center',
       }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', background: 'var(--tab-toggle-bg)', borderRadius: '6px', padding: '2px' }}>
+        <div className="tab-toggle">
           {(['count', 'totalTime', 'avgTime'] as ToolMetric[]).map(m => (
             <button
               key={m}

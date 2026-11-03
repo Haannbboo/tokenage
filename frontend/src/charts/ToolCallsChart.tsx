@@ -1,5 +1,6 @@
 import { appendModels } from '../modelFilter'
 import { useEffect, useState } from 'react'
+import { toolColor } from '../utils'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
 import { t } from '../i18n/index.ts'
@@ -53,6 +54,7 @@ export function ToolCallsChart({
   const items: BarItem[] = rows.map(row => ({
     name: row.tool_name,
     icon: null,
+    color: toolColor(row.tool_name),
     tokens: row.count,
     cost: 0,
     totalTime: row.total_duration_ms ?? 0,
@@ -66,14 +68,8 @@ export function ToolCallsChart({
       mono
       metric={metric}
     >
-      {/* Same footer as the Top card: a bordered row holding one pill group. */}
-      <div style={{
-        paddingTop: '12px',
-        borderTop: '1px solid var(--border-color)',
-        display: 'flex',
-        alignItems: 'center',
-      }}>
-        <div className="tab-toggle">
+      <div className="top-list-controls">
+        <div className="tab-toggle compact">
           {(['count', 'totalTime', 'avgTime'] as ToolMetric[]).map(m => (
             <button
               key={m}

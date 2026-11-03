@@ -327,6 +327,83 @@ export function fillGaps(data: DailyUsage[], granularity: PeriodGranularity, per
 // Calm categorical palette (index.css --series-*); green first.
 export const PALETTE = Array.from({ length: 8 }, (_, i) => `var(--series-${i + 1})`)
 
+// ─── Identity colours: dimmed brand hues (index.css --hue-*) for small marks ─
+
+const hue = (name: string) => `var(--hue-${name})`
+
+/** A stable palette colour for a name with no identity colour of its own. */
+export function nameColor(name: string) {
+  let h = 0
+  for (const ch of name.toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return PALETTE[h % PALETTE.length]
+}
+
+/** First keyword contained in the name wins; a key ending in '/' must be a prefix. */
+function keywordHue(name: string, table: [string, string][]) {
+  const n = name.toLowerCase()
+  const match = table.find(([key]) => key.endsWith('/') ? n.startsWith(key) : n.includes(key))
+  return match ? hue(match[1]) : null
+}
+
+const FAMILY_HUES: Record<string, string> = {
+  hunyuan: 'royal', openai: 'slate', claude: 'orange', gemini: 'blue', minimax: 'rose', xiaomi: 'sand',
+  inclusionai: 'indigo', poolside: 'amber', deepseek: 'royal', doubao: 'cyan', openrouter: 'indigo', glm: 'royal',
+  stepfun: 'sky', nvidia: 'lime', qwen: 'violet', cohere: 'teal', dots: 'teal', stealth: 'grey', meta: 'royal',
+  grok: 'ink', longcat: 'green', commandcode: 'grey',
+}
+
+export function modelColor(model: string) {
+  const id = FAMILY_HUES[modelFamily(model).id]
+  return id ? hue(id) : nameColor(model)
+}
+
+const PROVIDER_HUES: [string, string][] = [
+  ['tencent/', 'royal'], ['anthropic', 'orange'], ['openai', 'slate'], ['google', 'blue'], ['minimax', 'rose'],
+  ['xiaomi', 'sand'], ['openrouter', 'indigo'], ['opencode', 'green'], ['inclusionai', 'indigo'], ['poolside', 'amber'],
+  ['deepseek', 'royal'], ['doubao', 'cyan'], ['seed', 'cyan'], ['z-ai', 'royal'], ['stepfun', 'sky'], ['volce', 'sky'],
+  ['nvidia', 'lime'], ['cohere', 'teal'], ['qwen', 'violet'], ['dots', 'teal'],
+]
+
+export function providerColor(provider: string) {
+  return keywordHue(provider, PROVIDER_HUES) ?? modelColor(provider)
+}
+
+const SOURCE_HUES: [string, string][] = [
+  ['claude', 'orange'], ['codex', 'slate'], ['gemini', 'blue'], ['opencode', 'green'], ['open-code', 'green'],
+  ['kilo', 'cyan'], ['hermes', 'purple'], ['proxy', 'violet'],
+]
+
+export function sourceColor(source: string) {
+  return keywordHue(source, SOURCE_HUES) ?? nameColor(source)
+}
+
+const TOOL_HUES: Record<string, string> = {
+  bash: 'blue', shell: 'blue', exec_command: 'sky', exec: 'orange', read: 'green', edit: 'amber', apply_patch: 'amber',
+  write: 'red', grep: 'violet', glob: 'cyan', list: 'cyan', task: 'indigo', lsp: 'indigo', webfetch: 'pink',
+  websearch: 'purple', skill: 'teal', question: 'violet', todowrite: 'yellow', mcp_tool: 'rose',
+}
+
+export function toolColor(tool: string) {
+  const id = TOOL_HUES[tool.toLowerCase()]
+  return id ? hue(id) : nameColor(tool)
+}
+
+/**
+ * One colour per key, in order. A key whose colour is already taken (two
+ * Claude models) gets a lighter, then a deeper, shade of the same hue.
+ */
+export function distinctColors(keys: string[], colorOf: (key: string) => string): Map<string, string> {
+  const taken = new Map<string, number>()
+  return new Map(keys.map(key => {
+    const color = colorOf(key)
+    const n = taken.get(color) ?? 0
+    taken.set(color, n + 1)
+    if (n === 0) return [key, color]
+    const toward = n % 2 ? 'var(--card-bg)' : 'var(--text-primary)'
+    return [key, `color-mix(in oklab, ${color} ${Math.max(35, 100 - 30 * Math.ceil(n / 2))}%, ${toward})`]
+  }))
+}
+
 export function getProviderColor(provider: string, providerColors: Record<string, string>): string {
   return providerColors[provider] || 'var(--chart-2)';
 }
@@ -472,19 +549,10 @@ export function getSetupAgentKey(name: string) {
   return normalized
 }
 
-// ─── Tool colours: a stable series colour per tool (timeline swatches) ─────
-
-export function getToolColor(toolName: string) {
-  let h = 0
-  for (const ch of toolName.toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) >>> 0
-  // Series 1-2 (green, slate) are the timeline's generation and TTFT bars.
-  return { bg: PALETTE[2 + h % (PALETTE.length - 2)] }
-}
-
 export function ToolBadge({ name, count, style }: { name: string; count?: number; style?: React.CSSProperties }) {
   return (
     <span className="entity-badge mono" style={style}>
-      {name}{count != null ? `×${count}` : ''}
+      <i className="entity-dot" style={{ background: toolColor(name) }} />{name}{count != null ? `×${count}` : ''}
     </span>
   )
 }

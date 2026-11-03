@@ -99,7 +99,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                   </div>
                 )}
                 {value(row.cache_creation_tokens) > 0 && (
-                  <div style={{ fontSize: '10px', color: 'var(--series-4)', fontWeight: 500 }}>
+                  <div style={{ fontSize: '10px', color: 'var(--color-yellow)', fontWeight: 500 }}>
                     {t('Cache write')} {formatNumber(row.cache_creation_tokens)}
                   </div>
                 )}
@@ -125,11 +125,11 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                       display: 'flex'
                     }}>
                       <div style={{ height: '100%', background: 'var(--color-green)', width: `${(value(row.cached_tokens) / total) * 100}%` }} />
-                      <div style={{ height: '100%', background: 'var(--series-2)', width: `${(promptUncached / total) * 100}%`, opacity: 0.7 }} />
+                      <div style={{ height: '100%', background: 'var(--chart-2)', width: `${(promptUncached / total) * 100}%`, opacity: 0.7 }} />
                       {cacheCreation > 0 && (
-                        <div style={{ height: '100%', background: 'var(--series-4)', width: `${(cacheCreation / total) * 100}%` }} />
+                        <div style={{ height: '100%', background: 'var(--color-yellow)', width: `${(cacheCreation / total) * 100}%` }} />
                       )}
-                      <div style={{ height: '100%', background: 'var(--series-3)', width: `${(value(row.completion_tokens) / total) * 100}%` }} />
+                      <div style={{ height: '100%', background: 'var(--color-blue)', width: `${(value(row.completion_tokens) / total) * 100}%` }} />
                     </div>
                     <div className="tooltip-text">
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -138,17 +138,17 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                           <span style={{ fontWeight: 600 }}>{formatNumber(row.cached_tokens)}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                          <span style={{ color: 'var(--series-2)' }}>&bull; {t('Input')}:</span>
+                          <span style={{ color: 'var(--chart-2)' }}>&bull; {t('Input')}:</span>
                           <span style={{ fontWeight: 600 }}>{formatNumber(promptUncached)}</span>
                         </div>
                         {cacheCreation > 0 && (
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                            <span style={{ color: 'var(--series-4)' }}>&bull; {t('Cache write')}:</span>
+                            <span style={{ color: 'var(--color-yellow)' }}>&bull; {t('Cache write')}:</span>
                             <span style={{ fontWeight: 600 }}>{formatNumber(cacheCreation)}</span>
                           </div>
                         )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                          <span style={{ color: 'var(--series-3)' }}>&bull; {t('Output')}:</span>
+                          <span style={{ color: 'var(--color-blue)' }}>&bull; {t('Output')}:</span>
                           <span style={{ fontWeight: 600 }}>{formatNumber(row.completion_tokens)}</span>
                         </div>
                       </div>
@@ -286,7 +286,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                         <div className="cost-tooltip-row">
                           <span className="cost-tooltip-label">{t('Cache write:')}</span>
                           <div className="cost-tooltip-amount">
-                            <div style={{ color: 'var(--series-4)' }}>{formatCost(cacheWriteCost)}</div>
+                            <div style={{ color: 'var(--color-yellow)' }}>{formatCost(cacheWriteCost)}</div>
                             {pricing && pricing.cache_write !== null && (
                               <div className="cost-tooltip-detail">{formatNumber(cacheCreation)} tokens x {formatRate(pricing.cache_write)}</div>
                             )}

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formatLatency, getToolColor, ToolBadge } from '../utils'
+import { formatLatency, toolColor, ToolBadge } from '../utils'
 import { t } from '../i18n/index.ts'
 
 export type TimelineTool = {
@@ -223,7 +223,7 @@ export function buildTimelineData({
             toolUseId: tc.tool_use_id,
             startMs: tc.startMs,
             durationMs: tc.durationMs,
-            color: getToolColor(tc.tool_name).bg,
+            color: toolColor(tc.tool_name),
           },
         ],
       })
@@ -248,7 +248,7 @@ export function buildTimelineData({
           toolUseId: tc.tool_use_id,
           startMs: tc.startMs,
           durationMs: tc.durationMs,
-          color: getToolColor(tc.tool_name).bg,
+          color: toolColor(tc.tool_name),
         })),
       })
     }
@@ -491,7 +491,7 @@ export function RequestTimeline({
               >
                 <span
                   className="request-timeline-swatch"
-                  style={{ background: getToolColor(tc.tool_name).bg, opacity: 0.5 }}
+                  style={{ background: toolColor(tc.tool_name), opacity: 0.5 }}
                 />
                 {tc.tool_name}
               </span>

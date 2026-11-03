@@ -375,7 +375,7 @@ export function OverviewTab({
           <>
         <StatTile
           label={t('Estimated Cost')}
-          color="var(--color-green)"
+          color="var(--color-blue)"
           points={costPoints}
           animatedValue={animatedCost}
           format={(v) => formatCost(v, 2)}
@@ -389,7 +389,7 @@ export function OverviewTab({
 
         <StatTile
           label={t('Token Usage')}
-          color="var(--chart-2)"
+          color="var(--color-yellow)"
           points={tokenPoints}
           animatedValue={animatedTotalTokens}
           format={(v) => formatCompact(v)}
@@ -405,7 +405,7 @@ export function OverviewTab({
 
         <StatTile
           label={t('Requests')}
-          color="var(--chart-2)"
+          color="var(--color-pink)"
           points={requestPoints}
           animatedValue={animatedRequests}
           format={(v) => formatNumber(v)}
@@ -418,7 +418,7 @@ export function OverviewTab({
 
         <StatTile
           label={t('Cache Hit Rate')}
-          color="var(--chart-2)"
+          color="var(--hue-green)"
           points={hitRatePoints}
           animatedValue={animatedHitRate}
           format={(v) => `${v.toFixed(1)}%`}
@@ -432,7 +432,7 @@ export function OverviewTab({
 
         <StatTile
           label={t('Avg Speed')}
-          color="var(--chart-2)"
+          color="var(--color-purple)"
           points={speedPoints}
           animatedValue={animatedThroughput}
           format={(v) => v > 0 ? formatThroughput(v) : '0.0 t/s'}

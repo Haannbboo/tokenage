@@ -14,32 +14,54 @@
   --text-secondary: #525252;
   --text-muted: #8a8a8a;
 
-  /* Accent colors: green is the one accent; the rest are muted, similar lightness. */
-  --color-blue: #5b7fa6;
+  /* Identity colours for models, providers, agents and tools: brand hues at
+     one perceived lightness per theme (OKLCH), calmer chroma than the brand
+     marks. They go on small marks (dots, thin bars, lines), never on fills. */
+  --hue-orange: oklch(0.62 0.150 45);
+  --hue-amber: oklch(0.64 0.140 65);
+  --hue-yellow: oklch(0.69 0.130 88);
+  --hue-sand: oklch(0.66 0.070 80);
+  --hue-lime: oklch(0.64 0.140 130);
+  --hue-green: oklch(0.62 0.130 155);
+  --hue-teal: oklch(0.62 0.110 180);
+  --hue-cyan: oklch(0.62 0.110 205);
+  --hue-sky: oklch(0.62 0.120 232);
+  --hue-blue: oklch(0.62 0.150 258);
+  --hue-royal: oklch(0.58 0.160 268);
+  --hue-indigo: oklch(0.62 0.140 280);
+  --hue-violet: oklch(0.62 0.150 295);
+  --hue-purple: oklch(0.62 0.140 318);
+  --hue-pink: oklch(0.62 0.140 350);
+  --hue-rose: oklch(0.62 0.150 10);
+  --hue-red: oklch(0.60 0.160 27);
+  --hue-slate: oklch(0.62 0.035 258);
+  --hue-grey: oklch(0.64 0.000 0);
+  --hue-ink: #3f3f46;
+
+  --color-blue: var(--hue-blue);
   --color-green: #047857;
-  --color-yellow: #a8843f;
-  --color-pink: #a86a78;
-  --color-purple: #8574a3;
-  --color-indigo: #6b74a3;
+  --color-yellow: var(--hue-yellow);
+  --color-pink: var(--hue-rose);
+  --color-purple: var(--hue-purple);
+  --color-indigo: var(--hue-indigo);
   --accent-bg: #ecfdf5;
-  --chart-2: #64748b;
-  --bar-fill: #a3a3a3;
+  --chart-2: var(--hue-slate);
 
-  /* Categorical series: one calm palette for every multi-series chart. */
-  --series-1: var(--color-green);
-  --series-2: var(--chart-2);
-  --series-3: var(--color-blue);
-  --series-4: var(--color-yellow);
-  --series-5: var(--color-purple);
-  --series-6: var(--color-pink);
-  --series-7: #4d9393;
-  --series-8: #8f8f62;
+  /* Categorical fallback for names with no identity colour. */
+  --series-1: var(--hue-green);
+  --series-2: var(--hue-blue);
+  --series-3: var(--hue-amber);
+  --series-4: var(--hue-cyan);
+  --series-5: var(--hue-lime);
+  --series-6: var(--hue-rose);
+  --series-7: var(--hue-violet);
+  --series-8: var(--hue-indigo);
 
-  /* Heatmap: one low-saturation green ramp. */
-  --heat-1: #d5e6dd;
-  --heat-2: #a9cbb9;
-  --heat-3: #74a88c;
-  --heat-4: #3f7f5f;
+  /* Daily Activity heatmap: a low-saturation green ramp. */
+  --heat-1: oklch(0.92 0.040 155);
+  --heat-2: oklch(0.82 0.080 155);
+  --heat-3: oklch(0.70 0.110 155);
+  --heat-4: oklch(0.56 0.110 155);
 
   /* Component states */
   --tab-active-bg: var(--surface-active);
@@ -115,26 +137,37 @@
   --text-secondary: #a3a3a3;
   --text-muted: #737373;
 
-  --color-blue: #86a3c4;
-  --color-green: #34d399;
-  --color-yellow: #c8a86c;
-  --color-pink: #c4919c;
-  --color-purple: #a698c2;
-  --color-indigo: #959cc4;
-  --accent-bg: rgba(52, 211, 153, 0.12);
-  --chart-2: #94a3b8;
-  --bar-fill: #5c5c5c;
-  --series-7: #75afaf;
-  --series-8: #b0b08a;
-  --heat-1: #1d3328;
-  --heat-2: #24533d;
-  --heat-3: #2f7a57;
-  --heat-4: #45a57a;
+  --hue-orange: oklch(0.74 0.130 45);
+  --hue-amber: oklch(0.76 0.130 65);
+  --hue-yellow: oklch(0.80 0.120 88);
+  --hue-sand: oklch(0.77 0.070 80);
+  --hue-lime: oklch(0.76 0.130 130);
+  --hue-green: oklch(0.74 0.130 155);
+  --hue-teal: oklch(0.74 0.110 180);
+  --hue-cyan: oklch(0.74 0.110 205);
+  --hue-sky: oklch(0.74 0.110 232);
+  --hue-blue: oklch(0.74 0.130 258);
+  --hue-royal: oklch(0.72 0.130 268);
+  --hue-indigo: oklch(0.74 0.120 280);
+  --hue-violet: oklch(0.74 0.130 295);
+  --hue-purple: oklch(0.74 0.130 318);
+  --hue-pink: oklch(0.74 0.130 350);
+  --hue-rose: oklch(0.74 0.130 10);
+  --hue-red: oklch(0.74 0.140 27);
+  --hue-slate: oklch(0.74 0.035 258);
+  --hue-grey: oklch(0.68 0.000 0);
+  --hue-ink: #c8c8cc;
+  --color-green: #45c08e;
+  --accent-bg: rgba(69, 192, 142, 0.12);
+  --heat-1: oklch(0.32 0.050 155);
+  --heat-2: oklch(0.44 0.080 155);
+  --heat-3: oklch(0.58 0.110 155);
+  --heat-4: oklch(0.72 0.130 155);
 
   --tab-toggle-active-bg: #262626;
   --progress-bg: #222222;
-  --badge-success-bg: rgba(52, 211, 153, 0.12);
-  --badge-success-text: #34d399;
+  --badge-success-bg: rgba(69, 192, 142, 0.12);
+  --badge-success-text: #45c08e;
   --badge-error-bg: rgba(239, 128, 128, 0.12);
   --badge-error-text: #e59a9a;
   --badge-warn-bg: rgba(200, 168, 108, 0.12);

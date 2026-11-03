@@ -18,6 +18,8 @@ export type BarItem = {
   cacheHitRate?: number | null
   totalTime?: number | null
   avgTime?: number | null
+  /** Dimmed identity colour: the dot and the bar. */
+  color: string
 }
 
 export type Metric = 'tokens' | 'cost' | 'throughput' | 'successRate' | 'cacheHitRate' | 'count' | 'totalTime' | 'avgTime'
@@ -57,11 +59,18 @@ export function HorizontalBarChart({
 
   const hovered = hoveredItem ? sorted.find((item) => item.name === hoveredItem) ?? null : null
 
+  const format = (v: number) => metric === 'tokens' ? formatCompact(v) : metric === 'count' ? formatNumber(v) : metric === 'cost' ? formatCost(v, 2) : metric === 'successRate' || metric === 'cacheHitRate' ? `${v.toFixed(1)}%` : metric === 'totalTime' || metric === 'avgTime' ? formatLatency(v) : formatThroughput(v)
+  // Shares only make sense for metrics that add up.
+  const additive = metric === 'tokens' || metric === 'cost' || metric === 'count' || metric === 'totalTime'
+  const total = additive ? sorted.reduce((sum, item) => sum + getMetricValue(item), 0) : 0
+
   return (
-    <div className="widget" style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="widget top-list">
       <div className="widget-header">
         <span>{title}</span>
+        {additive && total > 0 && <span className="widget-meta">{t('Total')} {format(total)}</span>}
       </div>
+      {children}
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column' }}>
         {metric === 'tokens' && hovered && (
           <ChartTooltip left="50%">
@@ -88,37 +97,37 @@ export function HorizontalBarChart({
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>{t('No data available')}</div>
           </div>
         ) : (
-          <div className="bar-list">
+          <ol className="rank-list">
           {sorted.map((s, index) => {
             const currentVal = getMetricValue(s)
             const percentage = (currentVal / maxValue) * 100
+            const sub = metric === 'cost' && s.pricePerMillion != null ? formatRate(s.pricePerMillion) : null
 
             return (
-              <div
+              <li
                 key={`${s.name}-${index}`}
-                className="bar-row"
+                className="rank-row"
                 onMouseEnter={() => setHoveredItem(s.name)}
                 onMouseLeave={() => setHoveredItem((current) => current === s.name ? null : current)}
               >
-                <div className="bar-row-head">
-                  <span className={`bar-row-name${mono ? ' mono' : ''}`} title={s.name}>{s.icon}<span>{s.name}</span></span>
-                  <span className="bar-row-value">
-                    {metric === 'cost' && s.pricePerMillion != null && (
-                      <small>{formatRate(s.pricePerMillion)}</small>
-                    )}
-                    {metric === 'tokens' ? formatCompact(currentVal) : metric === 'count' ? formatNumber(currentVal) : metric === 'cost' ? formatCost(currentVal, 2) : metric === 'successRate' || metric === 'cacheHitRate' ? `${currentVal.toFixed(1)}%` : metric === 'totalTime' || metric === 'avgTime' ? formatLatency(currentVal) : formatThroughput(currentVal)}
-                  </span>
-                </div>
-                <div className="bar-track"><i style={{ width: `${percentage}%`, background: index === 0 ? 'var(--color-green)' : 'var(--bar-fill)' }} /></div>
-              </div>
+                <span className="rank-n">{index + 1}</span>
+                <span className="rank-mark">{s.icon ?? <i style={{ background: s.color }} />}</span>
+                <span className="rank-name" title={s.name}>
+                  <span className={mono ? 'mono' : undefined}>{s.name}</span>
+                  {sub && <small>{sub}</small>}
+                </span>
+                <span className="rank-value">
+                  {format(currentVal)}
+                  {additive && total > 0 && <small>{(currentVal / total * 100).toFixed(1)}%</small>}
+                </span>
+                <span className="rank-bar"><i style={{ width: `${percentage}%`, background: s.color }} /></span>
+              </li>
             )
             })
           }
-          </div>
+          </ol>
         )}
-      {/* Pinned to the card's bottom edge when the list is shorter than the card. */}
-      {children && <div style={{ marginTop: 'auto' }}>{children}</div>}
-    </div>
+      </div>
     </div>
   )
 }

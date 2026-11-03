@@ -2,7 +2,7 @@ import { appendModels } from '../modelFilter'
 import { useState, useMemo, useEffect } from 'react'
 import type { Theme } from '../theme'
 import type { UsageSummary } from '../types'
-import { formatModelName, formatProviderName, getModelIcon, getProviderIcon, getSourceIcon, netThroughput, getTimezoneOffset, resolveTimezone } from '../utils'
+import { formatModelName, formatProviderName, getModelIcon, getProviderIcon, getSourceIcon, modelColor, providerColor, sourceColor, nameColor, netThroughput, getTimezoneOffset, resolveTimezone } from '../utils'
 import { useApp } from '../contexts/AppContext'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
@@ -140,6 +140,7 @@ export function TopUsageChart({
         name: formatModelName(model),
         id: model,
         icon: getModelIcon(model, theme),
+        color: modelColor(model),
         tokens: v.tokens,
         promptTokens: v.prompt,
         completionTokens: v.completion,
@@ -172,6 +173,7 @@ export function TopUsageChart({
       return Array.from(map.entries()).map(([provider, v]) => ({
         name: formatProviderName(provider),
         icon: getProviderIcon(provider, theme),
+        color: providerColor(provider),
         tokens: v.tokens,
         promptTokens: v.prompt,
         completionTokens: v.completion,
@@ -202,6 +204,7 @@ export function TopUsageChart({
       return Array.from(map.values()).map(v => ({
         name: v.name,
         icon: null,
+        color: nameColor(v.name),
         tokens: v.tokens,
         promptTokens: v.prompt,
         completionTokens: v.completion,
@@ -226,6 +229,7 @@ export function TopUsageChart({
       return {
         name,
         icon: getSourceIcon(name),
+        color: sourceColor(name),
         tokens,
         promptTokens: prompt,
         completionTokens: row.completion_tokens ?? 0,
@@ -248,16 +252,8 @@ export function TopUsageChart({
       mono={dimension === 'model'}
       metric={metric}
     >
-      <div style={{
-        paddingTop: '12px',
-        borderTop: '1px solid var(--border-color)',
-        display: 'flex',
-        flexWrap: 'wrap',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: '8px',
-      }}>
-        <div className="tab-toggle">
+      <div className="top-list-controls">
+        <div className="tab-toggle compact">
           {(['model', 'provider', 'source', 'device'] as Dimension[]).map(d => (
             <button
               key={d}
@@ -268,7 +264,7 @@ export function TopUsageChart({
             </button>
           ))}
         </div>
-        <div className="tab-toggle">
+        <div className="tab-toggle compact">
           {(['tokens', 'cost', 'throughput', 'cacheHitRate', 'successRate'] as Metric[]).map(m => (
             <button
               key={m}

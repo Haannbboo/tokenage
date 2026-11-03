@@ -2,7 +2,7 @@ import { appendModels } from '../modelFilter'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { DailyUsage, DateRangeOption, UsageSummary } from '../types'
 import { getSinceDate, rangeGranularity } from '../dateRange.ts'
-import { getTimezoneOffset, resolveTimezone, PALETTE, netThroughput } from '../utils'
+import { getTimezoneOffset, resolveTimezone, providerColor, netThroughput } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -31,7 +31,7 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
   const dashboardHasLoadedRef = useRef(false)
 
   const providerColors = useMemo(() => Object.fromEntries(
-    Array.from(new Set(summary.map(s => s.provider))).sort().map((p, i) => [p, PALETTE[i % PALETTE.length]]),
+    Array.from(new Set(summary.map(s => s.provider))).map(p => [p, providerColor(p)]),
   ), [summary]);
 
   const dashboardFilterParams = useMemo(() => ({

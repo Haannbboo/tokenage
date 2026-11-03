@@ -114,9 +114,11 @@ describe('trend model families', () => {
     expect(within(container).queryByText(/\d+ Requests/)).toBeNull()
     expect(within(container).getByText('Requests:')).toBeTruthy()
     expect(within(container.querySelector('.widget-header')!).getByText('Requests')).toBeTruthy()
-    // Families are drawn in the shared palette, in legend order.
+    // Families are drawn in their dimmed identity colours.
     const fills = [...container.querySelectorAll('path')].map(path => path.getAttribute('fill') ?? '')
-    expect(fills.every(fill => fill.startsWith('var(--series-'))).toBe(true)
+    expect(fills).toContain('var(--hue-orange)')
+    expect(fills).toContain('var(--hue-slate)')
+    expect(new Set(fills).size).toBe(fills.length)
   })
 
   it('keeps existing icon matches and theme variants', () => {
@@ -129,19 +131,25 @@ describe('trend model families', () => {
 })
 
 describe('trend colours', () => {
-  it('gives the series the shared palette in legend order, green first', () => {
-    const colours = [...trendSeriesColors(Array.from({ length: 9 }, (_, i) => ({ key: `s${i}` }))).values()]
-    expect(colours.slice(0, 8)).toEqual(Array.from({ length: 8 }, (_, i) => `var(--series-${i + 1})`))
-    expect(colours[8]).toBe('var(--series-1)')
+  it('gives each series its identity colour and shades apart a repeated hue', () => {
+    const colours = trendSeriesColors([
+      { key: 'claude-one', model: 'claude-one' },
+      { key: 'gpt-one', model: 'gpt-one' },
+      { key: 'claude-two', model: 'claude-two' },
+      { key: 'Claude', model: 'claude-three' },
+    ])
+    expect(colours.get('claude-one')).toBe('var(--hue-orange)')
+    expect(colours.get('gpt-one')).toBe('var(--hue-slate)')
+    expect(colours.get('claude-two')).toContain('var(--hue-orange)')
+    expect(new Set(colours.values()).size).toBe(4)
   })
 
-  it('defines every series colour for light and dark', () => {
+  it('defines every identity hue for light and dark', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
     const [light, dark] = css.split('[data-theme="dark"]')
-    for (let i = 1; i <= 8; i++) expect(light, `--series-${i}`).toContain(`--series-${i}:`)
-    // The dark block either redefines a series or the accent it points at.
-    for (const name of ['--color-green', '--chart-2', '--color-blue', '--color-yellow', '--color-purple', '--color-pink', '--series-7', '--series-8']) {
-      expect(dark, name).toContain(`${name}:`)
-    }
+    const hues = [...light.matchAll(/--hue-([a-z]+):/g)].map(m => m[1])
+    expect(hues.length).toBeGreaterThan(10)
+    for (const name of hues) expect(dark, `--hue-${name}`).toContain(`--hue-${name}:`)
+    for (let i = 1; i <= 8; i++) expect(light, `--series-${i}`).toMatch(new RegExp(`--series-${i}: var\\(--hue-`))
   })
 })

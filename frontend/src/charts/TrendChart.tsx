@@ -191,9 +191,9 @@ export function TrendChart({
     }
     return [...entries.values()].sort((a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model));
   }, [modelTotals, familyMode]);
-  // One palette colour per series (a model, or a family), in legend order.
+  // One identity colour per series (a model, or a family), in legend order.
   const modelColors = useMemo(
-    () => trendSeriesColors(legendModels.map(m => ({ key: m.model }))),
+    () => trendSeriesColors(legendModels.map(m => ({ key: m.model, model: m.iconModel }))),
     [legendModels],
   );
   // Keep the same segment order in every bucket, regardless of metric.

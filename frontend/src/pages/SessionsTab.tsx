@@ -6,7 +6,7 @@ import { SessionDetail } from '../components/SessionDetail'
 import { getSinceDate } from '../dateRange'
 import { expandableRowProps } from '../expandableRow'
 import { t } from '../i18n'
-import { formatCost, formatNumber, formatTime, getSourceIcon, resolveTimezone, getAgentDisplayName, sessionAgentName, shortSessionId, ToolBadge, PALETTE } from '../utils'
+import { formatCost, formatNumber, formatTime, getSourceIcon, resolveTimezone, getAgentDisplayName, sessionAgentName, shortSessionId, ToolBadge, distinctColors, sourceColor } from '../utils'
 
 export function SessionsTab({ onNavigateToLogs }: { onNavigateToLogs: (filters?: { sessionFilter?: string }) => void }) {
   const { activeSource, dateRange, timezone, showToast } = useApp()
@@ -25,7 +25,8 @@ export function SessionsTab({ onNavigateToLogs }: { onNavigateToLogs: (filters?:
   const visibleStarts = sessions.map(s => rangeStart != null && s.started < rangeStart ? s.ended : s.started)
   const min = sessions.some(s => rangeStart == null || s.started >= rangeStart) ? Math.min(...visibleStarts) : rangeStart ?? 0
   const max = ends.length ? Math.max(...ends) : min, span = Math.max(1, max - min)
-  const agentColor = (source: string | null | undefined) => PALETTE[Math.max(0, (distribution?.by_agent ?? []).findIndex(row => row.key === source)) % PALETTE.length]
+  const agentColors = distinctColors((distribution?.by_agent ?? []).map(row => row.key ?? ''), key => sourceColor(key || 'unknown'))
+  const agentColor = (source: string | null | undefined) => agentColors.get(source ?? '') ?? 'var(--chart-2)'
   const agentName = (source: string | null | undefined) => source ? getAgentDisplayName(source) === source ? sessionAgentName(source) : getAgentDisplayName(source) : t('Unknown')
   const shortTimeLabel = (row: { period?: string; start?: string; end?: string }) => {
     const date = new Date(row.start ?? '')

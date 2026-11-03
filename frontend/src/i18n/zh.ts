@@ -110,6 +110,11 @@ export const zh: Record<string, string> = {
   'Untimed:': '未上报耗时:',
   'no duration reported': '未上报耗时',
   'Total': '总计',
+  'Providers': '供应商',
+  'Sources': '来源',
+  'Count': '次数',
+  'Total time': '总耗时',
+  'Avg time': '平均耗时',
 
   // Chart messages
   'Failed to load model breakdown': '加载模型明细失败',

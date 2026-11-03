@@ -578,7 +578,7 @@
 .badge-warn { background: var(--badge-warn-bg); color: var(--badge-warn-text); }
 
 /* Model / provider / tool / source: one neutral badge; identity comes from the
-   small monochrome logo, never from a fill colour. */
+   small logo or a colour dot, never from a fill colour. */
 .entity-badge {
   display: inline-flex;
   align-items: center;
@@ -597,19 +597,31 @@
   text-overflow: ellipsis;
 }
 .entity-badge > span { overflow: hidden; text-overflow: ellipsis; }
+.entity-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; }
 .mono { font-family: var(--font-mono); font-size: 12px; }
 .entity-badge.mono { font-size: 11px; }
-img[src^="/models/"] { filter: grayscale(1); opacity: 0.8; }
+/* Brand logos keep their hue, a little calmer. */
+img[src^="/models/"] { filter: saturate(0.7); }
 
-/* Bar lists (Top Models, Tool Calls): grey bars on a light track, the top one green. */
-.bar-list { display: flex; flex-direction: column; gap: 10px; max-height: 300px; padding: 4px 0 12px; overflow-y: auto; }
-.bar-row-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 12px; }
-.bar-row-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-secondary); }
-.bar-row-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar-row-value { display: inline-flex; align-items: baseline; gap: 6px; color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.bar-row-value small { color: var(--text-muted); font-size: 11px; }
-.bar-track { height: 4px; border-radius: 2px; background: var(--surface-sunken); overflow: hidden; }
-.bar-track i { display: block; height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+/* Ranked lists (Top Models, Tool Calls): rank, mark, name, value, then a slim
+   bar in the item's dimmed colour. */
+.widget-meta { margin-left: auto; color: var(--text-muted); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.top-list { flex: 1; height: 100%; gap: 12px; }
+.top-list-controls { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.tab-toggle.compact .tab-toggle-btn { padding: 2px 8px; font-size: 11px; }
+.rank-list { display: flex; flex-direction: column; gap: 12px; max-height: 320px; margin: 0; padding: 2px 0 0; overflow-y: auto; list-style: none; }
+.rank-row { display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 5px; font-size: 12px; }
+.rank-n { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.rank-mark { display: flex; justify-content: center; }
+.rank-mark > i { width: 7px; height: 7px; border-radius: 50%; }
+.rank-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; color: var(--text-primary); }
+.rank-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-name small, .rank-value small { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.rank-value { display: inline-flex; align-items: baseline; gap: 8px; color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rank-value small { min-width: 38px; text-align: right; }
+.rank-bar { grid-column: 3 / -1; height: 4px; border-radius: 2px; background: var(--surface-sunken); overflow: hidden; }
+.rank-bar i { display: block; height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+.rank-row:hover .rank-n { color: var(--text-primary); }
 
 .sessions-table {
   table-layout: fixed;

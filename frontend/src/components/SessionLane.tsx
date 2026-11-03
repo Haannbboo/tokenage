@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { UsageRow } from '../types'
-import { formatTime, PALETTE } from '../utils'
+import { distinctColors, formatTime, modelColor } from '../utils'
 import { t } from '../i18n'
 
 export function lanePositions(rows: UsageRow[]) {
@@ -37,7 +37,7 @@ export function laneLayout(rows: UsageRow[], width = 1000) {
 function axisTime(ms: number, tz?: string) { return new Intl.DateTimeFormat(undefined, { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(ms)) }
 export function SessionLane({ rows, selected, hovered, onHover, onSelect, tz }: { rows: UsageRow[]; selected: string | null; hovered?: string | null; onHover?: (id: string | null) => void; onSelect: (id: string) => void; tz?: string }) {
   const layout = useMemo(() => laneLayout(rows), [rows])
-  const modelColors = useMemo(() => new Map([...new Set(rows.map(row => row.model))].sort().map((model, i) => [model, PALETTE[i % PALETTE.length]])), [rows])
+  const modelColors = useMemo(() => distinctColors([...new Set(rows.map(row => row.model))].sort(), modelColor), [rows])
   return <div><div className="session-lane-heading"><span>{t('Timeline')}</span></div><div className="session-model-legend">{[...modelColors].map(([model, color]) => <span key={model}><i style={{ background: color }} />{model}</span>)}</div>
   <div className="session-lane"><div className={`session-lane-track${hovered ? ' has-hover' : ''}`}>
     {layout.marks.map(({ row, px, pxWidth }) => <span key={row.id} className="session-mark-wrap" style={{ left: `${px / layout.width * 100}%`, width: `${pxWidth / layout.width * 100}%` }}>

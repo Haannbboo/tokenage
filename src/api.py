@@ -5,6 +5,7 @@ import re
 import shlex
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -32,8 +33,11 @@ from .auth import router as auth_router
 from .auth.tokens import list_user_devices, set_device_status
 from .database import (
     Device,
+    SessionFilters,
     User,
     aggregate_daily_by_dimension,
+    aggregate_session_context,
+    aggregate_session_distribution,
     aggregate_usage_by_period,
     count_sessions,
     count_usage,
@@ -50,7 +54,6 @@ from .database import (
     load_model_price_overrides,
     recalculate_usage_cost,
     reprice_estimated_rows,
-    summarize_session_tool_calls,
     summarize_sessions,
     summarize_tool_calls,
     summarize_usage_by_model,
@@ -548,72 +551,91 @@ def usage_daily_by_dimension(
     )
 
 
-@app.get("/sessions")
-def get_sessions(
+def _session_query_filters(
     request: Request,
     client_source: str | None = None,
     since: str | None = None,
     until: str | None = None,
+    device_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> SessionFilters:
+    try:
+        return SessionFilters(
+            user_id=_request_user_id(request),
+            client_source=client_source,
+            since=since,
+            until=until,
+            device_id=device_id,
+            provider=provider,
+            model=_model_filter(request, model),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+def _session_list_filters(
+    filters: SessionFilters = Depends(_session_query_filters),
+    duration_bucket: str | None = None,
+    cost_bucket: str | None = None,
+) -> SessionFilters:
+    try:
+        return replace(
+            filters, duration_bucket=duration_bucket, cost_bucket=cost_bucket
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.get("/sessions")
+def get_sessions(
+    filters: SessionFilters = Depends(_session_list_filters),
     view: str = "summary",
     sort_by: str = "ended",
     sort_order: str = "desc",
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ):
-    user_id = _request_user_id(request)
     if view not in {"summary", "selector"}:
         raise HTTPException(
             status_code=400,
             detail="Invalid view. Must be one of ['summary', 'selector']",
         )
-
-    if view == "selector":
-        return {
-            "sessions": fetch_session_selector_rows(
-                user_id=user_id,
-                client_source=client_source,
-                since=since,
-                until=until,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                limit=limit,
-                offset=offset,
-            ),
-            "total": None,
-        }
-
-    sessions = fetch_sessions(
-        user_id=user_id,
-        client_source=client_source,
-        since=since,
-        until=until,
+    fetch = fetch_session_selector_rows if view == "selector" else fetch_sessions
+    sessions = fetch(
+        filters=filters,
         sort_by=sort_by,
         sort_order=sort_order,
         limit=limit,
         offset=offset,
     )
-    total = count_sessions(
-        user_id=user_id,
-        client_source=client_source,
-        since=since,
-        until=until,
-    )
-    return {"sessions": sessions, "total": total}
+    return {
+        "sessions": sessions,
+        "total": None if view == "selector" else count_sessions(filters=filters),
+    }
 
 
 @app.get("/sessions/summary")
-def get_sessions_summary(
-    request: Request,
-    client_source: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
+def get_sessions_summary(filters: SessionFilters = Depends(_session_query_filters)):
+    return summarize_sessions(filters=filters)
+
+
+@app.get("/sessions/distribution")
+def get_sessions_distribution(
+    filters: SessionFilters = Depends(_session_query_filters),
+    granularity: str = "day",
+    tz_offset: str = "+00:00",
 ):
-    return summarize_sessions(
-        user_id=_request_user_id(request),
-        client_source=client_source,
-        since=since,
-        until=until,
-    )
+    if granularity not in {"day", "hour", "15m"}:
+        raise HTTPException(status_code=400, detail="Invalid granularity")
+    if not re.fullmatch(r"[+-](?:0[0-9]|1[0-4]):[0-5][0-9]", tz_offset):
+        raise HTTPException(status_code=400, detail="Invalid tz_offset")
+    try:
+        return aggregate_session_distribution(
+            filters=filters, granularity=granularity, tz_offset=tz_offset
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 def _device_status_entry(device: Device) -> dict:
@@ -723,19 +745,9 @@ def get_usage_tool_calls(request: Request, usage_id: str):
     return fetch_tool_calls(usage_id=usage_id, user_id=_request_user_id(request))
 
 
-@app.get("/sessions/{session_id}/tool-calls")
-def get_session_tool_calls(request: Request, session_id: str):
-    return fetch_tool_calls(session_id=session_id, user_id=_request_user_id(request))
-
-
-@app.get("/sessions/{session_id}/tool-calls/summary")
-def get_session_tool_calls_summary(request: Request, session_id: str):
-    summary = summarize_session_tool_calls(
-        session_id, user_id=_request_user_id(request)
-    )
-    if summary is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return summary
+@app.get("/sessions/{session_id:path}/context")
+def get_session_context(request: Request, session_id: str):
+    return aggregate_session_context(session_id, _request_user_id(request))
 
 
 def _pricing_entry(resolved_cost) -> dict:

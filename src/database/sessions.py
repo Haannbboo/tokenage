@@ -8,11 +8,14 @@ from __future__ import annotations
 import calendar
 import json
 import logging
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, case, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -23,6 +26,12 @@ from .models import (
     SessionRecord,
     ToolCall,
     Usage,
+)
+from .usage import (
+    _format_periods,
+    _granularity,
+    _tz_seconds,
+    _usage_filters,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,8 +66,27 @@ def _primary_by_cost(costs: dict[str, float]) -> str | None:
     return max(costs, key=costs.get)  # type: ignore[arg-type]
 
 
+MAX_TIME_BUCKETS = 5000
+
+
 def _load_cost_map(payload: str | None) -> dict[str, float]:
     return json.loads(payload or "{}")
+
+
+def _session_models(payload: str | None) -> list[str]:
+    """Models used by a session, costliest first; bad JSON yields none."""
+    try:
+        costs = json.loads(payload or "{}")
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(costs, dict):
+        return []
+    numeric = {
+        model: cost
+        for model, cost in costs.items()
+        if type(cost) is int or (type(cost) is float and math.isfinite(cost))
+    }
+    return sorted(numeric, key=lambda model: numeric[model], reverse=True)
 
 
 def _add_usage_to_cost_maps(
@@ -269,22 +297,6 @@ def upsert_session_from_tool_call(tool_call: ToolCall, *, session: Session) -> N
     session.flush()
 
 
-def summarize_session_tool_calls(
-    session_id: str, user_id: str, db_path: str | None = None
-) -> list[dict[str, Any]] | None:
-    """Return [{tool_name, count}] for a session, or None if it doesn't exist."""
-    engine = get_engine(db_path)
-    with Session(engine) as session:
-        rec = get_session_record(session, session_id, user_id=user_id)
-        if not rec:
-            return None
-        tools = _load_tool_calls_json(rec.tool_calls_json)
-        return [
-            {"tool_name": name, "count": count}
-            for name, count in sorted(tools.items(), key=lambda x: -x[1])
-        ]
-
-
 def rebuild_sessions_from_usage(db_path: str | None = None) -> int:
     """Clear and rebuild sessions table from usage rows. Returns count of sessions."""
     engine = get_engine(db_path)
@@ -369,7 +381,35 @@ def _compute_duration_s(started: int | str | None, ended: int | str | None) -> i
 
 def _duration_s_expr() -> Any:
     """SQL expression for session duration in seconds from epoch microseconds."""
-    return (SessionRecord.ended - SessionRecord.started) / 1_000_000
+    duration = (
+        func.coalesce(SessionRecord.ended, SessionRecord.started)
+        - SessionRecord.started
+    ) / 1_000_000
+    return case((duration > 0, duration), else_=0)
+
+
+# Stable API bucket keys. Boundaries are lower inclusive, upper exclusive.
+DURATION_BUCKETS = (
+    ("<1m", 60),
+    ("1-10m", 600),
+    ("10-60m", 3600),
+    ("1-6h", 21600),
+    (">6h", None),
+)
+COST_BUCKETS = (
+    ("<0.10", Decimal("0.10")),
+    ("0.10-1", Decimal("1")),
+    ("1-5", Decimal("5")),
+    ("5-20", Decimal("20")),
+    (">20", None),
+)
+
+
+def _fixed_bucket_expr(value: Any, buckets: tuple) -> Any:
+    return case(
+        *((value < upper, key) for key, upper in buckets if upper is not None),
+        else_=buckets[-1][0],
+    )
 
 
 def _normalize_timestamp_filter(value: str) -> int:
@@ -387,20 +427,73 @@ def _normalize_timestamp_filter(value: str) -> int:
     return secs_to_micros(epoch_s) + parsed.microsecond
 
 
-def _session_filters(
-    *,
-    user_id: str,
-    client_source: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
-) -> list[Any]:
-    filters: list[Any] = [SessionRecord.user_id == user_id]
-    if client_source:
-        filters.append(SessionRecord.client_source == client_source)
-    if since:
-        filters.append(SessionRecord.started >= _normalize_timestamp_filter(since))
-    if until:
-        filters.append(SessionRecord.ended <= _normalize_timestamp_filter(until))
+@dataclass(frozen=True)
+class SessionFilters:
+    """Session predicates; date strings normalize once to epoch microseconds."""
+
+    user_id: str
+    client_source: str | None = None
+    since: str | int | None = None
+    until: str | int | None = None
+    device_id: str | None = None
+    provider: str | None = None
+    model: str | list[str] | None = None
+    duration_bucket: str | None = None
+    cost_bucket: str | None = None
+
+    def __post_init__(self):
+        for name, buckets in (
+            ("duration_bucket", DURATION_BUCKETS),
+            ("cost_bucket", COST_BUCKETS),
+        ):
+            value = getattr(self, name)
+            if value is not None and value not in dict(buckets):
+                raise ValueError(f"Invalid {name}")
+        for name in ("since", "until"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, int):
+                try:
+                    parsed = _normalize_timestamp_filter(value)
+                    if not -(2**63) <= parsed < 2**63:
+                        raise ValueError()
+                except (ValueError, OverflowError):
+                    raise ValueError("Invalid session date filter") from None
+                object.__setattr__(self, name, parsed)
+
+
+def _session_filters(criteria: SessionFilters) -> list[Any]:
+    filters: list[Any] = [SessionRecord.user_id == criteria.user_id]
+    if criteria.client_source:
+        filters.append(SessionRecord.client_source == criteria.client_source)
+    if criteria.since is not None:
+        filters.append(SessionRecord.ended >= criteria.since)
+    if criteria.until is not None:
+        filters.append(SessionRecord.started < criteria.until)
+    if criteria.device_id or criteria.provider or criteria.model:
+        # Match device/provider/model on the same usage row, scoped to the caller.
+        filters.append(
+            select(Usage.id)
+            .where(
+                Usage.session_id == SessionRecord.session_id,
+                *_usage_filters(
+                    user_id=criteria.user_id,
+                    device_id=criteria.device_id,
+                    provider=criteria.provider,
+                    model=criteria.model,
+                ),
+            )
+            .exists()
+        )
+    if criteria.duration_bucket is not None:
+        filters.append(
+            _fixed_bucket_expr(_duration_s_expr(), DURATION_BUCKETS)
+            == criteria.duration_bucket
+        )
+    if criteria.cost_bucket is not None:
+        filters.append(
+            _fixed_bucket_expr(SessionRecord.total_cost_usd, COST_BUCKETS)
+            == criteria.cost_bucket
+        )
     return filters
 
 
@@ -412,6 +505,7 @@ def _session_record_to_dict(rec: SessionRecord) -> dict[str, Any]:
         "session_id": rec.session_id,
         "client_source": rec.client_source or "",
         "model": rec.primary_model or "",
+        "models": _session_models(rec.models_json),
         "started": started,
         "ended": ended,
         "duration_s": _compute_duration_s(started, ended),
@@ -447,10 +541,7 @@ def _selector_row_to_dict(row: Any) -> dict[str, Any]:
 
 def fetch_sessions(
     *,
-    user_id: str,
-    client_source: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
+    filters: SessionFilters,
     sort_by: str = "ended",
     sort_order: str = "desc",
     limit: int = 50,
@@ -458,12 +549,7 @@ def fetch_sessions(
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return sessions from the persisted sessions table."""
-    filters = _session_filters(
-        user_id=user_id,
-        client_source=client_source,
-        since=since,
-        until=until,
-    )
+    conditions = _session_filters(filters)
 
     sort_col = _SESSION_SORT_COLUMNS.get(sort_by)
 
@@ -477,9 +563,14 @@ def fetch_sessions(
     else:
         order = SessionRecord.ended.desc()  # type: ignore[assignment]
 
-    query = select(SessionRecord).order_by(order).limit(limit).offset(offset)
+    query = (
+        select(SessionRecord)
+        .order_by(order, SessionRecord.session_id)
+        .limit(limit)
+        .offset(offset)
+    )
     if filters:
-        query = query.where(and_(*filters))
+        query = query.where(and_(*conditions))
 
     with Session(engine) as session:
         records = session.execute(query).scalars().all()
@@ -489,10 +580,7 @@ def fetch_sessions(
 
 def fetch_session_selector_rows(
     *,
-    user_id: str,
-    client_source: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
+    filters: SessionFilters,
     sort_by: str = "started",
     sort_order: str = "desc",
     limit: int = 50,
@@ -500,13 +588,8 @@ def fetch_session_selector_rows(
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return lightweight session rows for selector/dropdown consumers."""
-    filters = _session_filters(
-        user_id=user_id,
-        client_source=client_source,
-        since=since,
-        until=until,
-    )
-    sort_col = _SESSION_SORT_COLUMNS.get(sort_by) or SessionRecord.started
+    conditions = _session_filters(filters)
+    sort_col = _SESSION_SORT_COLUMNS.get(sort_by, SessionRecord.started)
     order = sort_col.asc() if sort_order == "asc" else sort_col.desc()
     query = (
         select(
@@ -515,35 +598,27 @@ def fetch_session_selector_rows(
             SessionRecord.request_count,
             SessionRecord.started,
         )
-        .order_by(order)
+        .order_by(order, SessionRecord.session_id)
         .limit(limit)
         .offset(offset)
     )
     if filters:
-        query = query.where(and_(*filters))
+        query = query.where(and_(*conditions))
     with get_engine(db_path).connect() as connection:
         return [_selector_row_to_dict(row) for row in connection.execute(query)]
 
 
 def count_sessions(
     *,
-    user_id: str,
-    client_source: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
+    filters: SessionFilters,
     db_path: str | None = None,
 ) -> int:
     """Count sessions from the persisted sessions table."""
-    filters = _session_filters(
-        user_id=user_id,
-        client_source=client_source,
-        since=since,
-        until=until,
-    )
+    conditions = _session_filters(filters)
 
     query = select(func.count()).select_from(SessionRecord)
     if filters:
-        query = query.where(and_(*filters))
+        query = query.where(and_(*conditions))
     with get_engine(db_path).connect() as connection:
         result = connection.execute(query).scalar_one()
         return int(result or 0)
@@ -551,19 +626,11 @@ def count_sessions(
 
 def summarize_sessions(
     *,
-    user_id: str,
-    client_source: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
+    filters: SessionFilters,
     db_path: str | None = None,
 ) -> dict[str, Any]:
     """Return aggregate stats across all sessions matching the filters."""
-    filters = _session_filters(
-        user_id=user_id,
-        client_source=client_source,
-        since=since,
-        until=until,
-    )
+    conditions = _session_filters(filters)
 
     query = select(
         func.count().label("session_count"),
@@ -574,7 +641,7 @@ def summarize_sessions(
         func.avg(_duration_s_expr()).label("avg_duration_s"),
     )
     if filters:
-        query = query.where(and_(*filters))
+        query = query.where(and_(*conditions))
 
     with get_engine(db_path).connect() as connection:
         row = connection.execute(query).fetchone()
@@ -594,4 +661,169 @@ def summarize_sessions(
         "total_tokens": int(row.total_tokens or 0),
         "total_cost_usd": float(row.total_cost_usd or 0),
         "avg_latency_ms": round(float(row.avg_latency_ms or 0), 1),
+    }
+
+
+def aggregate_session_distribution(
+    *,
+    filters: SessionFilters,
+    granularity: str = "day",
+    tz_offset: str = "+00:00",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Count active sessions over time and aggregate lifetime costs by dimension.
+
+    Time buckets and list filters both use ended >= start and started < end.
+    Only timestamps are loaded for the portable linear-time activity sweep.
+    """
+    conditions = _session_filters(filters)
+    dimensions = {
+        "by_agent": func.coalesce(SessionRecord.client_source, ""),
+        "by_duration": _fixed_bucket_expr(_duration_s_expr(), DURATION_BUCKETS),
+        "by_cost": _fixed_bucket_expr(SessionRecord.total_cost_usd, COST_BUCKETS),
+    }
+    result = {}
+    with get_engine(db_path).connect() as connection:
+        timestamps = connection.execute(
+            select(SessionRecord.started, SessionRecord.ended).where(*conditions)
+        ).all()
+        for name, dimension in dimensions.items():
+            query = (
+                select(
+                    dimension.label("key"),
+                    func.count().label("session_count"),
+                    func.sum(SessionRecord.total_cost_usd).label("total_cost_usd"),
+                )
+                .where(*conditions)
+                .group_by(dimension)
+                .order_by(dimension)
+            )
+            result[name] = [dict(row._mapping) for row in connection.execute(query)]
+    for rows in result.values():
+        for row in rows:
+            row["total_cost_usd"] = float(row["total_cost_usd"] or 0)
+    for name, buckets in (("by_duration", DURATION_BUCKETS), ("by_cost", COST_BUCKETS)):
+        by_key = {row["key"]: row for row in result[name]}
+        result[name] = [
+            by_key.get(key, {"key": key, "session_count": 0, "total_cost_usd": 0.0})
+            for key, _ in buckets
+        ]
+    total_cost = sum(row["total_cost_usd"] for row in result["by_agent"])
+    for row in result["by_agent"]:
+        row["cost_share"] = row["total_cost_usd"] / total_cost if total_cost else 0.0
+    result["over_time"] = _active_session_buckets(
+        timestamps, filters=filters, granularity=granularity, tz_offset=tz_offset
+    )
+    return result
+
+
+def _active_session_buckets(
+    timestamps: Sequence[Any],
+    *,
+    filters: SessionFilters,
+    granularity: str,
+    tz_offset: str,
+) -> list[dict[str, Any]]:
+    if not timestamps:
+        return []
+    lower = (
+        int(filters.since)
+        if filters.since is not None
+        else min(row.started for row in timestamps)
+    )
+    upper = (
+        int(filters.until)
+        if filters.until is not None
+        else int(datetime.now(UTC).timestamp() * 1_000_000)
+    )
+    if upper <= lower:
+        return []
+    seconds, fmt = _granularity(granularity)
+    size = seconds * 1_000_000
+    offset = _tz_seconds(tz_offset) * 1_000_000
+    grid_start = (lower + offset) // size * size - offset
+    count = (upper - grid_start + size - 1) // size
+    if count > MAX_TIME_BUCKETS:
+        raise ValueError("Range too long for this granularity")
+    changes = [0] * (count + 1)
+    for started, ended in timestamps:
+        # The outer buckets are clipped; exclude timestamps beyond those edges.
+        if ended < lower or started >= upper:
+            continue
+        first = max(0, (started - grid_start) // size)
+        last = min(count - 1, (ended - grid_start) // size)
+        if first <= last:
+            changes[first] += 1
+            changes[last + 1] -= 1
+    rows = []
+    active = 0
+    for i in range(count):
+        active += changes[i]
+        key = grid_start + i * size
+        start, end = max(key, lower), min(key + size, upper)
+        rows.append(
+            {
+                "key": key,
+                "session_count": active,
+                "start": datetime.fromtimestamp(start / 1_000_000, UTC).isoformat(),
+                "end": datetime.fromtimestamp(end / 1_000_000, UTC).isoformat(),
+                "period": key + offset,
+            }
+        )
+    _format_periods(rows, fmt, 1_000_000)
+    return rows
+
+
+MAX_CONTEXT_POINTS = 200
+
+
+def aggregate_session_context(
+    session_id: str, user_id: str, db_path: str | None = None
+) -> dict[str, Any]:
+    """Return per-bucket maximum context in request order."""
+    numbered = (
+        select(
+            Usage.ts.label("ts"),
+            (
+                func.coalesce(Usage.prompt_tokens, 0)
+                + func.coalesce(Usage.cache_creation_tokens, 0)
+            ).label("context"),
+            func.row_number().over(order_by=(Usage.ts, Usage.id)).label("request"),
+            func.count().over().label("total"),
+        )
+        .where(Usage.session_id == session_id, Usage.user_id == user_id)
+        .subquery()
+    )
+    # Width comes from the same snapshot as the numbering, so a concurrent
+    # insert cannot add a 201st bucket.
+    width = (numbered.c.total + MAX_CONTEXT_POINTS - 1) // MAX_CONTEXT_POINTS
+    bucketed = select(
+        numbered,
+        func.row_number()
+        .over(
+            partition_by=(numbered.c.request - 1) // width,
+            order_by=(numbered.c.context.desc(), numbered.c.request),
+        )
+        .label("rank"),
+    ).subquery()
+    with get_engine(db_path).connect() as connection:
+        rows = connection.execute(
+            select(
+                bucketed.c.request, bucketed.c.ts, bucketed.c.context, bucketed.c.total
+            )
+            .where(bucketed.c.rank == 1)
+            .order_by(bucketed.c.request)
+        ).all()
+    if not rows:
+        return {"points": [], "peak_tokens": 0, "request_count": 0}
+    # Each point is the bucket's peak request, so its number and time match its value.
+    points = [
+        {"request": row.request, "ts": row.ts, "context_tokens": int(row.context)}
+        for row in rows
+    ]
+    count = rows[0].total
+    return {
+        "points": points,
+        "peak_tokens": max(p["context_tokens"] for p in points),
+        "request_count": count,
     }

@@ -31,12 +31,14 @@ from .models import (
     metadata,
 )
 from .sessions import (
+    SessionFilters,
+    aggregate_session_context,
+    aggregate_session_distribution,
     count_sessions,
     fetch_session_selector_rows,
     fetch_sessions,
     get_session_record,
     rebuild_sessions_from_usage,
-    summarize_session_tool_calls,
     summarize_sessions,
     upsert_session_from_usage,
 )
@@ -69,6 +71,7 @@ def record_usage(*args, **kwargs):
 
 
 __all__ = [
+    "SessionFilters",
     "AuthToken",
     "Base",
     "BaseUrl",
@@ -83,6 +86,8 @@ __all__ = [
     "User",
     "UserModelPrice",
     "aggregate_daily_by_dimension",
+    "aggregate_session_context",
+    "aggregate_session_distribution",
     "aggregate_usage_by_period",
     "count_sessions",
     "count_usage",
@@ -109,7 +114,6 @@ __all__ = [
     "record_usage",
     "resolve_base_url_id",
     "select",
-    "summarize_session_tool_calls",
     "summarize_sessions",
     "summarize_tool_calls",
     "summarize_usage_by_provider",

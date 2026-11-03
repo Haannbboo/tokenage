@@ -6,7 +6,7 @@ export type TimelineTool = {
   tool_name: string
   tool_use_id: string
   duration_ms?: number | null
-  ts?: number
+  ts?: number // milliseconds since the Unix epoch
   is_parallel?: boolean
 }
 

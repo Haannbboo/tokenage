@@ -1308,3 +1308,73 @@
 .btn-danger:hover {
   opacity: 0.85;
 }
+
+/* Sessions */
+.session-charts { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:12px; }
+.session-chart { padding:14px; min-width:0; }
+.session-chart h3 { font-size:12px; color:var(--text-secondary); margin:0 0 10px; }
+.session-bars { display:flex; align-items:end; height:100px; gap:2px; padding:0 8px; overflow:visible; }
+.session-bars.dense { gap:0; }
+.session-bar { position:relative; flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; justify-content:end; height:100%; border:0; padding:0 0 16px; background:none; color:var(--text-secondary); cursor:pointer; font-size:12px; }
+.session-bar i { width:90%; background:var(--color-blue); opacity:1; border-radius:3px 3px 0 0; }
+.session-bar:hover i, .session-bar.active i { opacity:1; }
+.session-bars.has-selection .session-bar:not(.active) i { opacity:.25; }
+.session-bar small { width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; }
+.session-time-label { position:absolute !important; bottom:0; left:50%; width:max-content !important; max-width:65px; transform:translateX(-50%); overflow:hidden !important; text-overflow:clip !important; z-index:1; }
+.session-time-label.first { left:0; transform:none; }
+.session-stack { display:flex; height:22px; gap:2px; }
+.session-stack button { min-width:4px; border:0; cursor:pointer; opacity:1; }
+.session-stack button:disabled { cursor:default; }
+.session-legend { display:grid; gap:3px; margin-top:8px; color:var(--text-secondary); font-size:12px; }
+.session-legend div { display:flex; gap:6px; align-items:center; }
+.session-legend div span:last-child { margin-left:auto; }
+.session-legend i { width:8px; height:8px; border-radius:2px; }
+.session-filter { margin:8px 0; }
+.session-table-wrap { overflow-x:auto; }
+.sessions-table { width:100%; table-layout:auto; min-width:1000px; }
+.sessions-table th, .sessions-table td { padding:6px 8px; white-space:nowrap; }
+.sessions-table td:has(.session-detail) { padding:0; white-space:normal; }
+.session-id, .session-agent { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+.session-plain-button { border:0; padding:0; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+.session-plain-button:focus-visible, .session-bar:focus-visible, .session-stack button:focus-visible, .session-mark:focus-visible { outline:2px solid var(--color-green); outline-offset:2px; }
+.session-activity { width:180px; min-width:150px; }
+.session-axis { display:flex; justify-content:space-between; gap:8px; font-size:12px; font-weight:normal; text-transform:none; }
+.session-span { width:100%; height:8px; position:relative; border-radius:4px; background:color-mix(in srgb, var(--border-color) 35%, transparent); overflow:hidden; }
+.session-span i { position:absolute; height:100%; min-width:4px; background:var(--color-green); border-radius:4px; }
+.session-live { color:var(--color-green); white-space:nowrap; }
+.session-tools-more { border:0; padding:0; }
+.session-tools-more button { cursor:pointer; border:0; padding:0; background:none; color:inherit; font:inherit; }
+.session-tools-more:focus-within .tooltip-text:not([popover]) { visibility:visible; opacity:1; }
+.session-tool-extra { display:block; white-space:nowrap; }
+.session-detail { display:grid; gap:14px; padding:14px; background:var(--bg-secondary, var(--tab-toggle-bg)); }
+.session-stats { display:flex; flex-wrap:wrap; gap:20px; }
+.session-stats div { display:grid; gap:3px; }
+.session-stats span { font-size:12px; color:var(--text-secondary); }
+.session-request-breakdown { display:flex; flex-wrap:wrap; gap:8px 18px; padding:12px; color:var(--text-secondary); font-size:12px; }
+.session-lane-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; color:var(--text-secondary); }
+.session-model-legend { display:flex; flex-wrap:wrap; gap:12px; margin:6px 0; font-size:12px; color:var(--text-secondary); }
+.session-model-legend span { display:inline-flex; align-items:center; gap:4px; }
+.session-model-legend i { width:8px; height:8px; border-radius:2px; }
+.session-lane { position:relative; height:65px; min-width:0; border:1px solid var(--border-color); border-radius:6px; overflow:visible; }
+.session-lane:before { content:''; position:absolute; top:24px; left:16px; right:16px; border-top:1px solid var(--border-color); }
+.session-lane-track { position:relative; height:100%; width:calc(100% - 32px); margin-left:16px; }
+.session-lane-tick { position:absolute; top:42px; transform:translateX(-50%); font-size:12px; color:var(--text-secondary); white-space:nowrap; }
+.session-lane-tick:nth-last-child(5) { transform:none; }
+.session-lane-tick:last-child { transform:translateX(-100%); }
+.session-lane-track.has-hover .session-mark:not(.selected) { opacity:.25; }
+.session-mark-wrap { position:absolute; top:12px; height:24px; border:0; z-index:1; }
+.session-mark-wrap:has(.selected) { z-index:3; }
+.session-mark { position:static; width:100%; min-width:3px; height:24px; margin:0; padding:0; display:block; border:0; border-radius:2px; cursor:pointer; z-index:1; }
+.session-mark.selected { outline:3px solid var(--color-blue); outline-offset:1px; }
+.session-mark.error { border:2px solid var(--text-primary); }
+.session-interactions { overflow:auto; max-height:430px; }
+.session-interactions th, .session-interactions td { padding:6px 8px; white-space:nowrap; }
+.session-interactions .expanded-row td { white-space:normal; }
+.session-interactions .table tbody tr.session-row-hovered > td { background: color-mix(in srgb, var(--color-blue) 18%, transparent); }
+.session-interactions .table tbody tr.session-row-hovered > td:first-child { box-shadow: inset 3px 0 0 var(--color-blue); }
+.session-pager { display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:var(--text-secondary); font-size:12px; }
+.expandable-row { cursor:pointer; }
+.expandable-row:focus-visible { outline:2px solid var(--color-green); outline-offset:-2px; }
+@media (max-width:900px) { .session-charts { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:640px) { .sessions-table { min-width:820px; } .session-activity { display:none; } }
+@media (max-width:480px) { .session-charts { grid-template-columns:1fr; } }

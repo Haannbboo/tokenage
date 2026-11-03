@@ -56,10 +56,11 @@ it('shows, repositions and hides a popover, then removes listeners', () => {
   const docRemove = vi.spyOn(document, 'removeEventListener')
   const winRemove = vi.spyOn(window, 'removeEventListener')
   const host = document.createElement('div')
-  host.className = 'has-tooltip'
-  host.innerHTML = '<div class="tooltip-text">Cost</div>'
+  host.className = 'has-tooltip session-tools-more'
+  host.innerHTML = '<button>+1</button><div class="tooltip-text">Cost</div>'
   document.body.append(host)
-  const content = host.firstElementChild as HTMLElement
+  const content = host.querySelector<HTMLElement>('.tooltip-text')!
+  const button = host.querySelector('button')!
   const bounds = vi.spyOn(host, 'getBoundingClientRect').mockReturnValue(rect(20, 100, 20, 20))
   const uninstall = installTooltips()
   try {
@@ -72,6 +73,16 @@ it('shows, repositions and hides a popover, then removes listeners', () => {
     host.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
     expect(hide).toHaveBeenCalledOnce()
     expect(disconnect).toHaveBeenCalledOnce()
+    button.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    expect(show).toHaveBeenCalledTimes(2)
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(hide).toHaveBeenCalledOnce()
+    button.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    expect(hide).toHaveBeenCalledTimes(2)
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(show).toHaveBeenCalledTimes(3)
+    host.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
+    expect(hide).toHaveBeenCalledTimes(3)
     uninstall()
     expect(docRemove.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining(['mouseover', 'mouseout', 'wheel']))
     expect(winRemove.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining(['scroll', 'resize']))

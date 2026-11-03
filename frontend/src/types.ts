@@ -102,6 +102,7 @@ export type SessionSummary = {
   session_id: string
   client_source: string
   model: string
+  models: string[]
   started: number
   ended: number
   duration_s: number
@@ -122,6 +123,22 @@ export type SessionSummary = {
   status_5xx: number | null
   status_unknown: number | null
   tool_calls_json: Record<string, number> | null
+}
+
+/** Fixed buckets are lower inclusive and upper exclusive. */
+export type SessionDurationBucket = '<1m' | '1-10m' | '10-60m' | '1-6h' | '>6h'
+export type SessionCostBucket = '<0.10' | '0.10-1' | '1-5' | '5-20' | '>20'
+
+type SessionDistributionCount = {
+  session_count: number
+  total_cost_usd: number
+}
+
+export type SessionDistribution = {
+  over_time: { session_count: number; key: number; period: string; start: string; end: string }[]
+  by_agent: (SessionDistributionCount & { key: string; cost_share: number })[]
+  by_duration: (SessionDistributionCount & { key: SessionDurationBucket })[]
+  by_cost: (SessionDistributionCount & { key: SessionCostBucket })[]
 }
 
 export type SessionSelectorRow = {

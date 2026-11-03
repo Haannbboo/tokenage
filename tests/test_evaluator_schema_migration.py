@@ -198,7 +198,11 @@ def test_upgrade_preserves_every_rollup_and_reruns(schema_db, with_jobs, partial
 
 def test_new_orm_reads_and_inserts_before_schema_drop(schema_db):
     from src.database.models import SessionRecord, Usage
-    from src.database.sessions import fetch_sessions, upsert_session_from_usage
+    from src.database.sessions import (
+        SessionFilters,
+        fetch_sessions,
+        upsert_session_from_usage,
+    )
     from src.schema_migrations import migrate_database
 
     db_path, engine = schema_db
@@ -236,7 +240,7 @@ def test_new_orm_reads_and_inserts_before_schema_drop(schema_db):
     with Session(engine) as session:
         assert session.get(SessionRecord, "historic").request_count == 7
         assert session.get(SessionRecord, "live").request_count == 2
-    rows = fetch_sessions(db_path=db_path, user_id="owner")
+    rows = fetch_sessions(filters=SessionFilters(user_id="owner"), db_path=db_path)
     assert {row["session_id"] for row in rows} == {"historic", "live"}
     assert all("evaluation" not in row for row in rows)
     with engine.connect() as connection:

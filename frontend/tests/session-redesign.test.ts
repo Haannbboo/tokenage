@@ -3,19 +3,18 @@ import { createElement } from 'react'
 import { readFileSync } from 'node:fs'
 import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { gapLength, lanePositions, laneLayout, SessionLane } from '../src/components/SessionLane'
+import { lanePositions, laneLayout, SessionLane } from '../src/components/SessionLane'
 import { applySessionBucket, sessionFilterQuery, useSessionsData } from '../src/hooks/useSessionsData'
 import { SessionDetail } from '../src/components/SessionDetail'
 import type { SessionSummary, UsageRow } from '../src/types'
 vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn() }) }))
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
-it('places request starts from completion time and cuts idle gaps', () => {
+it('places request starts proportionally to real time', () => {
   const rows = [{ id: 'a', ts: 1_000_000, latency_ms: 500 }, { id: 'b', ts: 3_601_000_000, latency_ms: null }] as UsageRow[]
-  const real = lanePositions(rows, false), compact = lanePositions(rows, true)
+  const real = lanePositions(rows)
   expect(real.marks[0].width).toBe(500)
   expect(real.marks[1].width).toBe(0)
-  expect(compact.marks[1].gap).toBe(3_600_000)
-  expect(compact.marks[1].x).toBe(60_500)
+  expect(real.marks[1].x).toBe(3_600_500)
 })
 it('maps dashboard and clicked time filters to API parameters', () => {
   const p = sessionFilterQuery('codex', 'device', { provider: 'openai', models: ['a', 'b'] }, 'old')
@@ -54,16 +53,15 @@ it('renders fixed-width accessible lane marks and formats session duration', asy
   await waitFor(() => expect(screen.getByText('No interactions found.')).toBeTruthy())
 })
 
-it('uses truthful compact axis times and separates scaled marks', () => {
+it('uses truthful axis times and separates scaled marks', () => {
   const rows = [{ id: 'a', ts: 1_000_000, latency_ms: 500 }, { id: 'b', ts: 1_000_000, latency_ms: 500 }, { id: 'c', ts: 3_601_000_000, latency_ms: 1000 }] as UsageRow[]
-  const layout = laneLayout(rows, true)
+  const layout = laneLayout(rows)
   expect(layout.ticks).toHaveLength(5)
   expect(layout.ticks[0].time).toBe(500)
   expect(layout.ticks[4].time).toBe(3_601_000)
-  expect(layout.cuts[0].end - layout.cuts[0].start).toBe(3_599_000)
   expect(layout.marks[0].pxWidth).toBe(3)
   expect(layout.marks[1].px).toBeGreaterThanOrEqual(layout.marks[0].px + 4)
-  expect(layout.marks[2].pxWidth).toBeGreaterThan(3)
+  expect(layout.marks[2].pxWidth).toBe(3)
 })
 it('links row and mark hover without scrolling', async () => {
   const rows = [{ id: 'a', ts: 1_000_000, model: 'model-a', latency_ms: 500 }]
@@ -83,19 +81,6 @@ it('links row and mark hover without scrolling', async () => {
   fireEvent.keyDown(row, { key: ' ' }); expect(row.getAttribute('aria-expanded')).toBe('true')
 })
 
-it('shows a break only for compacted long idle gaps', () => {
-  localStorage.removeItem('tokenage-session-gaps')
-  const rows = [{ id: 'a', ts: 1_000_000, model: 'a', latency_ms: 0 }, { id: 'b', ts: 3_601_000_000, model: 'a', latency_ms: 0 }] as UsageRow[]
-  const view = render(createElement(SessionLane, { rows, selected: null, onSelect: vi.fn() }))
-  expect(screen.getByText(/1h 0m gap/)).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'Real time' }))
-  expect(view.container.querySelector('.session-gap')).toBeNull()
-  cleanup()
-  render(createElement(SessionLane, { rows: rows.slice(0, 1), selected: null, onSelect: vi.fn() }))
-  expect(screen.queryByRole('group', { name: 'Gap display' })).toBeNull()
-  localStorage.removeItem('tokenage-session-gaps')
-})
-
 it('formats unattributed tool timestamps in milliseconds', async () => {
   const ts = Date.UTC(2025, 9, 21, 12, 30)
   vi.stubGlobal('fetch', vi.fn(async (url: string) => ({ ok: true, json: async () => url.startsWith('/usage?') ? [] : [{ tool_name: 'Search', tool_use_id: 'a', usage_id: null, ts }] })))
@@ -112,11 +97,6 @@ it('shows missing latency in the interaction and expanded detail', async () => {
   expect(row.children[4].textContent).toBe('—')
   fireEvent.click(row)
   await waitFor(() => expect([...view.container.querySelectorAll('.detail-group')].find(group => group.querySelector('.detail-label')?.textContent === 'Latency')?.querySelector('.detail-value')?.textContent).toBe('—'))
-})
-
-it('formats gap lengths with seconds below an hour', () => {
-  expect(gapLength(119500)).toBe('1m 59s')
-  expect(gapLength(8040000)).toBe('2h 14m')
 })
 
 it('defaults to the latest session first', () => {

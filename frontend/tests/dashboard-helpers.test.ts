@@ -3,8 +3,6 @@ import { fillPeriodGaps } from '../src/periodGaps'
 import { describePeriod, periodLabelText } from '../src/periodLabels'
 import { sparklineScale } from '../src/sparklineScale'
 import { sortTrendRows, trendTooltipX } from '../src/charts/trendTooltip'
-import { trendSeriesColors } from '../src/charts/trendColors'
-import { getModelBadgeBackgroundColor } from '../src/model-badge'
 import type { DailyUsage } from '../src/types'
 import { DEFAULT_COL_WIDTHS } from '../src/hooks/useLogsData'
 import { DEFAULT_REQUEST_LOG_COLUMNS, REQUEST_LOG_COLUMNS } from '../src/hooks/useRequestLogColumns'
@@ -19,24 +17,6 @@ const row = (period: string): DailyUsage => ({
   successful_requests: 1, failed_requests: 0, status_429: 0, status_4xx: 0,
   status_5xx: 0, status_unknown: 0,
 })
-
-/** The hue of a colour, in degrees. */
-function hueOf(hex: string): number {
-  const n = parseInt(hex.slice(1), 16)
-  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(c => c / 255)
-  const max = Math.max(r, g, b)
-  const min = Math.min(r, g, b)
-  const d = max - min
-  if (!d) return 0
-  const raw = max === r ? 60 * (((g - b) / d) % 6) : max === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4)
-  return (raw + 360) % 360
-}
-
-/** How far two hues are apart, in degrees. */
-function hueDistance(a: number, b: number): number {
-  const diff = Math.abs(a - b) % 360
-  return diff > 180 ? 360 - diff : diff
-}
 
 describe('sparkline scale', () => {
   it('keeps the zero-based scale for magnitudes', () => {
@@ -171,23 +151,6 @@ describe('trend tooltip helpers', () => {
 
   it('handles a zero-width chart', () => {
     expect(trendTooltipX(10, 0, 520, 0)).toBe(0)
-  })
-})
-
-describe('trend colours', () => {
-  it('gives two spellings of one model shades of the same brand hue', () => {
-    const models = ['minimax/minimax-m3.1-flash', 'minimax-m3.1-flash']
-    for (const theme of ['light', 'dark'] as const) {
-      const colors = trendSeriesColors(models.map(model => ({ key: model, model })), theme)
-      const a = colors.get(models[0])!
-      const b = colors.get(models[1])!
-      expect(a).not.toBe(b)
-      // Both keep the hue of the badge, only their lightness differs.
-      const badge = getModelBadgeBackgroundColor(models[0], theme).slice(0, 7)
-      for (const hex of [a, b]) {
-        expect(hueDistance(hueOf(hex), hueOf(badge))).toBeLessThanOrEqual(5)
-      }
-    }
   })
 })
 

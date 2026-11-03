@@ -1,4 +1,6 @@
 export const zh: Record<string, string> = {
+  'No sessions found': '未找到会话',
+  'Search session ID…': '搜索会话 ID…',
   'Filter': '筛选',
 
   'Input cost': '输入费用',
@@ -19,6 +21,7 @@ export const zh: Record<string, string> = {
   'Peak': '峰值',
   'Failed to fetch context size': '获取上下文大小失败',
   'Timeline': '时间线',
+  'Timeline (latest {n} requests)': '时间线（最近 {n} 条请求）',
   'Failed to fetch interactions': '获取交互失败',
   'Failed to fetch tool calls': '获取工具调用失败',
   'Failed to fetch session distributions': '获取会话分布失败',
@@ -110,6 +113,17 @@ export const zh: Record<string, string> = {
   'Untimed:': '未上报耗时:',
   'no duration reported': '未上报耗时',
   'Total': '总计',
+  'Providers': '供应商',
+  'Sources': '来源',
+  'Count': '次数',
+  'Total time': '总耗时',
+  'Avg time': '平均耗时',
+  'Share': '占比',
+  'Price': '单价',
+  'Hit rate': '命中率',
+  'Successful': '成功',
+  'Success rate': '成功率',
+  'Calls': '调用次数',
 
   // Chart messages
   'Failed to load model breakdown': '加载模型明细失败',
@@ -293,8 +307,6 @@ export const zh: Record<string, string> = {
   'Loading...': '加载中...',
 
 
-  'Service Version': '服务版本',
-  'Version': '版本',
 
   // Timezone
   'Timezone': '时区',
@@ -319,18 +331,15 @@ export const zh: Record<string, string> = {
   'Google sign-in failed. Please try again.': 'Google 登录失败，请重试。',
   'Sign out': '退出登录',
   'Devices': '设备',
-  'Installed machines. Revoking a machine stops tracking immediately.': '已安装的设备。撤销设备后会立即停止追踪。',
-  'Browsers signed in to this account. A session idle for 30 days expires.': '已登录此账号的浏览器。闲置 30 天的会话会过期。',
   'Machine': '设备',
   'Installed version': '已安装版本',
   'Authorized': '已授权',
   'Device': '设备',
-  'Kind': '类型',
   'Last used': '最后使用',
   'Current device': '当前设备',
   'Idle': '空闲',
   'Revoke': '撤销',
-  'Machines': '机器',
+  'Clients': '客户端',
   'Web sessions': '网页会话',
   'Browser': '浏览器',
   'Signed in': '登录时间',
@@ -350,6 +359,7 @@ export const zh: Record<string, string> = {
 
   // Pricing page
   'Pricing': '定价',
+  'Services': '服务',
   'Details': '详情',
   'No report yet. Start the tokenage client service on this device.': '该设备尚未上报状态。请在此设备上运行 tokenage client start。',
   'Search models...': '搜索模型...',
@@ -386,4 +396,19 @@ export const zh: Record<string, string> = {
   'Connection error while resetting pricing': '重置定价时连接出错',
   'Priority': '优先级',
   'No models for this source yet.': '该来源暂无模型。',
+  // Sidebar and page headers
+  'Projects': '项目',
+  'Soon': '即将推出',
+  'Workspace': '工作区',
+  'Open menu': '打开菜单',
+  'Collapse sidebar': '收起侧边栏',
+  'Expand sidebar': '展开侧边栏',
+  'Skip to content': '跳到正文',
+  'Account': '账户',
+  'Sidebar': '侧边栏',
+  'Main': '主导航',
+  'Source Filter': '来源筛选',
+  'Spend and token usage across all agents.': '所有代理的费用与 Token 用量。',
+  'Every agent session with its requests and cost.': '每个代理会话及其请求与费用。',
+  'Individual model requests, newest first.': '逐条模型请求，最新在前。',
 }

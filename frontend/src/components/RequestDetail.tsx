@@ -2,7 +2,7 @@ import type { UsageRow } from '../types'
 import { ClickToCopy } from './CopyButton'
 import { RequestTimeline, type TimelineTool } from './RequestTimeline'
 import { t } from '../i18n'
-import { formatLatency, formatNumber, value, getSourceBadgeBg, getSourceBadgeText, getSourceIcon } from '../utils'
+import { formatLatency, formatNumber, value, getSourceIcon } from '../utils'
 
 export function RequestDetail({ row, toolCalls, showToast }: { row: UsageRow; toolCalls: TimelineTool[] | null; showToast: (message: string) => void }) {
   return (
@@ -27,18 +27,7 @@ export function RequestDetail({ row, toolCalls, showToast }: { row: UsageRow; to
                           )}
                           <div className="detail-group">
                             <span className="detail-label">{t('Source')}</span>
-                            <span className="detail-value" style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              padding: '2px 8px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              width: 'fit-content',
-                              backgroundColor: getSourceBadgeBg(row.client_source ?? ''),
-                              color: getSourceBadgeText(row.client_source ?? ''),
-                            }}>
+                            <span className="detail-value entity-badge" style={{ width: 'fit-content' }}>
                               {getSourceIcon(row.client_source ?? '')}
                               {row.client_source || '—'}
                             </span>

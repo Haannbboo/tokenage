@@ -4,14 +4,18 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@t
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UsageRow } from '../src/types'
 import { useLogsData } from '../src/hooks/useLogsData'
+import { useSessionsData } from '../src/hooks/useSessionsData'
 import { useDashboardData } from '../src/hooks/useDashboardData'
 import { useRequestLogColumns } from '../src/hooks/useRequestLogColumns'
 import { SessionSelector } from '../src/components/SessionSelector'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { LogsPage } from '../src/pages/LogsPage'
+
+const logsPage = () => createElement(MemoryRouter, { initialEntries: ['/logs'] }, createElement(LogsPage))
 
 const app = vi.hoisted(() => ({
   refreshTrigger: 0, setError: vi.fn(), showToast: vi.fn(), requestUsageRefresh: vi.fn(),
-  activeFilter: null as { models?: string[]; provider?: string } | null, activeSource: null as string | null, activeDevice: null,
+  activeFilter: null as { models?: string[]; provider?: string } | null, activeSource: null as string | null, activeDevice: null as string | null,
   dateRange: 'all', timezone: 'UTC', setActiveFilter: vi.fn(), setActiveSource: vi.fn(),
   setActiveDevice: vi.fn(), setDateRange: vi.fn(),
 }))
@@ -227,7 +231,7 @@ describe('Request Logs table', () => {
       return fetchHistory(input)
     })
     app.requestUsageRefresh.mockClear()
-    render(createElement(LogsPage))
+    render(logsPage())
     expect(await screen.findByText('Failed to fetch log data')).toBeTruthy()
     expect(screen.queryByText('secret detail')).toBeNull()
     expect(screen.queryByText('No requests found for the selected filters.')).toBeNull()
@@ -251,10 +255,23 @@ describe('Request Logs table', () => {
     expect(screen.queryByRole('button', { name: 'All Sessions' })).toBeNull()
   })
 
+  it('returns focus to session search on Escape but not pointer dismissal', () => {
+    render(createElement(SessionSelector, { sessions: [], sessionFilter: null, onChange: vi.fn(), sourceColors: {} }))
+    const input = screen.getByRole('textbox', { name: 'Search session ID…' })
+    act(() => input.focus())
+    act(() => screen.getByRole('button', { name: 'All Sessions' }).focus())
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(document.activeElement).toBe(input)
+    expect(screen.queryByRole('button', { name: 'All Sessions' })).toBeNull()
+    fireEvent.focus(input)
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('button', { name: 'All Sessions' })).toBeNull()
+  })
+
   it('keeps all log filters independent of the dashboard date range', async () => {
     app.dateRange = '24h'
     const api = mockHistory()
-    const view = render(createElement(LogsPage))
+    const view = render(logsPage())
     await waitFor(() => expect(document.querySelector('tbody[data-index]')).toBeTruthy())
     expect(screen.queryByText('Date Range')).toBeNull()
     const filterCalls = () => api.fetchMock.mock.calls
@@ -264,10 +281,9 @@ describe('Request Logs table', () => {
     expect(filterCalls().every(url => !url.searchParams.has('since'))).toBe(true)
     const count = filterCalls().length
     app.dateRange = '7d'
-    view.rerender(createElement(LogsPage))
+    view.rerender(logsPage())
     expect(filterCalls().length).toBe(count)
-    fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
-    expect(app.setDateRange).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Reset' })).toBeNull()
   })
 
   it('keeps the default dashboard summary and sources scoped to the global date range', async () => {
@@ -318,7 +334,7 @@ describe('Request Logs table', () => {
     mockHistory([])
     const resize = mockTableWidth(350)
     localStorage.setItem('tokenage-request-log-columns', JSON.stringify(['time', 'model', 'session', 'speed']))
-    render(createElement(LogsPage))
+    render(logsPage())
     await screen.findByText('No requests found for the selected filters.')
     fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
     expect(columnHeaders()).toEqual(['Time', 'Model', 'Session'])
@@ -339,7 +355,7 @@ describe('Request Logs table', () => {
     mockTableWidth(350)
     const key = 'tokenage-request-log-columns'
     localStorage.setItem(key, JSON.stringify(['time', 'model', 'session', 'speed']))
-    const view = render(createElement(LogsPage))
+    const view = render(logsPage())
     await screen.findByText('No requests found for the selected filters.')
     fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
     fireEvent.click(columnCheckbox('Speed'))
@@ -350,7 +366,7 @@ describe('Request Logs table', () => {
       visibleColumnIds: ['time', 'model', 'session', 'speed'], pinnedColumnIds: ['speed'],
     })
     view.unmount()
-    render(createElement(LogsPage))
+    render(logsPage())
     await screen.findByText('No requests found for the selected filters.')
     expect(columnHeaders()).toEqual(['Time', 'Model', 'Speed'])
     fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
@@ -368,7 +384,7 @@ describe('Request Logs table', () => {
     localStorage.setItem('tokenage-request-log-columns', JSON.stringify({
       visibleColumnIds: ['time', 'model', 'session', 'speed'], pinnedColumnIds: ['session', 'speed'],
     }))
-    render(createElement(LogsPage))
+    render(logsPage())
     await screen.findByText('No requests found for the selected filters.')
     expect(columnHeaders()).toEqual(['Session', 'Speed'])
     const width = screen.getAllByRole('columnheader').reduce((sum, th) => sum + parseFloat(th.style.width), 0)
@@ -382,7 +398,7 @@ describe('Request Logs table', () => {
   it('keeps spacers in table coordinates and removes the bottom spacer at the last loaded row', async () => {
     tableHeaderHeight = 63
     mockHistory()
-    render(createElement(LogsPage))
+    render(logsPage())
     await waitFor(() => expect(document.querySelector('tbody[data-index]')).toBeTruthy())
     const assertSpacers = () => {
       const bodies = [...document.querySelectorAll<HTMLTableSectionElement>('tbody[data-index]')]
@@ -405,7 +421,7 @@ describe('Request Logs table', () => {
 
   it('loads from the sentinel and renders only a window after accumulating a long history', async () => {
     const api = mockHistory(rows(2000, 1000))
-    render(createElement(StrictMode, null, createElement(LogsPage)))
+    render(createElement(StrictMode, null, logsPage()))
     await waitFor(() => expect(intersections.size).toBe(1))
     const before = usageCalls(api.fetchMock).length
     await intersectSentinel()
@@ -427,7 +443,7 @@ describe('Request Logs table', () => {
 
   it('pauses the observer after a failed page and retries from the same cursor on demand', async () => {
     const api = mockHistory()
-    render(createElement(LogsPage))
+    render(logsPage())
     await waitFor(() => expect(intersections.size).toBe(1))
     api.fetchMock.mockRejectedValueOnce(new Error('offline'))
     await intersectSentinel()
@@ -442,11 +458,11 @@ describe('Request Logs table', () => {
 
   it('resets the scroll position on refresh', async () => {
     mockHistory()
-    const view = render(createElement(LogsPage))
+    const view = render(logsPage())
     await waitFor(() => expect(intersections.size).toBe(1))
     scrollWindowTo(1040)
     app.refreshTrigger++
-    view.rerender(createElement(LogsPage))
+    view.rerender(logsPage())
     await waitFor(() => expect(window.scrollY).toBe(124))
   })
 
@@ -496,4 +512,33 @@ it('sends the provider to logs, dashboard, heatmap and chart filters', async () 
     expect(filtered.every(url => url.searchParams.get('provider') === 'openai' && !url.searchParams.has('model'))).toBe(true)
     expect(result.current.dashboardFilterParams.provider).toBe('openai')
   } finally { app.activeFilter = null }
+})
+
+
+it('uses the session URL parameter for usage and removes it when cleared', async () => {
+  const { fetchMock } = mockHistory([])
+  const Location = () => createElement('output', { 'data-testid': 'location' }, useLocation().search)
+  render(createElement(MemoryRouter, { initialEntries: ['/logs?session=abc'] }, createElement(LogsPage), createElement(Location)))
+  await waitFor(() => expect(usageCalls(fetchMock).some(url => url.searchParams.get('session_id') === 'abc')).toBe(true))
+  fireEvent.click(screen.getByRole('button', { name: 'Clear session filter' }))
+  await waitFor(() => expect(usageCalls(fetchMock).at(-1)?.searchParams.has('session_id')).toBe(false))
+  expect(screen.queryByRole('button', { name: 'Clear session filter' })).toBeNull()
+  expect(screen.getByTestId('location').textContent).toBe('')
+})
+
+
+it('sends session date, source, model and device filters to the sessions API', async () => {
+  app.activeDevice = 'device-1'
+  app.activeFilter = { models: ['model-1'] }
+  const { fetchMock } = mockHistory([])
+  renderHook(() => useSessionsData({ activeSource: 'agent-1', dateRange: '7d', bucket: null }))
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.map(([input]) => new URL(String(input), window.location.origin)).find(url => url.pathname === '/sessions')
+    expect(call?.searchParams.get('client_source')).toBe('agent-1')
+    expect(call?.searchParams.get('device_id')).toBe('device-1')
+    expect(call?.searchParams.get('model')).toBe('model-1')
+    expect(call?.searchParams.get('since')).toBeTruthy()
+  })
+  app.activeDevice = null
+  app.activeFilter = null
 })

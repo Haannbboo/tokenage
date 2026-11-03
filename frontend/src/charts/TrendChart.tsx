@@ -5,7 +5,7 @@ import { fillGaps, formatCost, formatModelName, formatNumber, value, resolveTime
 import { fillPeriodGaps } from '../periodGaps'
 import { describePeriod, periodLabelText } from '../periodLabels'
 import { useApp } from '../contexts/AppContext'
-import { ChartTooltip, TooltipRow, TooltipDivider } from './ChartTooltip'
+import { ChartTooltip, TooltipRow, TooltipDivider, TooltipTitle } from './ChartTooltip'
 import { TREND_NEUTRAL, trendSeriesColors } from './trendColors'
 import { sortTrendRows, trendTooltipX } from './trendTooltip'
 import { trendDotScale } from './trendScale'
@@ -82,7 +82,7 @@ export function TrendChart({
   const chartWidth = 1000 - (paddingX * 2);
 
   const hoveredData = hoveredIdx !== null ? filled[hoveredIdx] : null;
-  const hoverColor = metric === 'cost' ? 'var(--color-blue)' : 'var(--color-yellow)';
+  const hoverColor = 'var(--text-muted)';
   // Follow the cursor without re-rendering the chart: only a bucket change
   // updates React state, while the tooltip moves on its own transform.
   // Near the edges the tooltip slows down and drifts past the plot instead of
@@ -191,12 +191,10 @@ export function TrendChart({
     }
     return [...entries.values()].sort((a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model));
   }, [modelTotals, familyMode]);
-  // One colour per series: a model in model mode, a family in family mode.
-  // The biggest series keeps its brand colour; the others step aside when
-  // their brand colour is too close to a colour already on the chart.
+  // One identity colour per series (a model, or a family), in legend order.
   const modelColors = useMemo(
-    () => trendSeriesColors(legendModels.map(m => ({ key: m.model, model: m.iconModel })), theme),
-    [legendModels, theme],
+    () => trendSeriesColors(legendModels.map(m => ({ key: m.model, model: m.iconModel }))),
+    [legendModels],
   );
   // Keep the same segment order in every bucket, regardless of metric.
   const bucketSegments = (period: string) => {
@@ -212,7 +210,7 @@ export function TrendChart({
   const activeHighlight = highlightedModel !== null && filled.some(d =>
     bucketSegments(d.period).some(m => m.model === highlightedModel && (metric === 'cost' ? m.cost : m.tokens) > 0)
   ) ? highlightedModel : null;
-  const modelColor = (model: string) => modelColors.get(model) ?? TREND_NEUTRAL[theme];
+  const modelColor = (model: string) => modelColors.get(model) ?? TREND_NEUTRAL;
   const nowWallMs = wallClockMs(new Date(), tz);
   const hoveredPeriod = hoveredData ? describePeriod(hoveredData.period, granularity, nowWallMs, LANG_LOCALES[getLang()]) : null;
   const hoveredPeriodLabel = periodLabelText(hoveredPeriod);
@@ -220,7 +218,7 @@ export function TrendChart({
   return (
     <div className="widget" style={{ minHeight: '400px', width: '100%', position: 'relative' }}>
       <div className="widget-header" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-        <span>📈 {title}</span>
+        <span>{title}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <button
             type="button"
@@ -230,8 +228,8 @@ export function TrendChart({
             onClick={() => setShowRequests(visible => !visible)}
             style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: 0, border: 0, background: 'none', cursor: 'pointer', opacity: showRequests ? 1 : 0.4 }}
           >
-            <div style={{ width: '12px', height: '3px', background: 'var(--color-pink)', borderRadius: '2px' }} />
-            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', textDecoration: showRequests ? 'none' : 'line-through' }}>{t('Requests')}</span>
+            <div style={{ width: '12px', height: '3px', background: 'var(--hue-red)', borderRadius: '2px' }} />
+            <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-secondary)', textDecoration: showRequests ? 'none' : 'line-through' }}>{t('Requests')}</span>
           </button>
           <div className="tab-toggle">
             <button
@@ -271,9 +269,7 @@ export function TrendChart({
                   animation: 'trend-tooltip-in 120ms ease-out',
                 }}
               >
-                <div style={{ fontWeight: 600, marginBottom: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', fontSize: '13px' }}>
-                  {hoveredPeriodLabel ?? hoveredData.period}
-                </div>
+                <TooltipTitle>{hoveredPeriodLabel ?? hoveredData.period}</TooltipTitle>
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'minmax(0, 1fr) auto auto',
@@ -314,13 +310,13 @@ export function TrendChart({
                     {metric === 'cost' ? formatCost(hoveredData.total_cost_usd) : formatNumber(value(hoveredData.total_tokens))}
                   </span>
                 </TooltipRow>
-                <TooltipRow label={metric === 'cost' ? t('Tokens:') : t('Est. Cost:')} labelColor="#f472b6">
-                  <span style={{ fontWeight: 800, color: '#f472b6' }}>
+                <TooltipRow label={metric === 'cost' ? t('Tokens:') : t('Est. Cost:')} labelColor="var(--text-primary)">
+                  <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>
                     {metric === 'cost' ? formatNumber(value(hoveredData.total_tokens)) : formatCost(hoveredData.total_cost_usd)}
                   </span>
                 </TooltipRow>
-                {showRequests && <TooltipRow label={t('Requests:')} labelColor="var(--color-pink)">
-                  <span style={{ fontWeight: 600, color: 'var(--color-pink)' }}>{formatNumber(hoveredData.requests)}</span>
+                {showRequests && <TooltipRow label={t('Requests:')} labelColor="var(--hue-red)">
+                  <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>{formatNumber(hoveredData.requests)}</span>
                 </TooltipRow>}
               </ChartTooltip>
             )}
@@ -448,11 +444,11 @@ export function TrendChart({
                       className={activeHighlight !== null ? 'trend-requests is-softened' : 'trend-requests'}
                       points={points}
                       fill="none"
-                      stroke="var(--color-pink)"
+                      stroke="var(--hue-red)"
                       strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.45 : 0.22 }}
+                      style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.9 : 0.45 }}
                     />
                     {showDots && filled.map((d, i) => {
                       const x = paddingX + (i + 0.5) / filled.length * chartWidth;
@@ -465,9 +461,9 @@ export function TrendChart({
                             className={activeHighlight !== null ? 'trend-requests is-softened' : 'trend-requests'}
                             cx={0} cy={0} r={hoveredIdx === i ? "5" : "3"}
                             fill="var(--chart-dot-fill)"
-                            stroke="var(--color-pink)"
+                            stroke="var(--hue-red)"
                             strokeWidth={hoveredIdx === i ? "3" : "2"}
-                            style={{ opacity: hoveredIdx === null || hoveredIdx === i ? 0.45 : 0.22 }}
+                            style={{ opacity: hoveredIdx === null || hoveredIdx === i ? 0.9 : 0.45 }}
                           />
                         </g>
                       );
@@ -483,8 +479,8 @@ export function TrendChart({
                           transition: 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1)',
                           pointerEvents: 'none',
                         }}>
-                          <circle cx={0} cy={0} r="5" fill="var(--chart-dot-fill)" stroke="var(--color-pink)" strokeWidth="3" />
-                          <circle cx={0} cy={0} r="9" fill="none" stroke="var(--color-pink)" strokeWidth="1.5" opacity="0.35" className="trend-hover-pulse" />
+                          <circle cx={0} cy={0} r="5" fill="var(--chart-dot-fill)" stroke="var(--hue-red)" strokeWidth="3" />
+                          <circle cx={0} cy={0} r="9" fill="none" stroke="var(--hue-red)" strokeWidth="1.5" opacity="0.35" className="trend-hover-pulse" />
                         </g>
                       );
                     })()}
@@ -558,7 +554,7 @@ export function TrendChart({
                 <div key={m.model} className={`trend-legend-entry${activeHighlight === m.model ? ' is-highlighted' : activeHighlight !== null ? ' is-dimmed' : ''}`} onMouseEnter={() => setHighlightedModel(m.model)} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <div className="trend-legend-swatch" style={{ width: '12px', height: '12px', background: modelColor(m.model), borderRadius: '2px' }} />
                   {familyMode && getModelIcon(m.iconModel, theme)}
-                  <span style={{ fontSize: '11px', fontWeight: 600 }}>{familyMode ? t(m.label) : m.label}</span>
+                  <span style={{ fontSize: '11px', fontWeight: 500 }}>{familyMode ? t(m.label) : m.label}</span>
                 </div>
               ))}
             </div>

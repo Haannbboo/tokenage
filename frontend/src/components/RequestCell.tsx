@@ -1,8 +1,8 @@
+import type { CSSProperties } from 'react'
 import type { UsageRow } from '../types'
 import type { RequestLogColumnId } from '../hooks/useRequestLogColumns'
 import { t } from '../i18n'
-import { formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime, value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, ToolBadge, formatModelName, formatProviderName } from '../utils'
-import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
+import { formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime, value, getProviderIcon, getModelIcon, getSourceIcon, shortSessionId, ToolBadge, formatModelName, formatProviderName, modelColor, providerColor } from '../utils'
 
 type RequestCellOptions = { tz?: string; colWidths: { model: number; device: number }; hoveredSession: string | null; setSessionFilter: (id: string) => void; recalculatingId: string | null; handleRecalculateCost: (id: string) => Promise<void>; stopToolPropagation?: boolean }
 
@@ -17,19 +17,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
       case 'model':
         return (
           <td style={{ padding: '8px' }}>
-            <div style={{
-              padding: '4px 6px',
-              borderRadius: '6px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '11px',
-              backgroundColor: getModelBadgeBackgroundColor(row.model),
-              color: getModelTextColor(row.model),
-              maxWidth: colWidths.model - 10,
-              fontWeight: 600,
-              cursor: 'pointer'
-            }} title={row.model}>
+            <div className="entity-badge mono tinted" style={{ '--tint': modelColor(row.model), maxWidth: colWidths.model - 10, cursor: 'pointer' } as CSSProperties} title={row.model}>
               {getModelIcon(row.model)}
               <span style={{
                 overflow: 'hidden',
@@ -44,18 +32,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
       case 'provider':
         return (
           <td style={{ padding: '8px' }}>
-            <div style={{
-              padding: '4px 6px',
-              borderRadius: '6px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '11px',
-              backgroundColor: getProviderBadgeBg(row.provider),
-              color: getProviderBadgeText(row.provider),
-              width: 'fit-content',
-              fontWeight: 600
-            }}>
+            <div className="entity-badge tinted" style={{ '--tint': providerColor(row.provider) } as CSSProperties}>
               {getProviderIcon(row.provider)}
               {formatProviderName(row.provider)}
             </div>
@@ -70,17 +47,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
               maxWidth: '120px',
             }}>
               {getSourceIcon(row.client_source ?? '') ?? (
-                <span style={{
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  padding: '2px 6px',
-                  borderRadius: '4px',
-                  backgroundColor: getSourceBadgeBg(row.client_source ?? ''),
-                  color: getSourceBadgeText(row.client_source ?? ''),
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}>
+                <span className="entity-badge">
                   {row.client_source || '—'}
                 </span>
               )}
@@ -118,115 +85,49 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
         )
       case 'input':
         return (
-          <td style={{ verticalAlign: 'top' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <div style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>
+          <td className="tok-cell">
+            <div className="tok-split">
+              <div className="tok-main">
                 {formatNumber(row.prompt_tokens)}
-                <span style={{ fontSize: '10px', fontWeight: 400, marginLeft: '4px', color: 'var(--text-secondary)' }}>{t('tokens')}</span>
+                <small>{t('tokens')}</small>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+              <div className="tok-notes">
                 {value(row.cached_tokens) > 0 && (
-                  <div style={{ fontSize: '9px', color: 'var(--color-green)', fontWeight: 700 }}>
+                  <div className="tok-cached">
                     {/* cache_creation_tokens is disjoint from prompt_tokens (Anthropic semantics),
                         so it's added to the denominator for a true hit rate. */}
                     {t('Cache read')} {formatNumber(row.cached_tokens)} ({Math.round((value(row.cached_tokens) / ((value(row.prompt_tokens) + value(row.cache_creation_tokens)) || 1)) * 100)}%)
                   </div>
                 )}
                 {value(row.cache_creation_tokens) > 0 && (
-                  <div style={{ fontSize: '9px', color: 'var(--color-purple)', fontWeight: 700 }}>
+                  <div className="tok-write">
                     {t('Cache write')} {formatNumber(row.cache_creation_tokens)}
                   </div>
                 )}
               </div>
             </div>
-            <div className="has-tooltip" style={{ width: '100%', borderBottom: 'none' }}>
-              {(() => {
-                const promptUncached = Math.max(0, value(row.prompt_tokens) - value(row.cached_tokens));
-                const cacheCreation = value(row.cache_creation_tokens);
-                // total_tokens includes cache_creation_tokens for Anthropic responses,
-                // so it's rendered as its own segment or the bar won't fill correctly.
-                const total = value(row.total_tokens) || 1;
-                return (
-                  <>
-                    <div style={{
-                      width: '100%',
-                      height: '3px',
-                      background: 'var(--progress-bg)',
-                      borderRadius: '2px',
-                      marginTop: '4px',
-                      overflow: 'hidden',
-                      border: '1px solid var(--border-color)',
-                      display: 'flex'
-                    }}>
-                      <div style={{ height: '100%', background: 'var(--color-green)', width: `${(value(row.cached_tokens) / total) * 100}%` }} />
-                      <div style={{ height: '100%', background: 'var(--color-blue)', width: `${(promptUncached / total) * 100}%`, opacity: 0.7 }} />
-                      {cacheCreation > 0 && (
-                        <div style={{ height: '100%', background: 'var(--color-indigo)', width: `${(cacheCreation / total) * 100}%` }} />
-                      )}
-                      <div style={{ height: '100%', background: 'var(--color-purple)', width: `${(value(row.completion_tokens) / total) * 100}%` }} />
-                    </div>
-                    <div className="tooltip-text">
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                          <span style={{ color: 'var(--color-green)' }}>&bull; {t('Cached')}:</span>
-                          <span style={{ fontWeight: 600 }}>{formatNumber(row.cached_tokens)}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                          <span style={{ color: 'var(--color-blue)' }}>&bull; {t('Input')}:</span>
-                          <span style={{ fontWeight: 600 }}>{formatNumber(promptUncached)}</span>
-                        </div>
-                        {cacheCreation > 0 && (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                            <span style={{ color: 'var(--color-indigo)' }}>&bull; {t('Cache write')}:</span>
-                            <span style={{ fontWeight: 600 }}>{formatNumber(cacheCreation)}</span>
-                          </div>
-                        )}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                          <span style={{ color: 'var(--color-purple)' }}>&bull; {t('Output')}:</span>
-                          <span style={{ fontWeight: 600 }}>{formatNumber(row.completion_tokens)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                );
-              })()}
+            <div className="tok-bar" aria-hidden="true">
+              <div className="tok-bar-cached" style={{ width: `${(value(row.cached_tokens) / (value(row.total_tokens) || 1)) * 100}%` }} />
+              <div className="tok-bar-input" style={{ width: `${(Math.max(0, value(row.prompt_tokens) - value(row.cached_tokens)) / (value(row.total_tokens) || 1)) * 100}%` }} />
+              <div className="tok-bar-write" style={{ width: `${(value(row.cache_creation_tokens) / (value(row.total_tokens) || 1)) * 100}%` }} />
+              <div className="tok-bar-output" style={{ width: `${(value(row.completion_tokens) / (value(row.total_tokens) || 1)) * 100}%` }} />
             </div>
           </td>
         )
       case 'output':
         return (
-          <td style={{ fontWeight: 600, color: 'var(--color-blue)', verticalAlign: 'top' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <td className="tok-cell">
+            <div className="tok-split">
               <div>{formatNumber(row.completion_tokens)}</div>
               {value(row.reasoning_tokens) > 0 && (
-                <div style={{ fontSize: '9px', color: 'var(--text-secondary)', fontWeight: 700 }}>
+                <div className="tok-notes">
                   {t('Reasoning')} {formatNumber(row.reasoning_tokens)} ({Math.min(Math.round((value(row.reasoning_tokens) / (value(row.completion_tokens) || 1)) * 100), 100)}%)
                 </div>
               )}
             </div>
             {value(row.reasoning_tokens) > 0 && (
-              <div
-                style={{
-                  width: '100%',
-                  height: '3px',
-                  background: 'var(--progress-bg)',
-                  borderRadius: '2px',
-                  marginTop: '4px',
-                  overflow: 'hidden',
-                  border: '1px solid var(--border-color)',
-                  display: 'flex'
-                }}
-              >
-                {value(row.reasoning_tokens) > 0 && (
-                  <div
-                    title={`Reasoning: ${formatNumber(row.reasoning_tokens)} tokens`}
-                    style={{
-                      width: `${Math.min((value(row.reasoning_tokens) / (value(row.completion_tokens) || 1)) * 100, 100)}%`,
-                      height: '100%',
-                      background: '#64748b'
-                    }}
-                  />
-                )}
+              <div className="tok-bar" aria-hidden="true">
+                <div className="tok-bar-reasoning" style={{ width: `${Math.min((value(row.reasoning_tokens) / (value(row.completion_tokens) || 1)) * 100, 100)}%` }} />
               </div>
             )}
           </td>
@@ -267,7 +168,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                   <button
                     type="button"
                     className={`cost-recalc-btn ${costValueClass}`}
-                    style={{ color: 'var(--color-green)', fontWeight: 500 }}
+                    style={{ color: 'var(--text-primary)', fontWeight: 500 }}
                     onClick={handleCostClick}
                     aria-label={t('Click to recalculate')}
                   >
@@ -279,7 +180,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                       style={{
                         marginLeft: '4px',
                         fontSize: '10px',
-                        color: 'var(--color-yellow, #b58900)',
+                        color: 'var(--badge-warn-text)',
                       }}
                     >
                       est.
@@ -320,7 +221,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                         <div className="cost-tooltip-row">
                           <span className="cost-tooltip-label">{t('Cache write:')}</span>
                           <div className="cost-tooltip-amount">
-                            <div style={{ color: 'var(--color-purple)' }}>{formatCost(cacheWriteCost)}</div>
+                            <div style={{ color: 'var(--color-yellow)' }}>{formatCost(cacheWriteCost)}</div>
                             {pricing && pricing.cache_write !== null && (
                               <div className="cost-tooltip-detail">{formatNumber(cacheCreation)} tokens x {formatRate(pricing.cache_write)}</div>
                             )}

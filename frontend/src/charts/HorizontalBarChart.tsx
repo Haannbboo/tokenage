@@ -1,6 +1,8 @@
-import { useState } from 'react'
-import { formatCompact, formatCost, formatLatency, formatNumber, formatRate, formatThroughput } from '../utils'
-import { ChartTooltip, TooltipDivider, TooltipRow } from './ChartTooltip'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { formatCompact, formatCost, formatLatency, formatNumber, formatRate, formatThroughput, ToolBadge } from '../utils'
+import { ChartTooltip, TooltipDivider, TooltipRow, TooltipTitle } from './ChartTooltip'
+import { tooltipPosition } from '../tooltip'
 import { t } from '../i18n/index.ts'
 
 export type BarItem = {
@@ -11,6 +13,9 @@ export type BarItem = {
   promptTokens?: number
   completionTokens?: number
   cachedTokens?: number
+  cacheWriteTokens?: number
+  successful?: number
+  failed?: number
   cost: number
   throughput?: number | null
   pricePerMillion?: number | null
@@ -18,128 +23,250 @@ export type BarItem = {
   cacheHitRate?: number | null
   totalTime?: number | null
   avgTime?: number | null
+  /** Dimmed identity colour: the dot and the bar. */
   color: string
-  badgeBg: string
-  badgeText: string
 }
 
 export type Metric = 'tokens' | 'cost' | 'throughput' | 'successRate' | 'cacheHitRate' | 'count' | 'totalTime' | 'avgTime'
 
+const additiveMetrics: Metric[] = ['tokens', 'cost', 'count', 'totalTime']
+
+function metricValue(item: BarItem, metric: Metric) {
+  if (metric === 'tokens' || metric === 'count') return item.tokens
+  if (metric === 'cost') return item.cost
+  if (metric === 'successRate') return item.successRate ?? 100
+  if (metric === 'cacheHitRate') return item.cacheHitRate ?? 0
+  if (metric === 'totalTime') return item.totalTime ?? 0
+  if (metric === 'avgTime') return item.avgTime ?? 0
+  return item.throughput ?? 0
+}
+
+function formatMetric(metric: Metric, v: number) {
+  if (metric === 'tokens') return formatCompact(v)
+  if (metric === 'count') return formatNumber(v)
+  if (metric === 'cost') return formatCost(v, 2)
+  if (metric === 'successRate' || metric === 'cacheHitRate') return `${v.toFixed(1)}%`
+  if (metric === 'totalTime' || metric === 'avgTime') return formatLatency(v)
+  return formatThroughput(v)
+}
+
+const pct = (part: number, whole: number) => `${(whole > 0 ? part / whole * 100 : 0).toFixed(1)}%`
+
+/** The hover/focus box for one ranked row: context rows, a divider, then the ranked value. */
+export function RankTooltipBody({ item, metric, rank, share, mono = false, toolBadge = false }: {
+  item: BarItem
+  metric: Metric
+  rank: number
+  /** The item's part of the list total for additive metrics, else null. */
+  share: string | null
+  mono?: boolean
+  toolBadge?: boolean
+}) {
+  const cached = item.cachedTokens ?? 0
+  const input = Math.max(0, (item.promptTokens ?? 0) - cached)
+  const output = item.completionTokens ?? 0
+  const shareRow = share != null && <TooltipRow label={t('Share')}>{share}</TooltipRow>
+  let rows: React.ReactNode
+  let totalLabel: string
+  if (metric === 'tokens') {
+    rows = <>
+      <TooltipRow label={t('Cached')} swatch="var(--color-green)">{formatCompact(cached)}</TooltipRow>
+      <TooltipRow label={t('Input')} swatch="var(--chart-2)">{formatCompact(input)}</TooltipRow>
+      <TooltipRow label={t('Output')} swatch="var(--color-blue)">{formatCompact(output)}</TooltipRow>
+    </>
+    totalLabel = t('Total')
+  } else if (metric === 'cost') {
+    rows = <>
+      <TooltipRow label={t('Tokens')}>{formatCompact(item.tokens)}</TooltipRow>
+      {item.pricePerMillion != null && <TooltipRow label={t('Price')}>{formatRate(item.pricePerMillion)}</TooltipRow>}
+      {shareRow}
+    </>
+    totalLabel = t('Cost')
+  } else if (metric === 'throughput') {
+    rows = <>
+      <TooltipRow label={t('Output')} swatch="var(--color-blue)">{formatCompact(output)}</TooltipRow>
+      <TooltipRow label={t('Tokens')}>{formatCompact(item.tokens)}</TooltipRow>
+    </>
+    totalLabel = t('Speed')
+  } else if (metric === 'cacheHitRate') {
+    rows = <>
+      <TooltipRow label={t('Cached')} swatch="var(--color-green)">{formatCompact(cached)}</TooltipRow>
+      <TooltipRow label={t('Input')} swatch="var(--chart-2)">{formatCompact(input)}</TooltipRow>
+      {(item.cacheWriteTokens ?? 0) > 0 && <TooltipRow label={t('Cache write')} swatch="var(--color-yellow)">{formatCompact(item.cacheWriteTokens ?? 0)}</TooltipRow>}
+    </>
+    totalLabel = t('Hit rate')
+  } else if (metric === 'successRate') {
+    rows = <>
+      <TooltipRow label={t('Successful')} swatch="var(--badge-success-text)">{formatNumber(item.successful ?? 0)}</TooltipRow>
+      <TooltipRow label={t('Failed')} swatch="var(--badge-error-text)">{formatNumber(item.failed ?? 0)}</TooltipRow>
+    </>
+    totalLabel = t('Success rate')
+  } else {
+    // Tool calls: the two metrics not ranked by, then the share.
+    rows = <>
+      {metric !== 'count' && <TooltipRow label={t('Calls')}>{formatNumber(item.tokens)}</TooltipRow>}
+      {metric !== 'totalTime' && <TooltipRow label={t('Total time')}>{formatLatency(item.totalTime ?? 0)}</TooltipRow>}
+      {metric !== 'avgTime' && <TooltipRow label={t('Avg time')}>{formatLatency(item.avgTime ?? 0)}</TooltipRow>}
+      {shareRow}
+    </>
+    totalLabel = metric === 'count' ? t('Calls') : metric === 'totalTime' ? t('Total time') : t('Avg time')
+  }
+  return <>
+    <TooltipTitle>
+      {toolBadge ? <ToolBadge name={item.name} /> : <>
+        <span className="rank-mark">{item.icon ?? <i style={{ background: item.color }} />}</span>
+        <span className={mono ? 'mono' : undefined}>{item.name}</span>
+      </>}
+      <small>#{rank}</small>
+    </TooltipTitle>
+    {rows}
+    <TooltipDivider />
+    <TooltipRow label={totalLabel} total>{formatMetric(metric, metricValue(item, metric))}</TooltipRow>
+  </>
+}
+
+/** Place the tip above (or, without room, below) the row at pointer x, so it never covers the row. */
+function placeTip(tip: HTMLElement, row: HTMLElement, x: number | null) {
+  const r = row.getBoundingClientRect()
+  const anchor = x ?? r.left + Math.min(r.width / 3, 160)
+  const pos = tooltipPosition({ left: anchor, width: 0, top: r.top, bottom: r.bottom } as DOMRect, { width: tip.offsetWidth, height: tip.offsetHeight }, innerWidth, innerHeight)
+  tip.style.left = `${pos.left}px`
+  tip.style.top = `${pos.top}px`
+  tip.classList.toggle('chart-tip-below', pos.below)
+}
+
 export function HorizontalBarChart({
   title,
-  icon,
   items,
   metric,
+  mono = false,
+  toolBadges = false,
   children,
 }: {
   title: string
-  icon: string
   items: BarItem[]
+  mono?: boolean
+  toolBadges?: boolean
   metric: Metric
   children?: React.ReactNode
 }) {
-  const [hoveredItem, setHoveredItem] = useState<string | null>(null)
+  // The row shown as active: hovered, focused or tapped. Tracked by row key
+  // (name, plus which duplicate of it), so a re-sort keeps the tooltip on the same item.
+  const [active, setActive] = useState<{ key: string } | null>(null)
+  // The latest pointer x, null when focused: a ref, so moves neither re-render
+  // nor re-subscribe the scroll follower.
+  const pointerX = useRef<number | null>(null)
+  const tipRef = useRef<HTMLDivElement>(null)
+  const rowRefs = useRef(new Map<string, HTMLLIElement>())
+  const tipId = useId()
 
-  const getMetricValue = (item: BarItem) => {
-    if (metric === 'tokens' || metric === 'count') return item.tokens
-    if (metric === 'cost') return item.cost
-    if (metric === 'successRate') return item.successRate ?? 100
-    if (metric === 'cacheHitRate') return item.cacheHitRate ?? 0
-    if (metric === 'totalTime') return item.totalTime ?? 0
-    if (metric === 'avgTime') return item.avgTime ?? 0
-    return item.throughput ?? 0
-  }
+  const sorted = [...items].sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
+  const maxValue = Math.max(...sorted.map((item) => metricValue(item, metric)), 1)
+  const format = (v: number) => formatMetric(metric, v)
+  // Shares only make sense for metrics that add up.
+  const additive = additiveMetrics.includes(metric)
+  const total = additive ? sorted.reduce((sum, item) => sum + metricValue(item, metric), 0) : 0
+  const seen = new Map<string, number>()
+  const rowKeys = sorted.map(item => {
+    const n = seen.get(item.name) ?? 0
+    seen.set(item.name, n + 1)
+    return `${item.name}\u0000${n}`
+  })
+  const activeIndex = active ? rowKeys.indexOf(active.key) : -1
+  const activeItem = activeIndex >= 0 ? sorted[activeIndex] : null
 
-  const sorted = [...items]
-    .sort((a, b) => getMetricValue(b) - getMetricValue(a))
+  useLayoutEffect(() => {
+    const row = active && rowRefs.current.get(active.key)
+    if (tipRef.current && row) placeTip(tipRef.current, row, pointerX.current)
+  })
 
-  const maxValue = Math.max(
-    ...sorted.map(getMetricValue),
-    1
-  )
-
-  const hovered = hoveredItem ? sorted.find((item) => item.name === hoveredItem) ?? null : null
+  // Follow the row on scroll; hide once it leaves the list or the viewport.
+  useLayoutEffect(() => {
+    if (!active) return
+    const follow = () => {
+      const row = rowRefs.current.get(active.key)
+      if (!row || !tipRef.current) return
+      const r = row.getBoundingClientRect()
+      const list = row.parentElement!.getBoundingClientRect()
+      if (r.bottom <= list.top || r.top >= list.bottom || r.bottom <= 0 || r.top >= innerHeight) setActive(null)
+      else placeTip(tipRef.current, row, pointerX.current)
+    }
+    window.addEventListener('scroll', follow, true)
+    return () => window.removeEventListener('scroll', follow, true)
+  }, [active])
 
   return (
-    <div className="widget" style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="widget top-list">
       <div className="widget-header">
-        <span>{icon} {title}</span>
+        <span>{title}</span>
+        {additive && total > 0 && <span className="widget-meta">{t('Total')} {format(total)}</span>}
       </div>
+      {children}
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {metric === 'tokens' && hovered && (
-          <ChartTooltip left="50%">
-            <div style={{ fontWeight: 600, marginBottom: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', fontSize: '13px' }}>
-              {hovered.name}
-            </div>
-            <TooltipRow label={t('Cached:')} labelColor="var(--color-green)">
-              <span style={{ fontWeight: 600 }}>{formatCompact(hovered.cachedTokens ?? 0)}</span>
-            </TooltipRow>
-            <TooltipRow label={t('Input:')} labelColor="#94a3b8">
-              <span style={{ fontWeight: 600 }}>{formatCompact(Math.max(0, (hovered.promptTokens ?? 0) - (hovered.cachedTokens ?? 0)))}</span>
-            </TooltipRow>
-            <TooltipRow label={t('Output:')} labelColor="var(--color-blue)">
-              <span style={{ fontWeight: 600 }}>{formatCompact(hovered.completionTokens ?? 0)}</span>
-            </TooltipRow>
-            <TooltipDivider />
-            <TooltipRow label={t('Total Tokens:')}>
-              <span style={{ fontWeight: 800 }}>{formatCompact(hovered.tokens)}</span>
-            </TooltipRow>
-          </ChartTooltip>
-        )}
         {sorted.length === 0 ? (
           <div style={{ padding: '20px' }}>
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>{t('No data available')}</div>
           </div>
         ) : (
-          <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', maxHeight: '300px' }}>
+          <ol className={`rank-list${activeItem ? ' has-active' : ''}`} onMouseLeave={() => {
+            const focused = [...rowRefs.current].find(([, row]) => row === document.activeElement)
+            pointerX.current = null
+            setActive(focused ? { key: focused[0] } : null)
+          }}>
           {sorted.map((s, index) => {
-            const currentVal = getMetricValue(s)
+            const currentVal = metricValue(s, metric)
             const percentage = (currentVal / maxValue) * 100
+            const sub = metric === 'cost' && s.pricePerMillion != null ? formatRate(s.pricePerMillion) : null
+            const isActive = activeIndex === index
+            const rowKey = rowKeys[index]
 
             return (
-              <div
+              <li
                 key={`${s.name}-${index}`}
-                style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
-                onMouseEnter={() => setHoveredItem(s.name)}
-                onMouseLeave={() => setHoveredItem((current) => current === s.name ? null : current)}
+                ref={(el) => { if (el) rowRefs.current.set(rowKey, el); else rowRefs.current.delete(rowKey) }}
+                className={`rank-row${toolBadges ? ' rank-row-tools' : ''}${isActive ? ' is-active' : ''}`}
+                tabIndex={0}
+                aria-describedby={isActive ? tipId : undefined}
+                onMouseEnter={(e) => { pointerX.current = e.clientX; setActive({ key: rowKey }) }}
+                onMouseMove={(e) => { pointerX.current = e.clientX; if (isActive && tipRef.current) placeTip(tipRef.current, e.currentTarget, e.clientX) }}
+                onFocus={() => setActive((cur) => { if (cur?.key === rowKey) return cur; pointerX.current = null; return { key: rowKey } })}
+                // A window blur (tab switch) keeps the row; focus moving elsewhere in the page hides it.
+                onBlur={() => { if (document.hasFocus()) setActive((cur) => cur?.key === rowKey ? null : cur) }}
+                onClick={(e) => { pointerX.current = e.clientX; setActive({ key: rowKey }) }}
+                onKeyDown={(e) => { if (e.key === 'Escape') setActive(null) }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
-                    {s.icon}
-                    <span style={{
-                      padding: '1px 6px',
-                      borderRadius: '4px',
-                      backgroundColor: s.badgeBg,
-                      color: s.badgeText,
-                      fontSize: '11px',
-                      fontWeight: 600,
-                    }}>{s.name}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-                    <span style={{ color: 'var(--text-secondary)', fontWeight: 700 }}>
-                      {metric === 'tokens' ? formatCompact(currentVal) : metric === 'count' ? formatNumber(currentVal) : metric === 'cost' ? formatCost(currentVal, 2) : metric === 'successRate' || metric === 'cacheHitRate' ? `${currentVal.toFixed(1)}%` : metric === 'totalTime' || metric === 'avgTime' ? formatLatency(currentVal) : formatThroughput(currentVal)}
-                    </span>
-                    {metric === 'cost' && s.pricePerMillion != null && (
-                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                        {formatRate(s.pricePerMillion)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="progress-track" style={{ width: '100%', display: 'flex' }}>
-                  <div
-                    style={{ width: `${percentage}%`, height: '100%', background: s.color, transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1)' }}
-                  />
-                </div>
-              </div>
+                <span className="rank-n">{index + 1}</span>
+                {!toolBadges && <span className="rank-mark">{s.icon ?? <i style={{ background: s.color }} />}</span>}
+                <span className="rank-name">
+                  {toolBadges ? <ToolBadge name={s.name} /> : <span className={mono ? 'mono' : undefined}>{s.name}</span>}
+                  {sub && <small>{sub}</small>}
+                </span>
+                <span className="rank-value">
+                  {format(currentVal)}
+                  {additive && total > 0 && <small>{(currentVal / total * 100).toFixed(1)}%</small>}
+                </span>
+                <span className="rank-bar"><i style={{ width: `${percentage}%`, background: s.color }} /></span>
+              </li>
             )
             })
           }
-          </div>
+          </ol>
         )}
-      {/* Pinned to the card's bottom edge when the list is shorter than the card. */}
-      {children && <div style={{ marginTop: 'auto' }}>{children}</div>}
-    </div>
+      </div>
+      {activeItem && createPortal(
+        <ChartTooltip ref={tipRef} id={tipId} role="tooltip" className="rank-tip">
+          <RankTooltipBody
+            item={activeItem}
+            metric={metric}
+            rank={activeIndex + 1}
+            mono={mono}
+            toolBadge={toolBadges}
+            share={additive ? pct(metricValue(activeItem, metric), total)
+              : metric === 'avgTime' ? pct(activeItem.tokens, sorted.reduce((sum, item) => sum + item.tokens, 0)) : null}
+          />
+        </ChartTooltip>,
+        document.body,
+      )}
     </div>
   )
 }

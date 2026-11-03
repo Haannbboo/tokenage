@@ -71,7 +71,7 @@ it('links row and mark hover without scrolling', async () => {
   await waitFor(() => expect(view.container.querySelector('.session-mark')).toBeTruthy())
   const row = view.container.querySelector('#session-request-a')!, mark = view.container.querySelector('.session-mark')!
   const style = document.createElement('style')
-  style.textContent = readFileSync('src/App.css', 'utf8').replace('background: color-mix(in srgb, var(--color-blue) 18%, transparent); }', 'background: rgb(12, 34, 56); }')
+  style.textContent = readFileSync('src/App.css', 'utf8').replace('tr.session-row-hovered > td { background: var(--surface-hover); }', 'tr.session-row-hovered > td { background: rgb(12, 34, 56); }')
   document.head.appendChild(style)
   fireEvent.mouseEnter(row); expect(mark.classList.contains('selected')).toBe(true)
   expect(view.container.querySelector('.session-lane-track')!.classList.contains('has-hover')).toBe(true)
@@ -122,4 +122,58 @@ it('fetches context for the expanded session', async () => {
   vi.stubGlobal('fetch', fetchMock)
   render(createElement(SessionDetail, { session: { session_id: 'a/b', duration_s: 1, request_count: 0, total_tokens: 0, total_cost_usd: 0 } as SessionSummary, onNavigateToLogs: vi.fn() }))
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/sessions/a%2Fb/context', expect.objectContaining({ signal: expect.any(AbortSignal) })))
+})
+
+it('links hover across the context chart, timeline and request rows by request id', async () => {
+  const context = { points: ['a', 'b', 'c'].map((id, i) => ({ request: i + 1, id, ts: 1_000_000 * (i + 1), model: 'm', cost_usd: 0.01, latency_ms: 500, context_tokens: (i + 1) * 1000 })), peak_tokens: 3000, request_count: 3 }
+  // Newest first, as /usage returns them: the order differs from the chart's.
+  const rows = ['c', 'b', 'a'].map((id, i) => ({ id, ts: 1_000_000 * (3 - i), model: 'm', status: 200, latency_ms: 500 }))
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => ({ ok: true, json: async () => url.endsWith('/context') ? context : rows })))
+  const view = render(createElement(SessionDetail, { session: { session_id: 's', duration_s: 1, request_count: 3, total_tokens: 0, total_cost_usd: 0 } as SessionSummary, onNavigateToLogs: vi.fn() }))
+  await waitFor(() => expect(document.getElementById('session-request-c')).toBeTruthy())
+  const svg = await waitFor(() => { const el = view.container.querySelector<SVGSVGElement>('.session-context svg'); expect(el).toBeTruthy(); return el! })
+  svg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 200, right: 800, bottom: 200, x: 0, y: 0, toJSON() {} })
+
+  // Chart → row and timeline: the last point is request c.
+  fireEvent.mouseMove(svg, { clientX: 790 })
+  expect(document.getElementById('session-request-c')!.className).toContain('session-row-hovered')
+  expect(view.container.querySelectorAll('.session-mark.selected')).toHaveLength(1)
+  expect(screen.getByText('Request 3', { selector: '.chart-tip-title' })).toBeTruthy()
+  fireEvent.mouseLeave(svg)
+  expect(view.container.querySelector('.session-row-hovered')).toBeNull()
+  expect(view.container.querySelector('.session-context-marker')).toBeNull()
+
+  // Row → chart: the marker sits on request a's point, without a tooltip.
+  fireEvent.mouseEnter(document.getElementById('session-request-a')!)
+  const marker = view.container.querySelector('.session-context-marker line')!
+  expect(marker.getAttribute('x1')).toBe('48')
+  expect(view.container.querySelector('.chart-tip')).toBeNull()
+})
+
+it('shades only the part of the chart the timeline and list cover', () => {
+  const points = Array.from({ length: 10 }, (_, i) => ({ request: i + 1, id: `r${i}`, ts: 1000 * (i + 1), model: 'm', cost_usd: 0, latency_ms: null, context_tokens: (i + 1) * 100 }))
+  const data = { points, peak_tokens: 1000, request_count: 10 }
+  const props = { data, hoveredId: null, onHover: vi.fn(), colorOf: () => 'red' }
+  const view = render(createElement(SessionContextChart, { ...props, linkedRange: { from: 8000, to: 10000 } }))
+  const shade = view.container.querySelector('.session-context-linked')!
+  // Requests 8-10 of 10 on an 800-wide plot (x from 48 to 784), padded 3px each side.
+  expect(Number(shade.getAttribute('x'))).toBeCloseTo(48 + 7 / 9 * 736 - 3)
+  view.rerender(createElement(SessionContextChart, { ...props, linkedRange: null }))
+  expect(view.container.querySelector('.session-context-linked')).toBeNull()
+})
+
+it('updates the chart tooltip cost after a cost recalculation', async () => {
+  const context = { points: ['a', 'b'].map((id, i) => ({ request: i + 1, id, ts: 1_000_000 * (i + 1), model: 'm', cost_usd: 0.01, latency_ms: null, context_tokens: (i + 1) * 1000 })), peak_tokens: 2000, request_count: 2 }
+  const rows = ['b', 'a'].map((id, i) => ({ id, ts: 1_000_000 * (2 - i), model: 'm', status: 200, total_cost_usd: 0.01 }))
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => ({ ok: true, json: async () =>
+    init?.method === 'POST' ? { new_costs: { input_cost_usd: 0.5, output_cost_usd: 0.25, total_cost_usd: 0.75 } }
+      : url.endsWith('/context') ? context : rows })))
+  const view = render(createElement(SessionDetail, { session: { session_id: 's', duration_s: 1, request_count: 2, total_tokens: 0, total_cost_usd: 0 } as SessionSummary, onNavigateToLogs: vi.fn() }))
+  await waitFor(() => expect(document.getElementById('session-request-b')).toBeTruthy())
+  const svg = view.container.querySelector<SVGSVGElement>('.session-context svg')!
+  svg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 200, right: 800, bottom: 200, x: 0, y: 0, toJSON() {} })
+  fireEvent.click(document.getElementById('session-request-b')!.querySelector('button[aria-label="Click to recalculate"]')!)
+  await waitFor(() => expect(document.getElementById('session-request-b')!.textContent).toContain('$0.75'))
+  fireEvent.mouseMove(svg, { clientX: 790 })
+  expect(view.container.querySelector('.chart-tip')!.textContent).toContain('$0.75')
 })

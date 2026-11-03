@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useMemo, useCallback } from 'react'
+import { useDismiss } from '../hooks/useDismiss'
 import type { SessionSelectorRow } from '../types'
 import { shortSessionId, timeAgo, sessionAgentName } from '../utils'
 import { t } from '../i18n/index.ts'
@@ -15,15 +16,11 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
   const [search, setSearch] = useState('')
   const ref = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setIsOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+  const close = useCallback((event?: Event) => {
+    if (event instanceof KeyboardEvent) ref.current?.querySelector('input')?.focus()
+    setIsOpen(false)
   }, [])
+  useDismiss(ref, isOpen, close)
 
   const grouped = useMemo(() => {
     const map = new Map<string, SessionSelectorRow[]>()
@@ -65,9 +62,8 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
-          height: 35,
           paddingRight: '28px',
-          borderColor: isOpen ? 'var(--color-blue)' : undefined,
+          borderColor: isOpen ? 'var(--text-muted)' : undefined,
           cursor: 'text'
         }}
       >
@@ -76,7 +72,7 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
             <span style={{
               padding: '2px 6px',
               borderRadius: '4px',
-              background: sourceColors[selected.client_source] + '22',
+              background: `color-mix(in oklch, ${sourceColors[selected.client_source] || 'var(--text-secondary)'} 13%, transparent)`,
               color: sourceColors[selected.client_source] || 'var(--text-secondary)',
               fontSize: '10px',
               fontWeight: 700,
@@ -121,19 +117,12 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
       </div>
 
       {isOpen && (
-        <div style={{
-          position: 'absolute',
+        <div className="menu" style={{
           top: 'calc(100% + 4px)',
           left: 0,
           right: 0,
-          zIndex: 100,
-          background: 'var(--card-bg)',
-          border: '1px solid var(--border-color)',
-          borderRadius: '8px',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
           maxHeight: 320,
           overflowY: 'auto',
-          padding: '4px'
         }}>
           <button
             onClick={() => { onChange(null); setIsOpen(false); setSearch('') }}
@@ -152,7 +141,6 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
               marginBottom: '4px'
             }}
           >
-            <span>🌐</span>
             <span style={{ fontWeight: 600 }}>{t('All Sessions')}</span>
           </button>
 
@@ -195,7 +183,7 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
                   <span style={{
                     padding: '2px 6px',
                     borderRadius: '4px',
-                    background: sourceColors[group.source] + '22',
+                    background: `color-mix(in oklch, ${sourceColors[group.source] || 'var(--text-primary)'} 13%, transparent)`,
                     color: sourceColors[group.source] || 'var(--text-primary)',
                     fontSize: '10px',
                     fontWeight: 600,

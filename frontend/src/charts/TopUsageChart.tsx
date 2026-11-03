@@ -2,8 +2,7 @@ import { appendModels } from '../modelFilter'
 import { useState, useMemo, useEffect } from 'react'
 import type { Theme } from '../theme'
 import type { UsageSummary } from '../types'
-import { getModelColor, getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
-import { formatModelName, formatProviderName, getModelIcon, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getSourceBadgeBg, getSourceBadgeText, getSourceIcon, PALETTE, netThroughput, getTimezoneOffset, resolveTimezone } from '../utils'
+import { formatModelName, formatProviderName, getModelIcon, getProviderIcon, getSourceIcon, modelColor, providerColor, sourceColor, nameColor, netThroughput, getTimezoneOffset, resolveTimezone } from '../utils'
 import { useApp } from '../contexts/AppContext'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
@@ -40,13 +39,6 @@ type SourceSummaryRow = {
   total_cost_usd: number | null
   successful_requests: number | null
   failed_requests: number | null
-}
-
-const providerColors: Record<string, string> = {
-  'anthropic': '#cc7c5e',
-  'google': '#528af2',
-  'openai': '#94a3b8',
-  'xiaomi': '#dcc496',
 }
 
 export function TopUsageChart({
@@ -148,6 +140,7 @@ export function TopUsageChart({
         name: formatModelName(model),
         id: model,
         icon: getModelIcon(model, theme),
+        color: modelColor(model),
         tokens: v.tokens,
         promptTokens: v.prompt,
         completionTokens: v.completion,
@@ -159,9 +152,9 @@ export function TopUsageChart({
           : v.tokens > 0 ? (v.cost / v.tokens) * 1_000_000 : null,
         successRate: v.total > 0 ? (v.successful / v.total) * 100 : 100,
         cacheHitRate: (v.prompt + v.cacheCreation) > 0 ? (v.cached / (v.prompt + v.cacheCreation)) * 100 : 0,
-        color: getModelColor(model, theme),
-        badgeBg: getModelBadgeBackgroundColor(model, theme),
-        badgeText: getModelTextColor(model, theme),
+        cacheWriteTokens: v.cacheCreation,
+        successful: v.successful,
+        failed: v.total - v.successful,
       }))
     }
 
@@ -180,9 +173,10 @@ export function TopUsageChart({
         existing.total += (s.successful_requests ?? 0) + (s.failed_requests ?? 0)
         map.set(s.provider, existing)
       }
-      return Array.from(map.entries()).map(([provider, v], i) => ({
+      return Array.from(map.entries()).map(([provider, v]) => ({
         name: formatProviderName(provider),
         icon: getProviderIcon(provider, theme),
+        color: providerColor(provider),
         tokens: v.tokens,
         promptTokens: v.prompt,
         completionTokens: v.completion,
@@ -191,9 +185,9 @@ export function TopUsageChart({
         throughput: netThroughput(v.completion, v.latency),
         successRate: v.total > 0 ? (v.successful / v.total) * 100 : 100,
         cacheHitRate: (v.prompt + v.cacheCreation) > 0 ? (v.cached / (v.prompt + v.cacheCreation)) * 100 : 0,
-        color: providerColors[provider.toLowerCase()] || PALETTE[i % PALETTE.length],
-        badgeBg: getProviderBadgeBg(provider, theme),
-        badgeText: getProviderBadgeText(provider, theme),
+        cacheWriteTokens: v.cacheCreation,
+        successful: v.successful,
+        failed: v.total - v.successful,
       }))
     }
 
@@ -213,9 +207,10 @@ export function TopUsageChart({
         existing.total += (r.successful_requests ?? 0) + (r.failed_requests ?? 0)
         map.set(key, existing)
       }
-      return Array.from(map.values()).map((v, i) => ({
+      return Array.from(map.values()).map(v => ({
         name: v.name,
         icon: null,
+        color: nameColor(v.name),
         tokens: v.tokens,
         promptTokens: v.prompt,
         completionTokens: v.completion,
@@ -225,14 +220,14 @@ export function TopUsageChart({
         pricePerMillion: v.tokens > 0 ? (v.cost / v.tokens) * 1_000_000 : null,
         successRate: v.total > 0 ? (v.successful / v.total) * 100 : 100,
         cacheHitRate: (v.prompt + v.cacheCreation) > 0 ? (v.cached / (v.prompt + v.cacheCreation)) * 100 : 0,
-        color: PALETTE[i % PALETTE.length],
-        badgeBg: getSourceBadgeBg(v.name),
-        badgeText: getSourceBadgeText(v.name),
+        cacheWriteTokens: v.cacheCreation,
+        successful: v.successful,
+        failed: v.total - v.successful,
       }))
     }
 
     // source dimension
-    return sourceSummary.map((row, i) => {
+    return sourceSummary.map(row => {
       const name = row.client_source || 'unknown'
       const tokens = row.total_tokens ?? 0
       const cost = row.total_cost_usd ?? 0
@@ -243,6 +238,7 @@ export function TopUsageChart({
       return {
         name,
         icon: getSourceIcon(name),
+        color: sourceColor(name),
         tokens,
         promptTokens: prompt,
         completionTokens: row.completion_tokens ?? 0,
@@ -252,9 +248,9 @@ export function TopUsageChart({
         pricePerMillion: tokens > 0 ? (cost / tokens) * 1_000_000 : null,
         successRate: total > 0 ? ((row.successful_requests ?? 0) / total) * 100 : 100,
         cacheHitRate: (prompt + cacheCreation) > 0 ? (cached / (prompt + cacheCreation)) * 100 : 0,
-        color: PALETTE[i % PALETTE.length],
-        badgeBg: getSourceBadgeBg(name),
-        badgeText: getSourceBadgeText(name),
+        cacheWriteTokens: cacheCreation,
+        successful: row.successful_requests ?? 0,
+        failed: row.failed_requests ?? 0,
       }
     })
   }, [summary, dimension, theme, sourceSummary, deviceRows])
@@ -264,20 +260,12 @@ export function TopUsageChart({
   const chart = (
     <HorizontalBarChart
       title={`${t('Top')} ${dimensionLabel}`}
-      icon="📊"
       items={items}
+      mono={dimension === 'model'}
       metric={metric}
     >
-      <div style={{
-        padding: '8px 12px',
-        borderTop: '1px solid var(--border-color)',
-        display: 'flex',
-        flexWrap: 'wrap',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: '8px',
-      }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', background: 'var(--tab-toggle-bg)', borderRadius: '6px', padding: '2px' }}>
+      <div className="top-list-controls">
+        <div className="tab-toggle compact">
           {(['model', 'provider', 'source', 'device'] as Dimension[]).map(d => (
             <button
               key={d}
@@ -288,7 +276,7 @@ export function TopUsageChart({
             </button>
           ))}
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', background: 'var(--tab-toggle-bg)', borderRadius: '6px', padding: '2px' }}>
+        <div className="tab-toggle compact">
           {(['tokens', 'cost', 'throughput', 'cacheHitRate', 'successRate'] as Metric[]).map(m => (
             <button
               key={m}

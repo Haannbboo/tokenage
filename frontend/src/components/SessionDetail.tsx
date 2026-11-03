@@ -1,12 +1,13 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionSummary, UsageRow } from '../types'
 import type { TimelineTool } from './RequestTimeline'
 import { RequestDetail } from './RequestDetail'
 import { SessionLane } from './SessionLane'
 import { renderRequestCell } from './RequestCell'
 import { useApp } from '../contexts/AppContext'
-import { formatCost, formatDuration, formatNumber } from '../utils'
+import { distinctColors, formatCost, formatDuration, formatNumber, modelColor } from '../utils'
 import { t } from '../i18n'
+import { expandableRowProps } from '../expandableRow'
 import { SessionContextChart, type SessionContext } from './SessionContextChart'
 
 export function SessionDetail({ session, tz, onNavigateToLogs }: { session: SessionSummary; tz?: string; onNavigateToLogs: (filters: { sessionFilter: string }) => void }) {
@@ -50,6 +51,7 @@ export function SessionDetail({ session, tz, onNavigateToLogs }: { session: Sess
       if (!response.ok) { showToast(data?.detail ? String(data.detail) : t('Failed to recalculate cost')); return }
       if (data?.skipped) { showToast(t('No current pricing match — cost left unchanged')); return }
       setRows(current => current?.map(row => row.id === id ? { ...row, ...data.new_costs, pricing: data.pricing, price_snapshot_id: data.price_snapshot_id, cost_estimated: data.cost_estimated } : row) ?? null)
+      setContext(current => current && { ...current, points: current.points?.map(point => point.id === id ? { ...point, cost_usd: data.new_costs.total_cost_usd } : point) })
       showToast(t('Cost recalculated'))
     } catch { showToast(t('Failed to recalculate cost')) } finally { setRecalculatingId(null) }
   }
@@ -63,12 +65,14 @@ export function SessionDetail({ session, tz, onNavigateToLogs }: { session: Sess
   }
   const hoverMark = (id: string | null) => { setHovered(id); if (id) scrollToRow(id) }
   const selectMark = (id: string) => { setSelected(id); scrollToRow(id) }
+  // One model colour map for the chart and the timeline, over every model either shows.
+  const modelColors = useMemo(() => distinctColors([...new Set([...rows?.map(row => row.model) ?? [], ...context?.points?.map(point => point.model) ?? []])].sort(), modelColor), [rows, context])
   const stats = [[t('Duration'), formatDuration(Math.round(session.duration_s))], [t('Requests'), formatNumber(session.request_count)], [t('Tokens'), formatNumber(session.total_tokens)], [t('Peak context'), context ? formatNumber(context.peak_tokens) : '—'], [t('Cost'), formatCost(session.total_cost_usd, 2)], [t('Models'), session.models?.length ? session.models.join(', ') : session.model || '—']]
   return <div className="session-detail"><div className="session-stats">{stats.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
-    {contextError ? <p role="alert">{t('Failed to fetch context size')}</p> : !context ? <p>{t('Loading...')}</p> : <SessionContextChart data={context} tz={tz} />}
+    {contextError ? <p role="alert">{t('Failed to fetch context size')}</p> : !context ? <p>{t('Loading...')}</p> : <SessionContextChart data={context} tz={tz} hoveredId={hovered} hoveredTs={rows?.find(row => row.id === hovered)?.ts} linkedRange={rows?.length && rows.length < context.request_count ? { from: Math.min(...rows.map(row => row.ts)), to: Math.max(...rows.map(row => row.ts)) } : null} onHover={hoverMark} colorOf={model => modelColors.get(model) ?? modelColor(model)} />}
     {rowsError ? <p role="alert">{t('Failed to fetch interactions')}</p> : !rows ? <p>{t('Loading...')}</p> : rows.length === 0 ? <p>{t('No interactions found.')}</p> : <>
-      <SessionLane rows={rows} selected={selected} hovered={hovered} onHover={hoverMark} onSelect={selectMark} tz={tz} />
-      <div className="session-interactions" ref={listRef}><table className="table"><thead><tr>{['Time', 'Model', 'Tokens', 'Cost', 'Latency', 'Status', 'Tools'].map(label => <th key={label}>{t(label)}</th>)}</tr></thead><tbody>{rows.map(row => <Fragment key={row.id}><tr id={`session-request-${row.id}`} className={`expandable-row${hovered === row.id ? ' session-row-hovered' : ''}`} tabIndex={0} aria-expanded={selected === row.id} onMouseEnter={() => setHovered(row.id)} onMouseLeave={() => setHovered(null)} onFocus={() => setHovered(row.id)} onBlur={() => setHovered(null)} onClick={() => setSelected(selected === row.id ? null : row.id)} onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSelected(selected === row.id ? null : row.id) } }}>
+      <SessionLane rows={rows} colors={modelColors} selected={selected} hovered={hovered} onHover={hoverMark} onSelect={selectMark} tz={tz} />
+      <div className="session-interactions" ref={listRef}><table className="table"><thead><tr>{['Time', 'Model', 'Tokens', 'Cost', 'Latency', 'Status', 'Tools'].map(label => <th key={label}>{t(label)}</th>)}</tr></thead><tbody>{rows.map(row => <Fragment key={row.id}><tr id={`session-request-${row.id}`} {...expandableRowProps(selected === row.id, () => setSelected(selected === row.id ? null : row.id), hovered === row.id ? 'session-row-hovered' : '')} onMouseEnter={() => setHovered(row.id)} onMouseLeave={() => setHovered(null)} onFocus={() => setHovered(row.id)} onBlur={() => setHovered(null)}>
         {(['time', 'model', 'tokens', 'cost', 'latency', 'status', 'tool'] as const).map(column => <Fragment key={column}>{renderRequestCell(row, column, { tz, colWidths: { model: 200, device: 120 }, hoveredSession: null, setSessionFilter: () => {}, recalculatingId, handleRecalculateCost, stopToolPropagation: true })}</Fragment>)}
       </tr>{selected === row.id && <tr className="expanded-row"><td colSpan={7}>{callsError && <p role="alert">{t('Failed to fetch tool calls')}</p>}{!calls && !callsError ? <p>{t('Loading...')}</p> : <><div className="session-request-breakdown">{[[t('Input'), formatNumber(row.prompt_tokens)], [t('Output'), formatNumber(row.completion_tokens)], [t('Cached'), formatNumber(row.cached_tokens)], [t('Cache write'), formatNumber(row.cache_creation_tokens)], [t('Input cost'), formatCost(row.normal_input_cost_usd)], [t('Output cost'), formatCost(row.output_cost_usd)], [t('Cache cost'), formatCost(row.cache_read_cost_usd)], [t('Cache write cost'), formatCost(row.cache_write_cost_usd)]].map(([label, val]) => <span key={label}>{label}: {val}</span>)}</div><RequestDetail row={row} toolCalls={calls} showToast={showToast} /></>}</td></tr>}</Fragment>)}</tbody></table></div>
     </>}

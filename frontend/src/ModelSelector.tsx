@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ActiveFilter, UsageSummary } from './types'
 import { formatModelName, formatProviderName, getModelIcon, getProviderIcon } from './utils'
 import { t } from './i18n/index.ts'
+import { useDismiss } from './hooks/useDismiss'
 import './model-selector.css'
 
 export function ModelSelector({ activeFilter, summary, onChange }: {
@@ -58,9 +59,10 @@ export function ModelSelector({ activeFilter, summary, onChange }: {
     else toggle(models)
   }
   const isSelected = (name: string, model: string) => selectedProvider ? selectedProvider === name : selected.includes(model)
-  const close = () => { setOpen(false); setSearch(''); triggerRef.current?.focus() }
+  const close = useCallback((event?: Event) => { if (event instanceof KeyboardEvent) event.preventDefault(); setOpen(false); setSearch(''); triggerRef.current?.focus() }, [])
+  const rootRef = useRef<HTMLDivElement>(null)
+  useDismiss(rootRef, open, close)
   const navigate = (event: React.KeyboardEvent) => {
-    if (event.key === 'Escape') { event.preventDefault(); close(); return }
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
     event.preventDefault()
     const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemcheckbox"]') ?? [])
@@ -69,14 +71,13 @@ export function ModelSelector({ activeFilter, summary, onChange }: {
     const next = current < 0 ? (event.key === 'ArrowDown' ? 0 : items.length - 1) : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
     items[next].focus()
   }
-  return <div className="model-selector">
+  return <div className="model-selector" ref={rootRef}>
     <button ref={triggerRef} className="input-plain model-selector-trigger" aria-haspopup="menu" aria-expanded={open} onClick={() => { if (open) close(); else setOpen(true) }}>
       <span className="model-selector-trigger-label">
-        {selectedProvider ? <>{getProviderIcon(selectedProvider)}<span>{formatProviderName(selectedProvider)}</span></> : selected.length ? <><span className="model-selector-icons">{selected.slice(0, 3).map(model => <span key={model}>{getModelIcon(model)}</span>)}</span><span>{selected.length === 1 ? formatModelName(selected[0]) : `${selected.length} ${t('models')}`}</span></> : <><span>🌐</span><span>{t('All Models')}</span></>}
+        {selectedProvider ? <>{getProviderIcon(selectedProvider)}<span>{formatProviderName(selectedProvider)}</span></> : selected.length ? <><span className="model-selector-icons">{selected.slice(0, 3).map(model => <span key={model}>{getModelIcon(model)}</span>)}</span><span>{selected.length === 1 ? formatModelName(selected[0]) : `${selected.length} ${t('models')}`}</span></> : <span>{t('All Models')}</span>}
       </span><svg className="model-selector-chevron" aria-hidden="true" width="10" height="10" viewBox="0 0 10 10"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
     </button>
     {open && <>
-      <div className="model-selector-backdrop" onClick={close} />
       <div ref={popoverRef} className="model-selector-popover" onKeyDown={navigate}>
         <div className="model-selector-search"><span aria-hidden="true">⌕</span><input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder={t('Search models or providers')} aria-label={t('Search models or providers')} /></div>
         <div className="model-selector-meta"><span>{selected.length} {t('selected')}</span><button onClick={() => update([])} disabled={!activeFilter}>{t('Clear all')}</button></div>

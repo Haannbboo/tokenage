@@ -9,7 +9,7 @@ export function TimezoneSelector() {
   return (
     <div className="panel">
       <div className="panel-tabs">
-        <div className="tab active"><span>🌐</span> {t('Timezone')}</div>
+        <div className="tab active">{t('Timezone')}</div>
       </div>
       <div className="panel-body" style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
         <div>

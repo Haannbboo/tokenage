@@ -1,4 +1,11 @@
-export function shouldProxyApiRequest(requestUrl: string): boolean
+type RequestInfo = {
+  method?: string
+  headers?: Record<string, string | string[] | undefined>
+}
+
+export function isPageNavigation(method?: string, headers?: RequestInfo['headers']): boolean
+
+export function shouldProxyApiRequest(requestUrl: string, request?: RequestInfo): boolean
 
 export function resolveProxyRequestUrl(
   requestUrl: string,

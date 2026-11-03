@@ -2,7 +2,7 @@ import { appendModels } from '../modelFilter'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { DailyUsage, DateRangeOption, UsageSummary } from '../types'
 import { getSinceDate, rangeGranularity } from '../dateRange.ts'
-import { getTimezoneOffset, resolveTimezone, FIXED_PROVIDER_COLORS, PALETTE, netThroughput } from '../utils'
+import { getTimezoneOffset, resolveTimezone, providerColor, netThroughput } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 
@@ -30,24 +30,9 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
   const dashboardRequestRef = useRef(0)
   const dashboardHasLoadedRef = useRef(false)
 
-  const providerColors = useMemo(() => {
-    const allProviders = Array.from(new Set(summary.map(s => s.provider))).sort();
-    const map: Record<string, string> = {};
-    allProviders.forEach(p => {
-      const lowP = p.toLowerCase();
-      if (FIXED_PROVIDER_COLORS[lowP]) {
-        map[p] = FIXED_PROVIDER_COLORS[lowP];
-      }
-    });
-    let paletteIdx = 0;
-    allProviders.forEach(p => {
-      if (!map[p]) {
-        map[p] = PALETTE[paletteIdx % PALETTE.length];
-        paletteIdx++;
-      }
-    });
-    return map;
-  }, [summary]);
+  const providerColors = useMemo(() => Object.fromEntries(
+    Array.from(new Set(summary.map(s => s.provider))).map(p => [p, providerColor(p)]),
+  ), [summary]);
 
   const dashboardFilterParams = useMemo(() => ({
     model: activeFilter?.models,

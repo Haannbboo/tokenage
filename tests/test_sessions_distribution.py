@@ -583,7 +583,15 @@ def test_session_context_buckets_and_cap(sessions_api):
     result = client.get("/sessions/context/context").json()
     assert len(result["points"]) <= 200
     # Each point names the bucket's peak request: request 3 holds 12 in 1-3.
-    assert result["points"][0] == {"request": 3, "ts": TS + 2, "context_tokens": 12}
+    assert result["points"][0] == {
+        "request": 3,
+        "id": "context-2",
+        "ts": TS + 2,
+        "model": "test",
+        "cost_usd": 0.0,
+        "latency_ms": None,
+        "context_tokens": 12,
+    }
     assert result["request_count"] == 401
     assert result["peak_tokens"] == 410
     assert result["points"][-1]["context_tokens"] == 410

@@ -783,7 +783,11 @@ def aggregate_session_context(
     """Return per-bucket maximum context in request order."""
     numbered = (
         select(
+            Usage.id.label("id"),
             Usage.ts.label("ts"),
+            Usage.model.label("model"),
+            Usage.total_cost_usd.label("cost"),
+            Usage.latency_ms.label("latency_ms"),
             (
                 func.coalesce(Usage.prompt_tokens, 0)
                 + func.coalesce(Usage.cache_creation_tokens, 0)
@@ -809,16 +813,31 @@ def aggregate_session_context(
     with get_engine(db_path).connect() as connection:
         rows = connection.execute(
             select(
-                bucketed.c.request, bucketed.c.ts, bucketed.c.context, bucketed.c.total
+                bucketed.c.request,
+                bucketed.c.id,
+                bucketed.c.ts,
+                bucketed.c.model,
+                bucketed.c.cost,
+                bucketed.c.latency_ms,
+                bucketed.c.context,
+                bucketed.c.total,
             )
             .where(bucketed.c.rank == 1)
             .order_by(bucketed.c.request)
         ).all()
     if not rows:
         return {"points": [], "peak_tokens": 0, "request_count": 0}
-    # Each point is the bucket's peak request, so its number and time match its value.
+    # Each point is the bucket's peak request, so its number, id and details match its value.
     points = [
-        {"request": row.request, "ts": row.ts, "context_tokens": int(row.context)}
+        {
+            "request": row.request,
+            "id": row.id,
+            "ts": row.ts,
+            "model": row.model,
+            "cost_usd": float(row.cost or 0),
+            "latency_ms": row.latency_ms,
+            "context_tokens": int(row.context),
+        }
         for row in rows
     ]
     count = rows[0].total

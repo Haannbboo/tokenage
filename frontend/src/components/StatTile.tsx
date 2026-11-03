@@ -11,8 +11,6 @@ export type StatPoint = {
 
 type StatTileProps = {
   label: string
-  icon: string
-  iconClass: string
   color: string
   points: StatPoint[]
   /** Shown when nothing is hovered. */
@@ -29,7 +27,7 @@ type StatTileProps = {
 }
 
 export function StatTile({
-  label, icon, iconClass, color, points, animatedValue, format, formatHover,
+  label, color, points, animatedValue, format, formatHover,
   scale = 'zero', cursorIdx, hoverLabel, onHover, children,
 }: StatTileProps) {
   const point = cursorIdx === null ? undefined : points[cursorIdx]
@@ -49,30 +47,18 @@ export function StatTile({
 
   return (
     <div className="widget">
-      <div className="widget-body" style={{ flexDirection: 'column', alignItems: 'stretch', justifyContent: 'flex-start' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div className={`icon-box ${iconClass}`}>{icon}</div>
-            <div>
-              <div className="stat-label">{label}</div>
-              <div className="stat-value">{shown}</div>
-            </div>
-          </div>
-          <div style={{ width: '100px' }}>
-            <Sparkline
-              values={points.map(p => p.value)}
-              color={color}
-              mode={scale}
-              cursorIdx={cursorIdx}
-              onHover={onHover}
-            />
-          </div>
-        </div>
-        {/* Hovering swaps the detail line for the period of the hovered point. */}
-        <div className="stat-label" style={{ marginBottom: 0 }}>
-          {detail}
-        </div>
-      </div>
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{shown}</div>
+      {/* Hovering swaps the detail line for the period of the hovered point. */}
+      <div className="stat-detail">{detail}</div>
+      <Sparkline
+        values={points.map(p => p.value)}
+        color={color}
+        height={24}
+        mode={scale}
+        cursorIdx={cursorIdx}
+        onHover={onHover}
+      />
     </div>
-  );
+  )
 }

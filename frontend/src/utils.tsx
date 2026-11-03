@@ -324,29 +324,88 @@ export function fillGaps(data: DailyUsage[], granularity: PeriodGranularity, per
 }
 
 
-export const PALETTE = [
-  '#00b578', // Emerald/Teal
-  '#3b82f6', // Blue
-  '#f59e0b', // Amber
-  '#06b6d4', // Cyan
-  '#84cc16', // Lime
-  '#f43f5e', // Rose
-  '#8b5cf6', // Violet
-  '#6366f1', // Indigo
-  '#a855f7', // Purple
-  '#ec4899', // Pink
-];
+// Calm categorical palette (index.css --series-*); green first.
+export const PALETTE = Array.from({ length: 8 }, (_, i) => `var(--series-${i + 1})`)
 
-export const FIXED_PROVIDER_COLORS: Record<string, string> = {
-  'anthropic': '#cc7c5e',
-  'google': '#528af2',
-  'openai': '#94a3b8',
-  'openrouter': '#6366f1',
-  'stepfun': '#01A9FF',
-};
+// ─── Identity colours: dimmed brand hues (index.css --hue-*) for small marks ─
+
+const hue = (name: string) => `var(--hue-${name})`
+
+/** A stable palette colour for a name with no identity colour of its own. */
+export function nameColor(name: string) {
+  let h = 0
+  for (const ch of name.toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return PALETTE[h % PALETTE.length]
+}
+
+/** First keyword contained in the name wins; a key ending in '/' must be a prefix. */
+function keywordHue(name: string, table: [string, string][]) {
+  const n = name.toLowerCase()
+  const match = table.find(([key]) => key.endsWith('/') ? n.startsWith(key) : n.includes(key))
+  return match ? hue(match[1]) : null
+}
+
+const FAMILY_HUES: Record<string, string> = {
+  hunyuan: 'royal', openai: 'slate', claude: 'orange', gemini: 'blue', minimax: 'rose', xiaomi: 'sand',
+  inclusionai: 'indigo', poolside: 'amber', deepseek: 'royal', doubao: 'cyan', openrouter: 'indigo', glm: 'royal',
+  stepfun: 'sky', nvidia: 'lime', qwen: 'violet', cohere: 'teal', dots: 'teal', stealth: 'grey', meta: 'royal',
+  grok: 'ink', longcat: 'green', commandcode: 'grey',
+}
+
+export function modelColor(model: string) {
+  const id = FAMILY_HUES[modelFamily(model).id]
+  return id ? hue(id) : nameColor(model)
+}
+
+const PROVIDER_HUES: [string, string][] = [
+  ['tencent/', 'royal'], ['anthropic', 'orange'], ['openai', 'slate'], ['google', 'blue'], ['minimax', 'rose'],
+  ['xiaomi', 'sand'], ['openrouter', 'indigo'], ['opencode', 'green'], ['inclusionai', 'indigo'], ['poolside', 'amber'],
+  ['deepseek', 'royal'], ['doubao', 'cyan'], ['seed', 'cyan'], ['z-ai', 'royal'], ['stepfun', 'sky'], ['volce', 'sky'],
+  ['nvidia', 'lime'], ['cohere', 'teal'], ['qwen', 'violet'], ['dots', 'teal'],
+]
+
+export function providerColor(provider: string) {
+  return keywordHue(provider, PROVIDER_HUES) ?? modelColor(provider)
+}
+
+const SOURCE_HUES: [string, string][] = [
+  ['claude', 'orange'], ['codex', 'slate'], ['gemini', 'blue'], ['opencode', 'green'], ['open-code', 'green'],
+  ['kilo', 'cyan'], ['hermes', 'purple'], ['proxy', 'violet'],
+]
+
+export function sourceColor(source: string) {
+  return keywordHue(source, SOURCE_HUES) ?? nameColor(source)
+}
+
+const TOOL_HUES: Record<string, string> = {
+  bash: 'blue', shell: 'blue', exec_command: 'sky', exec: 'orange', read: 'green', edit: 'amber', apply_patch: 'amber',
+  write: 'red', grep: 'violet', glob: 'cyan', list: 'cyan', task: 'indigo', lsp: 'indigo', webfetch: 'pink',
+  websearch: 'purple', skill: 'teal', question: 'violet', todowrite: 'yellow', mcp_tool: 'rose',
+}
+
+export function toolColor(tool: string) {
+  const id = TOOL_HUES[tool.toLowerCase()]
+  return id ? hue(id) : nameColor(tool)
+}
+
+/**
+ * One colour per key, in order. A key whose colour is already taken (two
+ * Claude models) gets a lighter, then a deeper, shade of the same hue.
+ */
+export function distinctColors(keys: string[], colorOf: (key: string) => string): Map<string, string> {
+  const taken = new Map<string, number>()
+  return new Map(keys.map(key => {
+    const color = colorOf(key)
+    const n = taken.get(color) ?? 0
+    taken.set(color, n + 1)
+    if (n === 0) return [key, color]
+    const toward = n % 2 ? 'var(--card-bg)' : 'var(--text-primary)'
+    return [key, `color-mix(in oklab, ${color} ${100 / (1 + Math.ceil(n / 2) / 3)}%, ${toward})`]
+  }))
+}
 
 export function getProviderColor(provider: string, providerColors: Record<string, string>): string {
-  return providerColors[provider] || '#94a3b8';
+  return providerColors[provider] || 'var(--chart-2)';
 }
 
 export function formatModelName(model: string): string {
@@ -422,43 +481,6 @@ export function getModelIcon(model: string, theme: Theme = getTheme()) {
   return src ? <img src={src} alt="" style={ICON_STYLE} /> : null
 }
 
-type BadgeTheme = { light: string; dark: string }
-
-const PROVIDER_BADGES: Record<string, { color: string; bg: BadgeTheme; text: BadgeTheme }> = {
-  'tencent/': { color: '#0052D9', bg: { light: '#0052D926', dark: '#0052D980' }, text: { light: '#003a8c', dark: '#d0dff5' } },
-  anthropic: { color: '#cc7c5e', bg: { light: '#cc7c5e26', dark: '#cc7c5e40' }, text: { light: '#975a3d', dark: '#e8a878' } },
-  google: { color: '#528af2', bg: { light: '#528af226', dark: '#528af240' }, text: { light: '#1e40af', dark: '#a5b4fc' } },
-  openai: { color: '#dcdcdc', bg: { light: '#dcdcdc80', dark: '#dcdcdc90' }, text: { light: '#475569', dark: '#0f172a' } },
-  minimax: { color: '#ec6b53', bg: { light: '#ec6b5326', dark: '#ec6b5340' }, text: { light: '#b91c1c', dark: '#fca5a5' } },
-  xiaomi: { color: '#dcc496', bg: { light: '#dcc49680', dark: '#dcc49690' }, text: { light: '#6b4f2a', dark: '#dcc496' } },
-  openrouter: { color: '#6366f1', bg: { light: '#6366f126', dark: '#6366f140' }, text: { light: '#6366f1', dark: '#a5b4fc' } },
-  poolside: { color: '#f97316', bg: { light: '#f9731626', dark: '#f9731640' }, text: { light: '#c2410c', dark: '#fdba74' } },
-  deepseek: { color: '#4d7cff', bg: { light: '#4d7cff26', dark: '#4d7cff40' }, text: { light: '#1d4ed8', dark: '#93b4ff' } },
-  doubao: { color: '#00CBD4', bg: { light: '#00CBD426', dark: '#00CBD440' }, text: { light: '#00a0a8', dark: '#5ee7f0' } },
-  seed: { color: '#00CBD4', bg: { light: '#00CBD426', dark: '#00CBD440' }, text: { light: '#00a0a8', dark: '#5ee7f0' } },
-  'z-ai': { color: '#1F63EC', bg: { light: '#1F63EC26', dark: '#1F63EC40' }, text: { light: '#1F63EC', dark: '#7daaf5' } },
-  stepfun: { color: '#01A9FF', bg: { light: '#01A9FF26', dark: '#01A9FF40' }, text: { light: '#006f9f', dark: '#7dd5fc' } },
-  volce: { color: '#0095FD', bg: { light: '#0095FD26', dark: '#0095FD40' }, text: { light: '#0070c0', dark: '#66c2ff' } },
-  qwen: { color: '#6F69F7', bg: { light: '#6F69F726', dark: '#6F69F740' }, text: { light: '#6336E7', dark: '#a5a0fc' } },
-  dots: { color: '#8FE2D6', bg: { light: '#8FE2D626', dark: '#8FE2D640' }, text: { light: '#0c4540', dark: '#d8fdfb' } },
-}
-
-function findProviderBadge(provider: string) {
-  const p = provider.toLowerCase()
-  for (const [key, val] of Object.entries(PROVIDER_BADGES)) {
-    if (key.endsWith('/') ? p.startsWith(key) : p.includes(key)) return val
-  }
-  return null
-}
-
-export function getProviderBadgeBg(provider: string, theme: Theme = getTheme()): string {
-  return findProviderBadge(provider)?.bg[theme] ?? (theme === 'dark' ? '#334155' : '#f1f5f9')
-}
-
-export function getProviderBadgeText(provider: string, theme: Theme = getTheme()): string {
-  return findProviderBadge(provider)?.text[theme] ?? (theme === 'dark' ? '#94a3b8' : '#475569')
-}
-
 export function getProviderIcon(provider: string, theme: Theme = getTheme()) {
   const p = provider.toLowerCase()
   const style = ICON_STYLE
@@ -484,25 +506,6 @@ export function getProviderIcon(provider: string, theme: Theme = getTheme()) {
   if (p.includes('dots')) return <img src="/models/dots-studio.png" alt="" style={style} />
   if (p.replace(/[-_\s]/g, '').includes('commandcode')) return <img src={dark ? '/models/commandcode-dark.svg' : '/models/commandcode.svg'} alt="" style={style} />
   return null
-}
-
-const SOURCE_BADGES: Record<string, { bg: BadgeTheme; text: BadgeTheme }> = {
-  'codex': { bg: { light: '#dcdcdc80', dark: '#dcdcdc90' }, text: { light: '#475569', dark: '#0f172a' } },
-  'claude-code': { bg: { light: '#cc7c5e26', dark: '#cc7c5e40' }, text: { light: '#cc7c5e', dark: '#cc7c5e' } },
-  'gemini-cli': { bg: { light: '#528af226', dark: '#528af240' }, text: { light: '#528af2', dark: '#528af2' } },
-  'proxy': { bg: { light: '#8b5cf626', dark: '#8b5cf640' }, text: { light: '#8b5cf6', dark: '#8b5cf6' } },
-  'opencode': { bg: { light: '#10b98126', dark: '#10b98140' }, text: { light: '#10b981', dark: '#10b981' } },
-  'kilo': { bg: { light: '#06b6d426', dark: '#06b6d440' }, text: { light: '#06b6d4', dark: '#06b6d4' } },
-}
-
-export function getSourceBadgeBg(name: string): string {
-  const theme = getTheme()
-  return SOURCE_BADGES[name]?.bg[theme] ?? (theme === 'dark' ? '#334155' : '#f1f5f9')
-}
-
-export function getSourceBadgeText(name: string): string {
-  const theme = getTheme()
-  return SOURCE_BADGES[name]?.text[theme] ?? (theme === 'dark' ? '#94a3b8' : '#475569')
 }
 
 export function getSourceIcon(source: string, theme: Theme = getTheme()) {
@@ -546,47 +549,9 @@ export function getSetupAgentKey(name: string) {
   return normalized
 }
 
-// ─── Tool color map for tool-name badges ────────────────────────────────────
-
-const TOOL_COLORS: Record<string, { bg: string; text: string }> = {
-  bash:      { bg: '#2563eb', text: '#fff' },
-  read:      { bg: '#059669', text: '#fff' },
-  edit:      { bg: '#d97706', text: '#fff' },
-  write:     { bg: '#dc2626', text: '#fff' },
-  grep:      { bg: '#7c3aed', text: '#fff' },
-  glob:      { bg: '#0891b2', text: '#fff' },
-  task:      { bg: '#4f46e5', text: '#fff' },
-  webfetch:  { bg: '#be185d', text: '#fff' },
-  websearch: { bg: '#9333ea', text: '#fff' },
-  skill:     { bg: '#0d9488', text: '#fff' },
-  list:      { bg: '#0891b2', text: '#fff' },
-  question:  { bg: '#8b5cf6', text: '#fff' },
-  todowrite: { bg: '#f59e0b', text: '#fff' },
-  lsp:       { bg: '#6366f1', text: '#fff' },
-  exec:      { bg: '#ea580c', text: '#fff' },
-  exec_command: { bg: '#bfdbfe', text: '#334155' },
-  mcp_tool:  { bg: '#e11d48', text: '#fff' },
-}
-const TOOL_DEFAULT_COLOR = { bg: '#64748b', text: '#fff' }
-const TOOL_COLORS_CI = new Map(Object.entries(TOOL_COLORS).map(([k, v]) => [k.toLowerCase(), v]))
-
-export function getToolColor(toolName: string) {
-  return TOOL_COLORS_CI.get(toolName.toLowerCase()) || TOOL_DEFAULT_COLOR
-}
-
-const TOOL_BADGE_STYLE: React.CSSProperties = {
-  padding: '2px 6px',
-  borderRadius: '4px',
-  fontSize: '11px',
-  fontWeight: 600,
-  whiteSpace: 'nowrap',
-  display: 'inline-block',
-}
-
 export function ToolBadge({ name, count, style }: { name: string; count?: number; style?: React.CSSProperties }) {
-  const c = getToolColor(name)
   return (
-    <span style={{ ...TOOL_BADGE_STYLE, backgroundColor: c.bg, color: c.text, ...style }}>
+    <span className="entity-badge mono tinted" style={{ '--tint': toolColor(name), ...style } as React.CSSProperties}>
       {name}{count != null ? `×${count}` : ''}
     </span>
   )

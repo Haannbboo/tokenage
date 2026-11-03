@@ -176,7 +176,8 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             # usage_read_cors middleware can answer them; OPTIONS never
             # reaches route handlers with data.
             return await call_next(request)
-        if _is_public_path(request.url.path):
+        request.scope["spa_shared_page"] = _serves_spa_page(request)
+        if _is_public_path(request.url.path) or request.scope["spa_shared_page"]:
             return await call_next(request)
         # Token lookup hits the database: keep it off the event loop, which the
         # mounted OTLP collector shares.
@@ -186,7 +187,13 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             # Middleware runs outside FastAPI's route exception handlers.
             return store_unavailable_response(request, exc)
         if resolved is None:
-            return JSONResponse(status_code=401, content=AUTH_GATE_LOGIN_REQUIRED)
+            return JSONResponse(
+                status_code=401,
+                content=AUTH_GATE_LOGIN_REQUIRED,
+                headers={"Vary": "Accept, Sec-Fetch-Mode"}
+                if request.url.path in _SPA_API_SHARED_PAGES
+                else None,
+            )
         user, auth_token = resolved
         if auth_token is not None:  # the loopback owner (no token) is exempt
             try:
@@ -200,7 +207,14 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(
                     status_code=429,
                     content={"detail": "rate limit exceeded"},
-                    headers={"Retry-After": str(retry_after)},
+                    headers={
+                        "Retry-After": str(retry_after),
+                        **(
+                            {"Vary": "Accept, Sec-Fetch-Mode"}
+                            if request.url.path in _SPA_API_SHARED_PAGES
+                            else {}
+                        ),
+                    },
                 )
         return await call_next(request)
 
@@ -1104,34 +1118,82 @@ async def hosted_installer():
 
 # Serve built frontend if available (must come after all API routes)
 _frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-if _frontend_dist.is_dir():
-    _index_html = _frontend_dist / "index.html"
+_index_html = _frontend_dist / "index.html"
+_SPA_SERVED = _frontend_dist.is_dir()
 
-    class SPACatchAllMiddleware(BaseHTTPMiddleware):
-        """Rewrite non-API, non-file requests to /index.html for SPA routing."""
+# SPA pages whose path is also an API route. The browser opening the page
+# gets index.html; fetches and CLI calls to the same path still get the API.
+_SPA_API_SHARED_PAGES = ("/sessions",)
 
-        async def dispatch(self, request: Request, call_next):
-            path = request.url.path
-            requested = path.lstrip("/")
-            serving_index = path == "/index.html"
-            if (
-                request.method in ("GET", "HEAD")
-                and _index_html.is_file()
-                and not any(path.startswith(p) for p in _SPA_API_PREFIXES)
-                and not Path(requested).suffix
-                and not (_frontend_dist / requested).is_file()
-            ):
-                request.scope["path"] = "/index.html"
-                serving_index = True
-            response = await call_next(request)
-            if serving_index:
-                # index.html references content-hashed asset filenames that
-                # change every build; it must always revalidate (cheap, via
-                # the ETag/Last-Modified StaticFiles already sets) so a stale
-                # cached copy never keeps pointing at a deleted JS/CSS bundle.
-                response.headers["Cache-Control"] = "no-cache"
-            return response
 
+def _is_page_navigation(request: Request) -> bool:
+    """A browser navigation: Sec-Fetch-Mode, or (without it) Accept that leads with HTML."""
+    mode = request.headers.get("sec-fetch-mode")
+    if mode is not None:
+        return mode == "navigate"
+    accept = request.headers.get("accept", "")
+    media, *params = accept.split(",", 1)[0].lower().split(";")
+
+    def zero_quality(param: str) -> bool:
+        name, separator, value = param.strip().partition("=")
+        if (
+            name != "q"
+            or not separator
+            or not re.fullmatch(r"[0-9]+(?:\.[0-9]*)?", value)
+        ):
+            return False
+        return float(value) == 0
+
+    return media.strip() == "text/html" and not any(zero_quality(p) for p in params)
+
+
+def _serves_spa_page(request: Request) -> bool:
+    """Whether the SPA catch-all serves index.html for a shared page path.
+
+    The auth gate lets these through: index.html is public, and the request
+    never reaches the API route it shares a path with."""
+    return (
+        _SPA_SERVED
+        and request.method == "GET"
+        and request.url.path in _SPA_API_SHARED_PAGES
+        and _is_page_navigation(request)
+        and _index_html.is_file()
+    )
+
+
+class SPACatchAllMiddleware(BaseHTTPMiddleware):
+    """Rewrite non-API, non-file requests to /index.html for SPA routing."""
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        requested = path.lstrip("/")
+        serving_index = path == "/index.html"
+        shared_page = path in _SPA_API_SHARED_PAGES
+        if request.scope.get("spa_shared_page", False) or (
+            request.method in ("GET", "HEAD")
+            and _index_html.is_file()
+            and not any(path.startswith(p) for p in _SPA_API_PREFIXES)
+            and not Path(requested).suffix
+            and not (_frontend_dist / requested).is_file()
+        ):
+            request.scope["path"] = "/index.html"
+            serving_index = True
+        response = await call_next(request)
+        if shared_page:
+            # Same URL, page or JSON by request headers: keep caches apart.
+            response.headers["Vary"] = ", ".join(
+                v for v in (response.headers.get("Vary"), "Accept, Sec-Fetch-Mode") if v
+            )
+        if serving_index:
+            # index.html references content-hashed asset filenames that
+            # change every build; it must always revalidate (cheap, via
+            # the ETag/Last-Modified StaticFiles already sets) so a stale
+            # cached copy never keeps pointing at a deleted JS/CSS bundle.
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+if _SPA_SERVED:
     app.add_middleware(SPACatchAllMiddleware)
     app.mount(
         "/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend"

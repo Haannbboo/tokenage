@@ -829,24 +829,129 @@ def test_usage_count_endpoint_passes_session_id(api_module, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_spa_deep_links_serve_index_html(api_module):
-    """GET /dashboard, /logs, /settings return 200 with HTML, not 404."""
-    from pathlib import Path
+@pytest.fixture
+def spa_api(api_module, monkeypatch, tmp_path):
+    """The API serving a stand-in frontend/dist, built or not.
 
-    frontend_dist = (
-        Path(api_module.__file__).resolve().parent.parent / "frontend" / "dist"
+    The catch-all and the static mount are installed at import only when the
+    real dist exists (it does not in CI), so install them here when missing,
+    and point both at a temporary index.html either way."""
+    from starlette.middleware import Middleware
+    from starlette.routing import Mount
+    from starlette.staticfiles import StaticFiles
+
+    (tmp_path / "index.html").write_text("<!doctype html><title>spa</title>")
+    monkeypatch.setattr(api_module, "_frontend_dist", tmp_path)
+    monkeypatch.setattr(api_module, "_index_html", tmp_path / "index.html")
+    monkeypatch.setattr(api_module, "_SPA_SERVED", True)
+
+    app = api_module.app
+    middleware = list(app.user_middleware)
+    if not any(m.cls is api_module.SPACatchAllMiddleware for m in middleware):
+        # Just inside the auth gate, where the import-time setup puts it.
+        gate = next(
+            i
+            for i, m in enumerate(middleware)
+            if m.cls is api_module.AuthGateMiddleware
+        )
+        middleware.insert(gate + 1, Middleware(api_module.SPACatchAllMiddleware))
+    routes = [r for r in app.router.routes if getattr(r, "name", None) != "frontend"]
+    routes.append(
+        Mount("/", StaticFiles(directory=str(tmp_path), html=True), name="frontend")
     )
-    if not (frontend_dist / "index.html").is_file():
-        import pytest
+    monkeypatch.setattr(app, "user_middleware", middleware)
+    monkeypatch.setattr(app.router, "routes", routes)
+    # Rebuilt from user_middleware on the next request, and again after the
+    # monkeypatch undo resets it.
+    monkeypatch.setattr(app, "middleware_stack", None)
+    yield api_module
+    app.middleware_stack = None
 
-        pytest.skip("frontend/dist/index.html not built")
 
-    client = TestClient(api_module.app)
+def test_spa_deep_links_serve_index_html(spa_api):
+    """GET /dashboard, /logs, /settings return 200 with HTML, not 404."""
+    client = TestClient(spa_api.app)
 
     for path in ("/dashboard", "/logs", "/settings"):
         response = client.get(path)
         assert response.status_code == 200, f"{path} returned {response.status_code}"
         assert "text/html" in response.headers.get("content-type", "")
+
+
+_NAVIGATION = {"sec-fetch-mode": "navigate", "accept": "text/html,*/*;q=0.8"}
+
+
+def test_sessions_navigation_serves_the_page(spa_api, monkeypatch):
+    """/sessions is a page and an API route: a browser opening it gets the SPA,
+    signed in or not, like any other page."""
+    api_module = spa_api
+    monkeypatch.setitem(
+        api_module.CONFIG, "auth", {"provider": "google", "allowlist": []}
+    )
+    client = TestClient(api_module.app)
+
+    for path, headers in (
+        ("/sessions", _NAVIGATION),
+        ("/sessions?session=abc", _NAVIGATION),
+        ("/%73essions", _NAVIGATION),
+        ("/sessions", {"accept": "text/html"}),  # no Fetch Metadata
+    ):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200, path
+        assert "text/html" in response.headers["content-type"]
+        assert response.text == api_module._index_html.read_text()
+        assert "Accept" in response.headers["vary"]
+        assert "Sec-Fetch-Mode" in response.headers["vary"]
+
+
+def test_sessions_api_calls_still_get_json(spa_api, monkeypatch):
+    """Fetches and CLI calls to /sessions reach the API and its auth gate."""
+    api_module = spa_api
+    monkeypatch.setattr(api_module, "fetch_sessions", lambda **kw: [])
+    monkeypatch.setattr(api_module, "count_sessions", lambda **kw: 0)
+    client = TestClient(api_module.app)
+
+    for headers in (
+        {},
+        {"accept": "*/*", "sec-fetch-mode": "cors"},
+        {"accept": "text/html", "sec-fetch-mode": "cors"},
+        {"accept": "application/json, text/html"},
+        {"accept": "text/html;q=0"},
+        {"accept": "text/html;q=0."},
+    ):
+        response = client.get("/sessions", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"sessions": [], "total": 0}
+        assert "Accept" in response.headers["vary"]
+        assert "Sec-Fetch-Mode" in response.headers["vary"]
+
+    # Only GET navigations to exactly /sessions become the page.
+    for method, path in (("POST", "/sessions"), ("GET", "/sessions/summary")):
+        response = client.request(method, path, headers=_NAVIGATION)
+        assert "text/html" not in response.headers.get("content-type", "")
+
+    monkeypatch.setitem(
+        api_module.CONFIG, "auth", {"provider": "google", "allowlist": []}
+    )
+    for headers in (
+        {},
+        {"accept": "application/json"},
+        {"accept": "text/html", "sec-fetch-mode": "cors"},
+    ):
+        response = client.get("/sessions", headers=headers)
+        assert response.status_code == 401
+        assert response.json() == api_module.AUTH_GATE_LOGIN_REQUIRED
+        assert "Accept" in response.headers["vary"]
+        assert "Sec-Fetch-Mode" in response.headers["vary"]
+    for method, path in (
+        ("HEAD", "/sessions"),
+        ("GET", "/sessions/"),
+        ("GET", "/%73essions"),
+    ):
+        response = client.request(
+            method, path, headers={"accept": "application/json"}, follow_redirects=False
+        )
+        assert response.status_code == 401
 
 
 def test_spa_deep_links_do_not_hijack_api_routes(api_module, monkeypatch):
@@ -867,19 +972,9 @@ def test_spa_does_not_hijack_evaluation_jobs_routes(api_module):
     assert response.json() == {"detail": "Not Found"}
 
 
-def test_spa_missing_asset_does_not_return_html(api_module):
+def test_spa_missing_asset_does_not_return_html(spa_api):
     """Missing asset-like paths (with extensions) must not be rewritten to index.html."""
-    from pathlib import Path
-
-    frontend_dist = (
-        Path(api_module.__file__).resolve().parent.parent / "frontend" / "dist"
-    )
-    if not (frontend_dist / "index.html").is_file():
-        import pytest
-
-        pytest.skip("frontend/dist/index.html not built")
-
-    client = TestClient(api_module.app)
+    client = TestClient(spa_api.app)
     response = client.get("/assets/missing.js")
 
     assert response.status_code == 404

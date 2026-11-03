@@ -5,6 +5,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import mock_open, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -109,55 +110,59 @@ def test_health_routes_return_service_status(otlp_module):
         assert response.json() == {"status": "ok", "service": "tokenage-otlp"}
 
 
-def test_retired_gemini_logs_are_ignored_without_debug_dumps(
-    otlp_module, monkeypatch, tmp_path: Path, fresh_db
+@pytest.mark.parametrize("service_name", ["gemini-cli", "unknown-service"])
+def test_unrecognised_logs_are_ignored_without_writing_files(
+    api_module, fresh_db, service_name
 ):
-    debug_file = tmp_path / "otlp-debug.json"
-    captured = []
-    monkeypatch.setattr(otlp_module, "CODEX_DEBUG_FILE", str(debug_file))
-    monkeypatch.setattr(
-        otlp_module,
-        "record_usage",
-        lambda **fields: captured.append(fields),
-    )
+    from src.auth.tokens import mint_token
 
-    response = _authed_client(otlp_module, fresh_db).post(
-        "/v1/logs",
-        json={
-            "resourceLogs": [
-                {
-                    "resource": {
-                        "attributes": [
+    token, _ = mint_token("test@example.com", kind="ingest", db_path=fresh_db.db_path)
+    client = TestClient(api_module.app, headers={"x-tokenage-token": token})
+    body = {
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": _attrs(
+                        {
+                            "service.name": service_name,
+                            "private.resource": "resource data",
+                        }
+                    )
+                },
+                "scopeLogs": [
+                    {
+                        "logRecords": [
                             {
-                                "key": "service.name",
-                                "value": {"stringValue": "gemini-cli"},
+                                "attributes": _attrs(
+                                    {
+                                        "event.name": "unknown.api_response",
+                                        "model": "test-model",
+                                        "input_tokens": 10,
+                                        "private.record": "record data",
+                                    }
+                                )
                             }
                         ]
-                    },
-                    "scopeLogs": [
-                        {
-                            "logRecords": [
-                                {
-                                    "attributes": _attrs(
-                                        {
-                                            "event.name": "gemini_cli.api_response",
-                                            "model": "gemini-3-flash-preview",
-                                        }
-                                    )
-                                }
-                            ]
-                        }
-                    ],
-                }
-            ]
-        },
-    )
-    drain()
+                    }
+                ],
+            }
+        ]
+    }
+
+    # A leftover dump must not hide a write attempt in the old implementation.
+    with (
+        patch("os.path.exists", return_value=False),
+        patch("builtins.open", mock_open()) as opened,
+    ):
+        response = client.post("/otlp/v1/logs", json=body)
+        drain()
 
     assert response.status_code == 200
-    assert captured == []
-    assert not debug_file.exists()
-    assert not Path(f"{debug_file}.resource").exists()
+    assert response.json() == {}
+    opened.assert_not_called()
+    db = fresh_db.database_module
+    with db.get_engine(fresh_db.db_path).connect() as conn:
+        assert conn.execute(db.text("SELECT COUNT(*) FROM usage")).scalar() == 0
 
 
 def test_extract_claude_fields_basic(otlp_module):

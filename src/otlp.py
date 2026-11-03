@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 import uuid
 from collections.abc import Iterator, MutableMapping
 from contextlib import asynccontextmanager
@@ -32,13 +31,9 @@ CODEX_EVENT = "codex.sse_event"
 CODEX_API_REQUEST_EVENT = "codex.api_request"
 OPENCODE_EVENT = "opencode.message_completed"
 KILO_EVENT = "kilo.message_completed"
-CODEX_DEBUG_FILE = "/tmp/codex-otlp-debug.json"
 CODEX_SERVICE_NAMES = {"codex_cli_rs", "codex_exec", "codex-app-server"}
 KILO_SERVICE_NAMES = {"kilo"}
 RETIRED_SERVICE_NAMES = {"gemini-cli"}
-KNOWN_SERVICE_NAMES = (
-    {"claude-code", "opencode"} | CODEX_SERVICE_NAMES | KILO_SERVICE_NAMES
-)
 
 # State cache for merging Codex events: conversation key -> {duration_ms, ttft_ms, start_ms}
 # `start_ms` comes from codex.websocket_request (the send time of a sampling
@@ -898,18 +893,6 @@ def _parse_log_record(
             device_id=device_id,
             session=session,
         )
-    elif (
-        service_name not in KNOWN_SERVICE_NAMES
-        and attrs
-        and not os.path.exists(CODEX_DEBUG_FILE)
-    ):
-        # Capture first unknown-service payload with attributes to discover schema
-        with open(CODEX_DEBUG_FILE, "w") as f:
-            json.dump(
-                {"service": service_name, "event": event_name, "record": record},
-                f,
-                indent=2,
-            )
 
 
 # Runs only standalone (`uvicorn src.otlp:app`). src/api.py mounts this app
@@ -1017,14 +1000,6 @@ def _iter_log_records(body: dict) -> Iterator[tuple[dict, str, str]]:
         if service_name in RETIRED_SERVICE_NAMES:
             continue
         session_id = _resource_attr(resource, "session.id") or ""
-        # Dump first unrecognised resource block to discover service name
-        if service_name not in KNOWN_SERVICE_NAMES and not os.path.exists(
-            CODEX_DEBUG_FILE + ".resource"
-        ):
-            with open(CODEX_DEBUG_FILE + ".resource", "w") as f:
-                json.dump(
-                    {"service_name": service_name, "resource": resource}, f, indent=2
-                )
         for scope_log in resource_log.get("scopeLogs", []):
             for record in scope_log.get("logRecords", []):
                 yield record, service_name, session_id

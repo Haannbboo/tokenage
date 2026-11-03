@@ -11,12 +11,6 @@ import { DeviceStatusDetail } from '../components/DeviceStatusDetail'
 import { PageHeader } from '../components/PageHeader'
 import { expandableRowProps } from '../expandableRow'
 
-const DEVICE_KIND_LABELS: Record<string, string> = {
-  client: 'Machine',
-  cli: 'CLI',
-  ingest: 'Ingest',
-}
-
 export function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const section = searchParams.get('section')
@@ -84,14 +78,13 @@ export function SettingsPage() {
         <>
         <div className="panel">
             <div className="panel-tabs">
-              <div className="tab active">{t('Machines')}</div>
+              <div className="tab active">{t('Clients')}</div>
             </div>
             <div className="panel-body" style={{ padding: '0' }}>
               <table className="table">
                 <thead>
                   <tr>
                     <th>{t('Device')}</th>
-                    <th>{t('Kind')}</th>
                     <th>{t('Installed version')}</th>
                     <th>{t('Created')}</th>
                     <th>{t('Last used')}</th>
@@ -112,9 +105,6 @@ export function SettingsPage() {
                               {t('Current device')}
                             </span>
                           )}
-                        </td>
-                        <td style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          {t(DEVICE_KIND_LABELS[device.kind] ?? device.kind)}
                         </td>
                         <td style={{ fontSize: '12px', color: 'var(--text-secondary)' }} title={device.client_commit ?? undefined}>
                           {device.client_version ?? '—'}

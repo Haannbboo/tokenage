@@ -21,7 +21,7 @@ it('shows machines and web sessions separately with no revoke for this session',
   render(createElement(App))
   const machine = await screen.findByText('Laptop')
   const current = await screen.findByText('Chrome on macOS')
-  expect(screen.getByText('Machines')).toBeTruthy()
+  expect(screen.getByText('Clients')).toBeTruthy()
   expect(screen.getByText('Web sessions')).toBeTruthy()
   expect(machine.closest('table')).not.toBe(current.closest('table'))
   expect(within(current.closest('tr')!).getByText('This session')).toBeTruthy()

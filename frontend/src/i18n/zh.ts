@@ -306,8 +306,6 @@ export const zh: Record<string, string> = {
   'Loading...': '加载中...',
 
 
-  'Service Version': '服务版本',
-  'Version': '版本',
 
   // Timezone
   'Timezone': '时区',

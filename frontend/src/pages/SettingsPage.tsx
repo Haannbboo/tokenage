@@ -8,7 +8,6 @@ import { t } from '../i18n/index.ts'
 import { formatTime } from '../utils'
 import { TimezoneSelector } from '../components/TimezoneSelector'
 import { DeviceStatusDetail } from '../components/DeviceStatusDetail'
-import { useVersion } from '../hooks/useVersion'
 import { PageHeader } from '../components/PageHeader'
 import { expandableRowProps } from '../expandableRow'
 
@@ -23,7 +22,6 @@ export function SettingsPage() {
   const section = searchParams.get('section')
   const activeSection = section && ['pricing', 'services', 'devices'].includes(section) ? section : 'services'
   const { showToast } = useApp()
-  const versionData = useVersion()
   const authDevicesActive = activeSection === 'devices'
   const { devices, webSessions, refresh: refreshDevices } = useDevices(authDevicesActive)
   const { statuses } = useDeviceStatuses(authDevicesActive)
@@ -78,27 +76,7 @@ export function SettingsPage() {
         <>
           <TimezoneSelector />
 
-          {/* Service Version */}
-          <div className="panel">
-            <div className="panel-tabs">
-              <div className="tab active">{t('Service Version')}</div>
-            </div>
-            <div className="panel-body" style={{ padding: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{t('Version')}:</span>
-                <span style={{
-                  fontSize: '13px',
-                  fontFamily: 'var(--font-mono)',
-                  color: 'var(--text-primary)',
-                  padding: '2px 8px',
-                  background: 'var(--surface-sunken)',
-                  borderRadius: 'var(--r-sm)',
-                }}>
-                  {versionData?.version ?? '—'}
-                </span>
-              </div>
-            </div>
-          </div>
+
         </>
       )}
 

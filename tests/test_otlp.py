@@ -194,6 +194,94 @@ def test_extract_claude_fields_basic(otlp_module):
     assert fields["ttft_ms"] is None
 
 
+@pytest.mark.parametrize("malformed", [False, True])
+def test_claude_string_numeric_attributes_persist_usage_and_session(
+    otlp_module, fresh_db, malformed
+):
+    db = fresh_db.database_module
+    client = _authed_client(otlp_module, fresh_db)
+    numeric = {
+        "input_tokens": "80",
+        "output_tokens": "40",
+        "cache_read_tokens": "20",
+        "cache_creation_tokens": "10",
+        "duration_ms": "1200",
+        "status_code": "200",
+    }
+    if malformed:
+        numeric = dict.fromkeys(numeric, "abc")
+    expected = {
+        "prompt_tokens": 0 if malformed else 100,
+        "completion_tokens": None if malformed else 40,
+        "cached_tokens": None if malformed else 20,
+        "cache_creation_tokens": None if malformed else 10,
+        "total_tokens": 0 if malformed else 150,
+        "latency_ms": None if malformed else 1200,
+        "status": None if malformed else 200,
+    }
+    # Separate batches exercise both creation and update of the session rollup.
+    for count in (1, 2):
+        body = _minimal_otlp_body()
+        record = body["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]
+        record["timeUnixNano"] = str(1800000000000000000 + count * 60000000000)
+        record["attributes"] = _attrs(
+            {
+                "event.name": "api_request",
+                "session.id": "claude-string-session",
+                "model": "test-model",
+                **numeric,
+            }
+        )
+        assert client.post("/v1/logs", json=body).status_code == 200
+        drain()
+        with db.Session(db.get_engine(fresh_db.db_path)) as session:
+            usages = session.scalars(db.select(db.Usage)).all()
+            assert len(usages) == count
+            for usage in usages:
+                for field, value in expected.items():
+                    assert getattr(usage, field) == value
+                    if value is not None:
+                        assert isinstance(getattr(usage, field), int)
+            rollup = session.scalar(db.select(db.SessionRecord))
+            assert rollup is not None
+            assert rollup.session_id == "claude-string-session"
+            assert rollup.request_count == count
+            assert rollup.total_tokens == count * expected["total_tokens"]
+            assert rollup.prompt_tokens == count * expected["prompt_tokens"]
+            assert rollup.completion_tokens == count * (
+                expected["completion_tokens"] or 0
+            )
+            assert rollup.cached_tokens == count * (expected["cached_tokens"] or 0)
+            assert rollup.cache_creation_tokens == count * (
+                expected["cache_creation_tokens"] or 0
+            )
+            assert rollup.latency_sum_ms == count * (expected["latency_ms"] or 0)
+
+
+@pytest.mark.parametrize("source", ["codex", "opencode", "kilo"])
+@pytest.mark.parametrize("value, expected", [("1200", 1200), ("abc", None)])
+def test_extract_numeric_latency_and_status(otlp_module, source, value, expected):
+    attrs = _attrs(
+        {
+            "event.kind": "response.completed",
+            "input_token_count": 10,
+            "duration_ms": value,
+            "http.response.status_code": value,
+        }
+    )
+    if source == "codex":
+        fields = otlp_module._extract_codex_fields({}, attrs, "codex", user_id="user")
+    else:
+        fields = otlp_module._extract_opencode_fields(
+            {}, attrs, "", client_source=source, user_id="user"
+        )
+    assert fields["latency_ms"] == expected
+    assert fields["status"] == expected
+    if expected is not None:
+        assert isinstance(fields["latency_ms"], int)
+        assert isinstance(fields["status"], int)
+
+
 @pytest.mark.parametrize("ttft_ms, expected", [(794, 794), ("794", 794), (0, None)])
 def test_extract_claude_fields_ttft(otlp_module, ttft_ms, expected):
     fields = otlp_module._extract_claude_fields(

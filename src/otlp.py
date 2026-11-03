@@ -381,11 +381,11 @@ def _extract_claude_fields(
     """Extract normalized usage fields from a Claude OTLP record."""
     ts = _usage_ts_us(record)
 
-    input_tokens = _attr(attrs, "input_tokens")
-    output_tokens = _attr(attrs, "output_tokens")
-    cache_read = _attr(attrs, "cache_read_tokens")
-    cache_create = _attr(attrs, "cache_creation_tokens")
-    status = _attr(attrs, "status_code")
+    input_tokens = _optional_int(_attr(attrs, "input_tokens"))
+    output_tokens = _optional_int(_attr(attrs, "output_tokens"))
+    cache_read = _optional_int(_attr(attrs, "cache_read_tokens"))
+    cache_create = _optional_int(_attr(attrs, "cache_creation_tokens"))
+    status = _optional_int(_attr(attrs, "status_code"))
     try:
         ttft_ms = _optional_int(_attr(attrs, "ttft_ms"))
     except (TypeError, ValueError, OverflowError):
@@ -394,16 +394,16 @@ def _extract_claude_fields(
         ttft_ms = None
 
     # prompt_tokens = raw input + cache reads (what the model actually processed)
-    prompt_tokens = (int(input_tokens or 0)) + (int(cache_read or 0))
+    prompt_tokens = (input_tokens or 0) + (cache_read or 0)
     prompt_length = PROMPT_LENGTH_TRACKER.consume_for_usage_event(
         "claude-code", attrs, session_id, user_id=user_id
     )
     metadata = parse_provider_metadata("claude")
-    completion_tokens = int(output_tokens) if output_tokens is not None else None
-    cached_tokens = int(cache_read) if cache_read is not None else None
+    completion_tokens = output_tokens
+    cached_tokens = cache_read
     usage_session_id = _attr(attrs, "session.id") or session_id or None
 
-    total = prompt_tokens + int(output_tokens or 0) + int(cache_create or 0)
+    total = prompt_tokens + (output_tokens or 0) + (cache_create or 0)
 
     return {
         "ts": ts,
@@ -416,13 +416,11 @@ def _extract_claude_fields(
         "prompt_length": prompt_length,
         "completion_tokens": completion_tokens,
         "cached_tokens": cached_tokens,
-        "cache_creation_tokens": int(cache_create)
-        if cache_create is not None
-        else None,
+        "cache_creation_tokens": cache_create,
         "reasoning_tokens": None,
         "tool_tokens": None,
         "total_tokens": total,
-        "latency_ms": _attr(attrs, "duration_ms"),
+        "latency_ms": _optional_int(_attr(attrs, "duration_ms")),
         "ttft_ms": ttft_ms,
         "status": status,
         "base_url": metadata.base_url,
@@ -505,9 +503,9 @@ def _extract_opencode_fields(
         "reasoning_tokens": int(reasoning) if reasoning is not None else None,
         "tool_tokens": None,
         "total_tokens": normalized_total,
-        "latency_ms": int(duration_ms) if duration_ms is not None else None,
+        "latency_ms": _optional_int(duration_ms),
         "ttft_ms": int(ttft_ms) if ttft_ms is not None else None,
-        "status": int(status) if status is not None else None,
+        "status": _optional_int(status),
         "base_url": metadata.base_url,
         "base_url_provider": metadata.provider,
         "base_url_source": metadata.source,
@@ -692,10 +690,10 @@ def _extract_codex_fields(
         else None,
         "tool_tokens": int(tool_tokens) if tool_tokens is not None else None,
         "total_tokens": total_tokens,
-        "latency_ms": int(latency_ms) if latency_ms is not None else None,
+        "latency_ms": _optional_int(latency_ms),
         "ttft_ms": int(ttft_ms) if ttft_ms is not None else None,
         "cache_creation_tokens": None,
-        "status": status,
+        "status": _optional_int(status),
         "base_url": metadata.base_url,
         "base_url_provider": metadata.provider,
         "base_url_source": metadata.source,

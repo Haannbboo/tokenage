@@ -25,7 +25,12 @@ function stubViewport(width: number) {
   }))
 }
 
-beforeEach(() => { localStorage.clear(); stubApi() })
+beforeEach(() => {
+  localStorage.clear()
+  window.history.replaceState({}, '', '/')
+  stubViewport(1280)
+  stubApi()
+})
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 const open = async (path: string) => {
@@ -62,11 +67,11 @@ it('collapses to the icon rail and remembers it', async () => {
   await open('/dashboard')
   const app = document.querySelector('.app')!
   fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
-  expect(app.classList.contains('is-collapsed')).toBe(true)
+  await waitFor(() => expect(app.classList.contains('is-collapsed')).toBe(true))
   expect(localStorage.getItem('tokenage-sidebar')).toBe('collapsed')
   cleanup()
   await open('/dashboard')
-  expect(document.querySelector('.app')!.classList.contains('is-collapsed')).toBe(true)
+  await waitFor(() => expect(document.querySelector('.app')!.classList.contains('is-collapsed')).toBe(true))
   fireEvent.keyDown(document.body, { key: '[' })
   expect(document.querySelector('.app')!.classList.contains('is-collapsed')).toBe(false)
 })

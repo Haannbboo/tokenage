@@ -464,6 +464,8 @@
 
 .stat-detail {
   margin-top: 2px;
+  /* Keep the row when a tile has no detail, so every sparkline lines up. */
+  min-height: 1lh;
   overflow: hidden;
   color: var(--text-muted);
   font-size: 11px;

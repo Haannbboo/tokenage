@@ -575,6 +575,41 @@
 
 .badge-success { background: var(--badge-success-bg); color: var(--badge-success-text); }
 .badge-error { background: var(--badge-error-bg); color: var(--badge-error-text); }
+.badge-warn { background: var(--badge-warn-bg); color: var(--badge-warn-text); }
+
+/* Model / provider / tool / source: one neutral badge; identity comes from the
+   small monochrome logo, never from a fill colour. */
+.entity-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: var(--r-sm);
+  background: var(--badge-bg);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.entity-badge > span { overflow: hidden; text-overflow: ellipsis; }
+.mono { font-family: var(--font-mono); font-size: 12px; }
+.entity-badge.mono { font-size: 11px; }
+img[src^="/models/"] { filter: grayscale(1); opacity: 0.8; }
+
+/* Bar lists (Top Models, Tool Calls): grey bars on a light track, the top one green. */
+.bar-list { display: flex; flex-direction: column; gap: 10px; max-height: 300px; padding: 4px 0 12px; overflow-y: auto; }
+.bar-row-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 12px; }
+.bar-row-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-secondary); }
+.bar-row-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-row-value { display: inline-flex; align-items: baseline; gap: 6px; color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bar-row-value small { color: var(--text-muted); font-size: 11px; }
+.bar-track { height: 4px; border-radius: 2px; background: var(--surface-sunken); overflow: hidden; }
+.bar-track i { display: block; height: 100%; border-radius: 2px; transition: width 0.4s ease; }
 
 .sessions-table {
   table-layout: fixed;
@@ -683,15 +718,15 @@
 
 .request-log-session-filter:hover {
   background: var(--surface-hover);
-  border-color: var(--color-blue);
-  color: var(--color-blue);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
 }
 
 /* Pill only — sibling rows of the hovered row's session keep their row clean */
 .request-log-session-filter.session-hover-active {
-  background: color-mix(in srgb, var(--color-blue) 6%, transparent);
-  border-color: color-mix(in srgb, var(--color-blue) 45%, transparent);
-  color: color-mix(in srgb, var(--color-blue) 80%, var(--text-primary));
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
 }
 
 .request-log-session-empty {
@@ -763,7 +798,7 @@
 
 .session-status-circle-empty {
   background: transparent;
-  border: 1.5px dashed var(--muted-text, #6c757d);
+  border: 1.5px dashed var(--text-muted);
 }
 
 .session-fade-out {
@@ -903,7 +938,7 @@
   font-weight: 500;
   line-height: 1.6;
   text-transform: none;
-  box-shadow: var(--shadow-premium);
+  box-shadow: var(--shadow-menu);
   pointer-events: none;
 }
 
@@ -1134,7 +1169,7 @@
   inset: -8px;
   pointer-events: none;
   border-radius: 14px;
-  background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.09), transparent);
+  background: linear-gradient(90deg, transparent, var(--surface-hover), transparent);
   opacity: 0;
   transform: translateX(-18%);
   animation: dashboard-refresh-sheen 1.1s ease-in-out infinite;
@@ -1221,22 +1256,16 @@
 .btn-copy {
   font-size: 11px;
   padding: 4px 12px;
-  background: #18181b;
-  color: white;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
   border: none;
-  border-radius: 6px;
-  font-weight: 600;
+  border-radius: var(--r-md);
+  font-weight: 500;
   cursor: pointer;
-  transition: transform 0.15s ease, background 0.15s ease;
 }
-.btn-copy:hover {
-  background: #27272a;
-}
-.btn-copy:active {
-  transform: scale(0.92);
-}
+.btn-copy:hover { opacity: 0.88; }
 .btn-copy-clicked {
-  background: #16a34a !important;
+  background: var(--color-green) !important;
 }
 
 .pagination-btn {
@@ -1273,6 +1302,8 @@
   }
   .overview-trend-row > div {
     min-height: 320px;
+    /* The cards carry an inline flex: 1 1 0; stacked, they must size to content. */
+    flex: none !important;
   }
 }
 
@@ -1282,13 +1313,13 @@
   bottom: 30px;
   left: 50%;
   transform: translateX(-50%) translateY(20px);
-  background: #18181b;
-  color: white;
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 14px;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  padding: 8px 16px;
+  border-radius: var(--r-md);
+  font-size: 13px;
   font-weight: 500;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-menu);
   z-index: 10000;
   opacity: 0;
   pointer-events: none;
@@ -1308,7 +1339,7 @@
 }
 
 .click-to-copy:hover {
-  color: var(--color-blue);
+  color: var(--text-primary);
   text-decoration: underline;
 }
 
@@ -1328,10 +1359,10 @@
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: var(--color-blue);
-  color: #fff;
+  background: var(--surface-active);
+  color: var(--text-primary);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1371,8 +1402,8 @@
 }
 
 .login-gate-title {
-  font-size: 18px;
-  font-weight: 800;
+  font-size: 16px;
+  font-weight: 600;
   color: var(--text-primary);
   display: flex;
   align-items: center;
@@ -1394,7 +1425,7 @@
   padding: 10px 14px;
   background: var(--badge-error-bg);
   color: var(--badge-error-text);
-  border-radius: 8px;
+  border-radius: var(--r-md);
   font-size: 13px;
   font-weight: 500;
   text-align: left;
@@ -1415,17 +1446,17 @@
   justify-content: center;
   gap: 10px;
   text-decoration: none;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-size: 14px;
+  padding: 8px 16px;
+  border-radius: var(--r-md);
+  font-size: 13px;
   margin-top: 6px;
 }
 
 .login-gate-button > span:first-child {
   width: 20px;
   height: 20px;
-  background: #fff;
-  color: #4285f4;
+  background: var(--btn-primary-fg);
+  color: var(--btn-primary-bg);
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -1435,25 +1466,24 @@
 
 /* Auth: device list */
 .badge-neutral {
-  background: var(--surface-hover);
+  background: var(--badge-bg);
   color: var(--text-secondary);
+  box-shadow: inset 0 0 0 1px var(--border-color);
 }
 
 .btn-danger {
   white-space: nowrap;
-  padding: 6px 14px;
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, var(--color-red) 40%, transparent);
-  background: var(--badge-error-bg);
+  padding: 4px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
   color: var(--badge-error-text);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
-.btn-danger:hover {
-  opacity: 0.85;
-}
+.btn-danger:hover { border-color: var(--border-strong); background: var(--badge-error-bg); }
 
 /* Sessions */
 .session-charts { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:12px; }
@@ -1486,9 +1516,9 @@
 .session-plain-button:focus-visible, .session-bar:focus-visible, .session-stack button:focus-visible, .session-mark:focus-visible { outline:2px solid var(--color-green); outline-offset:2px; }
 .session-activity { width:180px; min-width:150px; }
 .session-axis { display:flex; justify-content:space-between; gap:8px; font-size:12px; font-weight:normal; text-transform:none; }
-.session-span { width:100%; height:4px; position:relative; border-radius:4px; background:color-mix(in srgb, var(--border-color) 35%, transparent); overflow:hidden; }
-.session-span i { position:absolute; height:100%; min-width:4px; background:var(--color-green); border-radius:4px; }
-.session-live { color:var(--color-green); white-space:nowrap; }
+.session-span { width:100%; height:4px; position:relative; border-radius:2px; background:var(--surface-sunken); overflow:hidden; }
+.session-span i { position:absolute; height:100%; min-width:4px; background:var(--chart-2); border-radius:2px; }
+.session-live { display:inline-block; margin-left:6px; padding:0 5px; border-radius:var(--r-sm); background:var(--accent-bg); color:var(--color-green); font-size:11px; font-weight:500; line-height:16px; white-space:nowrap; }
 .session-tools-more { border:0; padding:0; }
 .session-tools-more button { cursor:pointer; border:0; padding:0; background:none; color:inherit; font:inherit; }
 .session-tools-more:focus-within .tooltip-text:not([popover]) { visibility:visible; opacity:1; }
@@ -1512,13 +1542,13 @@
 .session-mark-wrap { position:absolute; top:12px; height:24px; border:0; z-index:1; }
 .session-mark-wrap:has(.selected) { z-index:3; }
 .session-mark { position:static; width:100%; min-width:3px; height:24px; margin:0; padding:0; display:block; border:0; border-radius:2px; cursor:pointer; z-index:1; }
-.session-mark.selected { outline:3px solid var(--color-blue); outline-offset:1px; }
+.session-mark.selected { outline:2px solid var(--text-primary); outline-offset:1px; }
 .session-mark.error { border:2px solid var(--text-primary); }
 .session-interactions { overflow:auto; max-height:430px; }
 .session-interactions th, .session-interactions td { padding:6px 8px; white-space:nowrap; }
 .session-interactions .expanded-row td { white-space:normal; }
-.session-interactions .table tbody tr.session-row-hovered > td { background: color-mix(in srgb, var(--color-blue) 18%, transparent); }
-.session-interactions .table tbody tr.session-row-hovered > td:first-child { box-shadow: inset 3px 0 0 var(--color-blue); }
+.session-interactions .table tbody tr.session-row-hovered > td { background: var(--surface-hover); }
+.session-interactions .table tbody tr.session-row-hovered > td:first-child { box-shadow: inset 2px 0 0 var(--text-muted); }
 .session-pager { display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:var(--text-secondary); font-size:12px; }
 .expandable-row { cursor:pointer; }
 .expandable-row:focus-visible { outline:2px solid var(--color-green); outline-offset:-2px; }

@@ -36,7 +36,7 @@ export function SessionContextChart({ data, tz }: { data: SessionContext; tz?: s
     setHover(best)
   }}>
     {[0, 1, 2, 3, 4].map(i => <g key={i}><line x1={left} x2={right} y1={y(i * tick)} y2={y(i * tick)} stroke="var(--border-color)" /><text x={left - 6} y={y(i * tick) + 4} textAnchor="end">{i * tick >= 1000 ? `${i * tick / 1000}k` : i * tick}</text></g>)}
-    <path d={`${line} L${x(points[points.length - 1].request)},165 L${x(points[0].request)},165 Z`} fill="var(--color-green)" opacity="0.14" /><path d={line} fill="none" stroke="var(--color-green)" strokeWidth="2" />
+    <path d={`${line} L${x(points[points.length - 1].request)},165 L${x(points[0].request)},165 Z`} fill="var(--color-green)" opacity="0.08" /><path d={line} fill="none" stroke="var(--color-green)" strokeWidth="2" />
     <circle cx={x(peakPoint.request)} cy={y(peak)} r="4" fill="var(--color-green)" /><text x={Math.max(85, Math.min(width - 50, x(peakPoint.request)))} y={Math.max(14, y(peak) - 9)} textAnchor="middle">{t('Peak')} {compact(peak)}</text>
     {[1, Math.ceil((count + 1) / 2), count].map((request, i) => <text key={i} x={[left, (left + right) / 2, right][i]} y="187" textAnchor={(['start', 'middle', 'end'] as const)[i]}>{t('Request')} {formatNumber(request)}</text>)}
     {active && <g><circle cx={x(active.request)} cy={y(active.context_tokens)} r="4" fill="var(--color-green)" /><rect x={Math.max(4, Math.min(width - tooltipWidth - 4, x(active.request) + 8))} y="12" width={tooltipWidth} height="22" rx="3" fill="var(--card-bg)" /><text x={Math.max(4, Math.min(width - tooltipWidth - 4, x(active.request) + 8)) + 6} y="27">{tooltip}</text></g>}

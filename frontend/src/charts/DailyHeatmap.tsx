@@ -99,27 +99,27 @@ export function DailyHeatmap({
     if (mode === 'activity') {
       if (metric === 0) return 'var(--heatmap-empty)'
       const ratio = Math.min(metric / (allWeeks.maxVal || 1), 1)
-      if (ratio < 0.25) return '#9be9a8'
-      if (ratio < 0.5) return '#40c463'
-      if (ratio < 0.75) return '#30a14e'
-      return '#00b578'
+      if (ratio < 0.25) return 'var(--heat-1)'
+      if (ratio < 0.5) return 'var(--heat-2)'
+      if (ratio < 0.75) return 'var(--heat-3)'
+      return 'var(--heat-4)'
     } else {
-      if (metric >= 100) return '#10b981'
-      if (metric >= 99) return '#34d399'
-      if (metric >= 95) return '#a7f3d0'
-      if (metric >= 90) return '#fcd34d'
-      if (metric >= 80) return '#f97316'
-      return '#ef4444'
+      if (metric >= 100) return 'var(--heat-4)'
+      if (metric >= 99) return 'var(--heat-3)'
+      if (metric >= 95) return 'var(--heat-2)'
+      if (metric >= 90) return 'var(--color-yellow)'
+      if (metric >= 80) return 'var(--color-pink)'
+      return 'var(--badge-error-text)'
     }
   }
 
   const gridWidth = visibleWeeks.length * step
   const gridHeight = 7 * step
 
-  const title = mode === 'activity' ? `🗓 ${t('Daily Activity')}` : `✅ ${t('Success Rate')}`
+  const title = mode === 'activity' ? t('Daily Activity') : t('Success Rate')
   const legendColors = mode === 'activity'
-    ? ['var(--heatmap-empty)', '#9be9a8', '#40c463', '#30a14e', '#00b578']
-    : ['#10b981', '#34d399', '#a7f3d0', '#fcd34d', '#f97316', '#ef4444']
+    ? ['var(--heatmap-empty)', 'var(--heat-1)', 'var(--heat-2)', 'var(--heat-3)', 'var(--heat-4)']
+    : ['var(--heat-4)', 'var(--heat-3)', 'var(--heat-2)', 'var(--color-yellow)', 'var(--color-pink)', 'var(--badge-error-text)']
   const legendStart = mode === 'activity' ? t('Less') : t('100%')
   const legendEnd = mode === 'activity' ? t('More') : t('Fail')
 
@@ -162,7 +162,7 @@ export function DailyHeatmap({
                   rx={2}
                   ry={2}
                   fill={isNoData ? 'var(--heatmap-empty)' : getColor(day.metric)}
-                  stroke={hoveredCell?.date === day.date.toISOString().split('T')[0] ? '#1e293b' : 'var(--heatmap-cell-border)'}
+                  stroke={hoveredCell?.date === day.date.toISOString().split('T')[0] ? 'var(--text-primary)' : 'var(--heatmap-cell-border)'}
                   strokeWidth={hoveredCell?.date === day.date.toISOString().split('T')[0] ? 2 : 1}
                   style={{ cursor: 'pointer', transition: 'stroke 0.1s' }}
                   onMouseEnter={(e) => {
@@ -207,26 +207,26 @@ export function DailyHeatmap({
                   <span style={{ fontWeight: 600 }}>{formatNumber(hInput)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginBottom: '3px' }}>
-                  <span style={{ color: '#40c463' }}>{t('Cached:')}</span>
+                  <span style={{ color: 'var(--color-green)' }}>{t('Cached:')}</span>
                   <span style={{ fontWeight: 600 }}>{formatNumber(hCached)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginBottom: '3px' }}>
-                  <span style={{ color: '#3b82f6' }}>{t('Output:')}</span>
+                  <span style={{ color: 'var(--color-blue)' }}>{t('Output:')}</span>
                   <span style={{ fontWeight: 600 }}>{formatNumber(hOutput)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginTop: '6px', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginTop: '6px', paddingTop: '6px', borderTop: '1px solid var(--border-color)' }}>
                   <span style={{ fontWeight: 700 }}>{t('Total:')}</span>
                   <span style={{ fontWeight: 800 }}>{formatNumber(total)}</span>
                 </div>
                 {cost > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginTop: '3px' }}>
-                    <span style={{ color: '#f472b6' }}>{t('Cost:')}</span>
-                    <span style={{ fontWeight: 800, color: '#f472b6' }}>{formatCost(cost)}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{t('Cost:')}</span>
+                    <span style={{ fontWeight: 800 }}>{formatCost(cost)}</span>
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginTop: '3px' }}>
-                  <span style={{ color: '#f43f5e' }}>{t('Requests:')}</span>
-                  <span style={{ fontWeight: 600, color: '#f43f5e' }}>{formatNumber(requests)}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{t('Requests:')}</span>
+                  <span style={{ fontWeight: 600 }}>{formatNumber(requests)}</span>
                 </div>
               </>
             )
@@ -243,17 +243,17 @@ export function DailyHeatmap({
               <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginBottom: '3px' }}>
                   <span style={{ color: 'var(--text-muted)' }}>{t('Success Rate:')}</span>
-                  <span style={{ fontWeight: 700, color: rate >= 99 ? '#10b981' : rate >= 90 ? '#fcd34d' : '#ef4444' }}>{rate.toFixed(1)}%</span>
+                  <span style={{ fontWeight: 700, color: rate >= 99 ? 'var(--badge-success-text)' : rate >= 90 ? 'var(--badge-warn-text)' : 'var(--badge-error-text)' }}>{rate.toFixed(1)}%</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginBottom: '3px' }}>
-                  <span style={{ color: '#10b981' }}>{t('Successful:')}</span>
+                  <span style={{ color: 'var(--badge-success-text)' }}>{t('Successful:')}</span>
                   <span style={{ fontWeight: 600 }}>{formatNumber(successful)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginBottom: '3px' }}>
-                  <span style={{ color: '#ef4444' }}>{t('Failed:')}</span>
+                  <span style={{ color: 'var(--badge-error-text)' }}>{t('Failed:')}</span>
                   <span style={{ fontWeight: 600 }}>{formatNumber(failed)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginTop: '6px', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginTop: '6px', paddingTop: '6px', borderTop: '1px solid var(--border-color)' }}>
                   <span style={{ fontWeight: 700 }}>{t('Total:')}</span>
                   <span style={{ fontWeight: 800 }}>{formatNumber(total)}</span>
                 </div>
@@ -268,19 +268,19 @@ export function DailyHeatmap({
             left: hoveredCell.x,
             top: hoveredCell.y - 8,
             transform: 'translate(-50%, -100%)',
-            backgroundColor: 'rgba(15, 23, 42, 0.95)',
-            color: 'white',
+            backgroundColor: 'var(--card-bg)',
+            color: 'var(--text-primary)',
             padding: '10px 14px',
-            borderRadius: '8px',
+            borderRadius: 'var(--r-md)',
             fontSize: '12px',
             zIndex: 200,
             pointerEvents: 'none',
-            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+            boxShadow: 'var(--shadow-menu)',
             minWidth: '180px',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
+            border: '1px solid var(--border-color)',
             whiteSpace: 'nowrap',
           }}>
-            <div style={{ fontWeight: 600, marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: '4px' }}>
+            <div style={{ fontWeight: 600, marginBottom: '6px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>
               {dateLabel}
             </div>
             {content}

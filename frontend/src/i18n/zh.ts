@@ -350,6 +350,7 @@ export const zh: Record<string, string> = {
 
   // Pricing page
   'Pricing': '定价',
+  'Services': '服务',
   'Details': '详情',
   'No report yet. Start the tokenage client service on this device.': '该设备尚未上报状态。请在此设备上运行 tokenage client start。',
   'Search models...': '搜索模型...',

@@ -29,7 +29,6 @@ export function LoginGate() {
     <div className="login-gate">
       <div className="login-gate-card">
         <div className="login-gate-title">
-          <span style={{ fontSize: '20px' }}>🔒</span>
           <span>{t('Sign in required')}</span>
         </div>
         <div className="login-gate-subtitle">

@@ -102,12 +102,12 @@ export function DeviceStatusDetail({ status }: Props) {
           style={{
             width: '36px',
             height: '36px',
-            borderRadius: '10px',
+            borderRadius: 'var(--r-md)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'var(--tab-active-bg)',
-            color: 'var(--color-blue)',
+            background: 'var(--surface-sunken)',
+            color: 'var(--text-secondary)',
             flexShrink: 0,
           }}
         >

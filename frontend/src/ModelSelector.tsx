@@ -74,7 +74,7 @@ export function ModelSelector({ activeFilter, summary, onChange }: {
   return <div className="model-selector" ref={rootRef}>
     <button ref={triggerRef} className="input-plain model-selector-trigger" aria-haspopup="menu" aria-expanded={open} onClick={() => { if (open) close(); else setOpen(true) }}>
       <span className="model-selector-trigger-label">
-        {selectedProvider ? <>{getProviderIcon(selectedProvider)}<span>{formatProviderName(selectedProvider)}</span></> : selected.length ? <><span className="model-selector-icons">{selected.slice(0, 3).map(model => <span key={model}>{getModelIcon(model)}</span>)}</span><span>{selected.length === 1 ? formatModelName(selected[0]) : `${selected.length} ${t('models')}`}</span></> : <><span>🌐</span><span>{t('All Models')}</span></>}
+        {selectedProvider ? <>{getProviderIcon(selectedProvider)}<span>{formatProviderName(selectedProvider)}</span></> : selected.length ? <><span className="model-selector-icons">{selected.slice(0, 3).map(model => <span key={model}>{getModelIcon(model)}</span>)}</span><span>{selected.length === 1 ? formatModelName(selected[0]) : `${selected.length} ${t('models')}`}</span></> : <span>{t('All Models')}</span>}
       </span><svg className="model-selector-chevron" aria-hidden="true" width="10" height="10" viewBox="0 0 10 10"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
     </button>
     {open && <>

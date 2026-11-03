@@ -1,6 +1,5 @@
 import { appendModels } from '../modelFilter'
 import { useEffect, useState } from 'react'
-import { getToolColor } from '../utils'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
 import { t } from '../i18n/index.ts'
@@ -51,31 +50,25 @@ export function ToolCallsChart({
     return () => controller.abort()
   }, [filterParams])
 
-  const items: BarItem[] = rows.map(row => {
-    const c = getToolColor(row.tool_name)
-    return {
-      name: row.tool_name,
-      icon: null,
-      tokens: row.count,
-      cost: 0,
-      totalTime: row.total_duration_ms ?? 0,
-      avgTime: row.avg_duration_ms ?? 0,
-      color: c.bg,
-      badgeBg: c.bg,
-      badgeText: c.text,
-    }
-  })
+  const items: BarItem[] = rows.map(row => ({
+    name: row.tool_name,
+    icon: null,
+    tokens: row.count,
+    cost: 0,
+    totalTime: row.total_duration_ms ?? 0,
+    avgTime: row.avg_duration_ms ?? 0,
+  }))
 
   return (
     <HorizontalBarChart
       title={t('Tool Calls')}
-      icon="🔧"
       items={items}
+      mono
       metric={metric}
     >
       {/* Same footer as the Top card: a bordered row holding one pill group. */}
       <div style={{
-        padding: '8px 12px',
+        paddingTop: '12px',
         borderTop: '1px solid var(--border-color)',
         display: 'flex',
         alignItems: 'center',

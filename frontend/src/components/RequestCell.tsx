@@ -1,8 +1,7 @@
 import type { UsageRow } from '../types'
 import type { RequestLogColumnId } from '../hooks/useRequestLogColumns'
 import { t } from '../i18n'
-import { formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime, value, getProviderIcon, getProviderBadgeBg, getProviderBadgeText, getModelIcon, getSourceIcon, getSourceBadgeBg, getSourceBadgeText, shortSessionId, ToolBadge, formatModelName, formatProviderName } from '../utils'
-import { getModelBadgeBackgroundColor, getModelTextColor } from '../model-badge'
+import { formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime, value, getProviderIcon, getModelIcon, getSourceIcon, shortSessionId, ToolBadge, formatModelName, formatProviderName } from '../utils'
 
 type RequestCellOptions = { tz?: string; colWidths: { model: number; device: number }; hoveredSession: string | null; setSessionFilter: (id: string) => void; recalculatingId: string | null; handleRecalculateCost: (id: string) => Promise<void>; stopToolPropagation?: boolean }
 
@@ -17,19 +16,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
       case 'model':
         return (
           <td style={{ padding: '8px' }}>
-            <div style={{
-              padding: '4px 6px',
-              borderRadius: '6px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '11px',
-              backgroundColor: getModelBadgeBackgroundColor(row.model),
-              color: getModelTextColor(row.model),
-              maxWidth: colWidths.model - 10,
-              fontWeight: 600,
-              cursor: 'pointer'
-            }} title={row.model}>
+            <div className="entity-badge mono" style={{ maxWidth: colWidths.model - 10, cursor: 'pointer' }} title={row.model}>
               {getModelIcon(row.model)}
               <span style={{
                 overflow: 'hidden',
@@ -44,18 +31,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
       case 'provider':
         return (
           <td style={{ padding: '8px' }}>
-            <div style={{
-              padding: '4px 6px',
-              borderRadius: '6px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '11px',
-              backgroundColor: getProviderBadgeBg(row.provider),
-              color: getProviderBadgeText(row.provider),
-              width: 'fit-content',
-              fontWeight: 600
-            }}>
+            <div className="entity-badge">
               {getProviderIcon(row.provider)}
               {formatProviderName(row.provider)}
             </div>
@@ -70,17 +46,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
               maxWidth: '120px',
             }}>
               {getSourceIcon(row.client_source ?? '') ?? (
-                <span style={{
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  padding: '2px 6px',
-                  borderRadius: '4px',
-                  backgroundColor: getSourceBadgeBg(row.client_source ?? ''),
-                  color: getSourceBadgeText(row.client_source ?? ''),
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}>
+                <span className="entity-badge">
                   {row.client_source || '—'}
                 </span>
               )}
@@ -126,14 +92,14 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
                 {value(row.cached_tokens) > 0 && (
-                  <div style={{ fontSize: '9px', color: 'var(--color-green)', fontWeight: 700 }}>
+                  <div style={{ fontSize: '10px', color: 'var(--color-green)', fontWeight: 500 }}>
                     {/* cache_creation_tokens is disjoint from prompt_tokens (Anthropic semantics),
                         so it's added to the denominator for a true hit rate. */}
                     {t('Cache read')} {formatNumber(row.cached_tokens)} ({Math.round((value(row.cached_tokens) / ((value(row.prompt_tokens) + value(row.cache_creation_tokens)) || 1)) * 100)}%)
                   </div>
                 )}
                 {value(row.cache_creation_tokens) > 0 && (
-                  <div style={{ fontSize: '9px', color: 'var(--color-purple)', fontWeight: 700 }}>
+                  <div style={{ fontSize: '10px', color: 'var(--series-4)', fontWeight: 500 }}>
                     {t('Cache write')} {formatNumber(row.cache_creation_tokens)}
                   </div>
                 )}
@@ -159,11 +125,11 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                       display: 'flex'
                     }}>
                       <div style={{ height: '100%', background: 'var(--color-green)', width: `${(value(row.cached_tokens) / total) * 100}%` }} />
-                      <div style={{ height: '100%', background: 'var(--color-blue)', width: `${(promptUncached / total) * 100}%`, opacity: 0.7 }} />
+                      <div style={{ height: '100%', background: 'var(--series-2)', width: `${(promptUncached / total) * 100}%`, opacity: 0.7 }} />
                       {cacheCreation > 0 && (
-                        <div style={{ height: '100%', background: 'var(--color-indigo)', width: `${(cacheCreation / total) * 100}%` }} />
+                        <div style={{ height: '100%', background: 'var(--series-4)', width: `${(cacheCreation / total) * 100}%` }} />
                       )}
-                      <div style={{ height: '100%', background: 'var(--color-purple)', width: `${(value(row.completion_tokens) / total) * 100}%` }} />
+                      <div style={{ height: '100%', background: 'var(--series-3)', width: `${(value(row.completion_tokens) / total) * 100}%` }} />
                     </div>
                     <div className="tooltip-text">
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -172,17 +138,17 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                           <span style={{ fontWeight: 600 }}>{formatNumber(row.cached_tokens)}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                          <span style={{ color: 'var(--color-blue)' }}>&bull; {t('Input')}:</span>
+                          <span style={{ color: 'var(--series-2)' }}>&bull; {t('Input')}:</span>
                           <span style={{ fontWeight: 600 }}>{formatNumber(promptUncached)}</span>
                         </div>
                         {cacheCreation > 0 && (
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                            <span style={{ color: 'var(--color-indigo)' }}>&bull; {t('Cache write')}:</span>
+                            <span style={{ color: 'var(--series-4)' }}>&bull; {t('Cache write')}:</span>
                             <span style={{ fontWeight: 600 }}>{formatNumber(cacheCreation)}</span>
                           </div>
                         )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                          <span style={{ color: 'var(--color-purple)' }}>&bull; {t('Output')}:</span>
+                          <span style={{ color: 'var(--series-3)' }}>&bull; {t('Output')}:</span>
                           <span style={{ fontWeight: 600 }}>{formatNumber(row.completion_tokens)}</span>
                         </div>
                       </div>
@@ -195,11 +161,11 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
         )
       case 'output':
         return (
-          <td style={{ fontWeight: 600, color: 'var(--color-blue)', verticalAlign: 'top' }}>
+          <td style={{ verticalAlign: 'top' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <div>{formatNumber(row.completion_tokens)}</div>
               {value(row.reasoning_tokens) > 0 && (
-                <div style={{ fontSize: '9px', color: 'var(--text-secondary)', fontWeight: 700 }}>
+                <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: 500 }}>
                   {t('Reasoning')} {formatNumber(row.reasoning_tokens)} ({Math.min(Math.round((value(row.reasoning_tokens) / (value(row.completion_tokens) || 1)) * 100), 100)}%)
                 </div>
               )}
@@ -223,7 +189,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                     style={{
                       width: `${Math.min((value(row.reasoning_tokens) / (value(row.completion_tokens) || 1)) * 100, 100)}%`,
                       height: '100%',
-                      background: '#64748b'
+                      background: 'var(--chart-2)'
                     }}
                   />
                 )}
@@ -267,7 +233,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                   <button
                     type="button"
                     className={`cost-recalc-btn ${costValueClass}`}
-                    style={{ color: 'var(--color-green)', fontWeight: 500 }}
+                    style={{ color: 'var(--text-primary)', fontWeight: 500 }}
                     onClick={handleCostClick}
                     aria-label={t('Click to recalculate')}
                   >
@@ -279,7 +245,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                       style={{
                         marginLeft: '4px',
                         fontSize: '10px',
-                        color: 'var(--color-yellow, #b58900)',
+                        color: 'var(--badge-warn-text)',
                       }}
                     >
                       est.
@@ -320,7 +286,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
                         <div className="cost-tooltip-row">
                           <span className="cost-tooltip-label">{t('Cache write:')}</span>
                           <div className="cost-tooltip-amount">
-                            <div style={{ color: 'var(--color-purple)' }}>{formatCost(cacheWriteCost)}</div>
+                            <div style={{ color: 'var(--series-4)' }}>{formatCost(cacheWriteCost)}</div>
                             {pricing && pricing.cache_write !== null && (
                               <div className="cost-tooltip-detail">{formatNumber(cacheCreation)} tokens x {formatRate(pricing.cache_write)}</div>
                             )}

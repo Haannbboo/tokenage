@@ -14,15 +14,32 @@
   --text-secondary: #525252;
   --text-muted: #8a8a8a;
 
-  /* Accent colors */
-  --color-blue: #3b82f6;
+  /* Accent colors: green is the one accent; the rest are muted, similar lightness. */
+  --color-blue: #5b7fa6;
   --color-green: #047857;
-  --color-yellow: #eab308;
-  --color-pink: #f43f5e;
-  --color-purple: #a855f7;
-  --color-indigo: #6366f1;
+  --color-yellow: #a8843f;
+  --color-pink: #a86a78;
+  --color-purple: #8574a3;
+  --color-indigo: #6b74a3;
   --accent-bg: #ecfdf5;
   --chart-2: #64748b;
+  --bar-fill: #a3a3a3;
+
+  /* Categorical series: one calm palette for every multi-series chart. */
+  --series-1: var(--color-green);
+  --series-2: var(--chart-2);
+  --series-3: var(--color-blue);
+  --series-4: var(--color-yellow);
+  --series-5: var(--color-purple);
+  --series-6: var(--color-pink);
+  --series-7: #4d9393;
+  --series-8: #8f8f62;
+
+  /* Heatmap: one low-saturation green ramp. */
+  --heat-1: #d5e6dd;
+  --heat-2: #a9cbb9;
+  --heat-3: #74a88c;
+  --heat-4: #3f7f5f;
 
   /* Component states */
   --tab-active-bg: var(--surface-active);
@@ -31,17 +48,16 @@
   --progress-bg: #f0f0f0;
   --badge-success-bg: #ecfdf5;
   --badge-success-text: #047857;
-  --badge-error-bg: #fef2f2;
-  --badge-error-text: #b91c1c;
+  --badge-error-bg: #fdf2f2;
+  --badge-error-text: #a23b3b;
+  --color-red: var(--badge-error-text);
+  --badge-warn-bg: #fbf5e9;
+  --badge-warn-text: #8a6620;
+  --badge-bg: #f5f5f5;
   --btn-primary-bg: #171717;
   --btn-primary-fg: #ffffff;
   --scrim: rgba(0, 0, 0, 0.35);
 
-  /* Icon box backgrounds */
-  --icon-green-bg: #f0fdf4;
-  --icon-yellow-bg: #fffbeb;
-  --icon-pink-bg: #fef2f2;
-  --icon-purple-bg: #faf5ff;
 
   /* Chart colors */
   --chart-grid: #f0f0f0;
@@ -99,24 +115,35 @@
   --text-secondary: #a3a3a3;
   --text-muted: #737373;
 
+  --color-blue: #86a3c4;
   --color-green: #34d399;
+  --color-yellow: #c8a86c;
+  --color-pink: #c4919c;
+  --color-purple: #a698c2;
+  --color-indigo: #959cc4;
   --accent-bg: rgba(52, 211, 153, 0.12);
   --chart-2: #94a3b8;
+  --bar-fill: #5c5c5c;
+  --series-7: #75afaf;
+  --series-8: #b0b08a;
+  --heat-1: #1d3328;
+  --heat-2: #24533d;
+  --heat-3: #2f7a57;
+  --heat-4: #45a57a;
 
   --tab-toggle-active-bg: #262626;
   --progress-bg: #222222;
   --badge-success-bg: rgba(52, 211, 153, 0.12);
   --badge-success-text: #34d399;
-  --badge-error-bg: #450a0a;
-  --badge-error-text: #fca5a5;
+  --badge-error-bg: rgba(239, 128, 128, 0.12);
+  --badge-error-text: #e59a9a;
+  --badge-warn-bg: rgba(200, 168, 108, 0.12);
+  --badge-warn-text: #c8a86c;
+  --badge-bg: #1f1f1f;
   --btn-primary-bg: #ededed;
   --btn-primary-fg: #111111;
   --scrim: rgba(0, 0, 0, 0.6);
 
-  --icon-green-bg: #052e16;
-  --icon-yellow-bg: #422006;
-  --icon-pink-bg: #450a0a;
-  --icon-purple-bg: #2e1065;
 
   --chart-grid: #222222;
   --chart-dot-fill: #161616;
@@ -259,7 +286,9 @@ a {
 }
 
 .table .expanded-detail .detail-value a {
-  color: var(--color-blue);
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
   text-decoration: none;
 }
 
@@ -387,14 +416,9 @@ a {
   position: relative;
   width: 100%;
   height: 14px;
-  background: var(--progress-bg);
-  border-radius: 4px;
+  background: var(--surface-sunken);
+  border-radius: var(--r-sm);
   overflow: hidden;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
-}
-
-[data-theme="dark"] .request-timeline-track {
-  background: rgba(255, 255, 255, 0.05);
 }
 
 .request-timeline-bar-segment {
@@ -445,9 +469,6 @@ a {
   font-size: 11px;
 }
 
-[data-theme="dark"] .request-timeline-footer {
-  border-top-color: rgba(255, 255, 255, 0.06);
-}
 
 .request-timeline-untimed {
   display: flex;

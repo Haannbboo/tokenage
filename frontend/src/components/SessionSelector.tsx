@@ -138,7 +138,6 @@ export function SessionSelector({ sessions, sessionFilter, onChange, sourceColor
               marginBottom: '4px'
             }}
           >
-            <span>🌐</span>
             <span style={{ fontWeight: 600 }}>{t('All Sessions')}</span>
           </button>
 

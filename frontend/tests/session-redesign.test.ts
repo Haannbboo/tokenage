@@ -71,7 +71,7 @@ it('links row and mark hover without scrolling', async () => {
   await waitFor(() => expect(view.container.querySelector('.session-mark')).toBeTruthy())
   const row = view.container.querySelector('#session-request-a')!, mark = view.container.querySelector('.session-mark')!
   const style = document.createElement('style')
-  style.textContent = readFileSync('src/App.css', 'utf8').replace('background: color-mix(in srgb, var(--color-blue) 18%, transparent); }', 'background: rgb(12, 34, 56); }')
+  style.textContent = readFileSync('src/App.css', 'utf8').replace('tr.session-row-hovered > td { background: var(--surface-hover); }', 'tr.session-row-hovered > td { background: rgb(12, 34, 56); }')
   document.head.appendChild(style)
   fireEvent.mouseEnter(row); expect(mark.classList.contains('selected')).toBe(true)
   expect(view.container.querySelector('.session-lane-track')!.classList.contains('has-hover')).toBe(true)

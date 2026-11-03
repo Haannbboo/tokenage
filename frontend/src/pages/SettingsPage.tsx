@@ -85,19 +85,18 @@ export function SettingsPage() {
           {/* Service Version */}
           <div className="panel">
             <div className="panel-tabs">
-              <div className="tab active"><span>🏷️</span> {t('Service Version')}</div>
+              <div className="tab active">{t('Service Version')}</div>
             </div>
             <div className="panel-body" style={{ padding: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{t('Version')}:</span>
                 <span style={{
-                  fontSize: '16px',
-                  fontWeight: 700,
+                  fontSize: '13px',
                   fontFamily: 'var(--font-mono)',
                   color: 'var(--text-primary)',
-                  padding: '4px 12px',
-                  background: 'var(--tab-toggle-bg)',
-                  borderRadius: '6px',
+                  padding: '2px 8px',
+                  background: 'var(--surface-sunken)',
+                  borderRadius: 'var(--r-sm)',
                 }}>
                   {versionData?.version ?? '—'}
                 </span>
@@ -111,7 +110,7 @@ export function SettingsPage() {
         <>
         <div className="panel">
             <div className="panel-tabs" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="tab active"><span>💻</span> {t('Machines')}</div>
+              <div className="tab active">{t('Machines')}</div>
               {auth.user && (auth.provider === 'google' || webSessions?.some(session => session.current)) && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <UserAvatar user={auth.user} />
@@ -146,7 +145,7 @@ export function SettingsPage() {
                       <tr
                         {...(device.kind === 'client' ? expandableRowProps(expandedDeviceId === device.id, () => setExpandedDeviceId(expandedDeviceId === device.id ? null : device.id)) : {})}
                       >
-                        <td style={{ fontWeight: 700 }}>
+                        <td style={{ fontWeight: 500 }}>
                           {device.device_name ?? '—'}
                           {device.current && (
                             <span className="badge badge-success" style={{ marginLeft: '8px' }}>
@@ -207,7 +206,7 @@ export function SettingsPage() {
           </div>
         <div className="panel" style={{ marginTop: '24px' }}>
             <div className="panel-tabs">
-              <div className="tab active"><span>🌐</span> {t('Web sessions')}</div>
+              <div className="tab active">{t('Web sessions')}</div>
             </div>
             <div className="panel-body" style={{ padding: '0' }}>
               <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)' }}>
@@ -225,7 +224,7 @@ export function SettingsPage() {
                 <tbody>
                   {webSessions && webSessions.length > 0 ? webSessions.map((session) => (
                     <tr key={session.id}>
-                      <td style={{ fontWeight: 700 }}>
+                      <td style={{ fontWeight: 500 }}>
                         {session.device_name}
                         {session.current && (
                           <span className="badge badge-success" style={{ marginLeft: '8px' }}>

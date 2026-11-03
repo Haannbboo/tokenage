@@ -11,18 +11,16 @@ export const ChartTooltip = forwardRef<HTMLDivElement, {
       top: '-10px',
       left,
       transform: 'translateX(-50%)',
-      backgroundColor: 'var(--glass-bg)',
+      backgroundColor: 'var(--card-bg)',
       color: 'var(--text-primary)',
       padding: '12px',
       borderRadius: 'var(--radius-md)',
       fontSize: '12px',
       zIndex: 100,
       pointerEvents: 'none',
-      boxShadow: 'var(--shadow-floating)',
+      boxShadow: 'var(--shadow-menu)',
       minWidth: '200px',
-      border: '1px solid var(--glass-border)',
-      backdropFilter: 'var(--glass-blur)',
-      WebkitBackdropFilter: 'var(--glass-blur)',
+      border: '1px solid var(--border-color)',
       ...style,
     }}>
       {children}
@@ -52,7 +50,7 @@ export function TooltipDivider() {
     <div style={{
       marginTop: '8px',
       paddingTop: '8px',
-      borderTop: '1px solid rgba(255, 255, 255, 0.2)',
+      borderTop: '1px solid var(--border-color)',
     }} />
   )
 }

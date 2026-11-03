@@ -155,7 +155,7 @@ export function OverviewTab({
               <CopyButton
                 text="tokenage bootstrap"
                 style={{ fontSize: '11px', padding: '4px 10px', whiteSpace: 'nowrap' }}
-                idleLabel={`📋 ${t('Copy')}`}
+                idleLabel={t('Copy')}
                 copiedLabel={`✓ ${t('Copied!')}`}
               />
             </div>
@@ -187,7 +187,7 @@ export function OverviewTab({
                   <CopyButton
                     text={cmd}
                     style={{ fontSize: '11px', padding: '4px 10px', whiteSpace: 'nowrap' }}
-                    idleLabel={`📋 ${t('Copy')}`}
+                    idleLabel={t('Copy')}
                     copiedLabel={`✓ ${t('Copied!')}`}
                     onCopied={() => armOnboardingVerification({ source, command: cmd })}
                   />
@@ -207,7 +207,7 @@ export function OverviewTab({
                   <div style={{
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    background: 'var(--icon-green-bg)',
+                    background: 'var(--accent-bg)',
                     color: 'var(--color-green)',
                     fontWeight: 600,
                     fontSize: '13px',
@@ -244,7 +244,7 @@ export function OverviewTab({
                           : 'var(--text-muted)',
                       padding: copiedOnboardingCommand && verifyPhase === 'idle' ? '8px 10px' : undefined,
                       borderRadius: copiedOnboardingCommand && verifyPhase === 'idle' ? '6px' : undefined,
-                      background: copiedOnboardingCommand && verifyPhase === 'idle' ? 'var(--icon-green-bg)' : undefined,
+                      background: copiedOnboardingCommand && verifyPhase === 'idle' ? 'var(--accent-bg)' : undefined,
                     }}
                   >
                     {verifyPhase === 'polling'
@@ -271,7 +271,7 @@ export function OverviewTab({
             {/* Setup health */}
             <div className="panel" style={{ textAlign: 'left' }}>
               <div className="panel-tabs">
-                <div className="tab active"><span>🏥</span> {t('Setup health')}</div>
+                <div className="tab active">{t('Setup health')}</div>
               </div>
               <div className="panel-body" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div style={{
@@ -311,7 +311,7 @@ export function OverviewTab({
             {/* Detected agents */}
             <div className="panel" style={{ textAlign: 'left' }}>
               <div className="panel-tabs">
-                <div className="tab active"><span>🤖</span> {t('Detected Agents')}</div>
+                <div className="tab active">{t('Detected Agents')}</div>
               </div>
               <div className="panel-body" style={{ padding: '16px' }}>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
@@ -353,7 +353,7 @@ export function OverviewTab({
                       <span key={src} style={{
                         padding: '4px 12px',
                         borderRadius: '6px',
-                        background: 'var(--icon-green-bg)',
+                        background: 'var(--accent-bg)',
                         color: 'var(--color-green)',
                         fontWeight: 600,
                         fontSize: '13px',
@@ -384,7 +384,7 @@ export function OverviewTab({
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}
         >
-          {t('Avg $/M tokens:')} <span style={{ color: 'var(--color-green)', fontWeight: 500 }}>{formatRate(totals.avgEffectivePricePerMillion)}</span>
+          {t('Avg $/M tokens:')} <span>{formatRate(totals.avgEffectivePricePerMillion)}</span>
         </StatTile>
 
         <StatTile
@@ -413,7 +413,7 @@ export function OverviewTab({
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}
         >
-          {t('Avg:')} <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatCompact(totals.avgTokensPerRequest)} {t('tokens/req')}</span>
+          {t('Avg:')} <span>{formatCompact(totals.avgTokensPerRequest)} {t('tokens/req')}</span>
         </StatTile>
 
         <StatTile
@@ -443,7 +443,7 @@ export function OverviewTab({
           </>
       </div>
 
-      <div className="overview-split-row" style={{ marginBottom: '24px' }}>
+      <div className="overview-split-row">
         <div style={{ flex: 1, minWidth: 0 }}>
           <TopUsageChart
             summary={summary}

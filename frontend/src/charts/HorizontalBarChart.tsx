@@ -18,23 +18,20 @@ export type BarItem = {
   cacheHitRate?: number | null
   totalTime?: number | null
   avgTime?: number | null
-  color: string
-  badgeBg: string
-  badgeText: string
 }
 
 export type Metric = 'tokens' | 'cost' | 'throughput' | 'successRate' | 'cacheHitRate' | 'count' | 'totalTime' | 'avgTime'
 
 export function HorizontalBarChart({
   title,
-  icon,
   items,
   metric,
+  mono = false,
   children,
 }: {
   title: string
-  icon: string
   items: BarItem[]
+  mono?: boolean
   metric: Metric
   children?: React.ReactNode
 }) {
@@ -63,7 +60,7 @@ export function HorizontalBarChart({
   return (
     <div className="widget" style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div className="widget-header">
-        <span>{icon} {title}</span>
+        <span>{title}</span>
       </div>
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column' }}>
         {metric === 'tokens' && hovered && (
@@ -74,7 +71,7 @@ export function HorizontalBarChart({
             <TooltipRow label={t('Cached:')} labelColor="var(--color-green)">
               <span style={{ fontWeight: 600 }}>{formatCompact(hovered.cachedTokens ?? 0)}</span>
             </TooltipRow>
-            <TooltipRow label={t('Input:')} labelColor="#94a3b8">
+            <TooltipRow label={t('Input:')} labelColor="var(--chart-2)">
               <span style={{ fontWeight: 600 }}>{formatCompact(Math.max(0, (hovered.promptTokens ?? 0) - (hovered.cachedTokens ?? 0)))}</span>
             </TooltipRow>
             <TooltipRow label={t('Output:')} labelColor="var(--color-blue)">
@@ -91,7 +88,7 @@ export function HorizontalBarChart({
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>{t('No data available')}</div>
           </div>
         ) : (
-          <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', maxHeight: '300px' }}>
+          <div className="bar-list">
           {sorted.map((s, index) => {
             const currentVal = getMetricValue(s)
             const percentage = (currentVal / maxValue) * 100
@@ -99,38 +96,20 @@ export function HorizontalBarChart({
             return (
               <div
                 key={`${s.name}-${index}`}
-                style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
+                className="bar-row"
                 onMouseEnter={() => setHoveredItem(s.name)}
                 onMouseLeave={() => setHoveredItem((current) => current === s.name ? null : current)}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
-                    {s.icon}
-                    <span style={{
-                      padding: '1px 6px',
-                      borderRadius: '4px',
-                      backgroundColor: s.badgeBg,
-                      color: s.badgeText,
-                      fontSize: '11px',
-                      fontWeight: 600,
-                    }}>{s.name}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-                    <span style={{ color: 'var(--text-secondary)', fontWeight: 700 }}>
-                      {metric === 'tokens' ? formatCompact(currentVal) : metric === 'count' ? formatNumber(currentVal) : metric === 'cost' ? formatCost(currentVal, 2) : metric === 'successRate' || metric === 'cacheHitRate' ? `${currentVal.toFixed(1)}%` : metric === 'totalTime' || metric === 'avgTime' ? formatLatency(currentVal) : formatThroughput(currentVal)}
-                    </span>
+                <div className="bar-row-head">
+                  <span className={`bar-row-name${mono ? ' mono' : ''}`} title={s.name}>{s.icon}<span>{s.name}</span></span>
+                  <span className="bar-row-value">
                     {metric === 'cost' && s.pricePerMillion != null && (
-                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                        {formatRate(s.pricePerMillion)}
-                      </span>
+                      <small>{formatRate(s.pricePerMillion)}</small>
                     )}
-                  </div>
+                    {metric === 'tokens' ? formatCompact(currentVal) : metric === 'count' ? formatNumber(currentVal) : metric === 'cost' ? formatCost(currentVal, 2) : metric === 'successRate' || metric === 'cacheHitRate' ? `${currentVal.toFixed(1)}%` : metric === 'totalTime' || metric === 'avgTime' ? formatLatency(currentVal) : formatThroughput(currentVal)}
+                  </span>
                 </div>
-                <div className="progress-track" style={{ width: '100%', display: 'flex' }}>
-                  <div
-                    style={{ width: `${percentage}%`, height: '100%', background: s.color, transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1)' }}
-                  />
-                </div>
+                <div className="bar-track"><i style={{ width: `${percentage}%`, background: index === 0 ? 'var(--color-green)' : 'var(--bar-fill)' }} /></div>
               </div>
             )
             })

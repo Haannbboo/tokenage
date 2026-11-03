@@ -1,6 +1,5 @@
 import { useMemo } from 'react'
 import type { UsageRow } from '../types'
-import { getModelTextColor } from '../model-badge'
 import { formatTime, PALETTE } from '../utils'
 import { t } from '../i18n'
 
@@ -38,19 +37,11 @@ export function laneLayout(rows: UsageRow[], width = 1000) {
 function axisTime(ms: number, tz?: string) { return new Intl.DateTimeFormat(undefined, { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(ms)) }
 export function SessionLane({ rows, selected, hovered, onHover, onSelect, tz }: { rows: UsageRow[]; selected: string | null; hovered?: string | null; onHover?: (id: string | null) => void; onSelect: (id: string) => void; tz?: string }) {
   const layout = useMemo(() => laneLayout(rows), [rows])
-  const modelColors = useMemo(() => {
-    const colors = new Map<string, string>(), used = new Set<string>()
-    for (const model of [...new Set(rows.map(row => row.model))].sort()) {
-      const preferred = getModelTextColor(model)
-      const color = used.has(preferred) ? PALETTE.find(candidate => !used.has(candidate)) ?? preferred : preferred
-      colors.set(model, color); used.add(color)
-    }
-    return colors
-  }, [rows])
+  const modelColors = useMemo(() => new Map([...new Set(rows.map(row => row.model))].sort().map((model, i) => [model, PALETTE[i % PALETTE.length]])), [rows])
   return <div><div className="session-lane-heading"><span>{t('Timeline')}</span></div><div className="session-model-legend">{[...modelColors].map(([model, color]) => <span key={model}><i style={{ background: color }} />{model}</span>)}</div>
   <div className="session-lane"><div className={`session-lane-track${hovered ? ' has-hover' : ''}`}>
     {layout.marks.map(({ row, px, pxWidth }) => <span key={row.id} className="session-mark-wrap" style={{ left: `${px / layout.width * 100}%`, width: `${pxWidth / layout.width * 100}%` }}>
-      <button className={`session-mark${selected === row.id || hovered === row.id ? ' selected' : ''}${(row.status ?? 200) >= 400 ? ' error' : ''}`} style={{ background: (row.status ?? 200) >= 400 ? 'var(--color-red, #dc2626)' : modelColors.get(row.model) }} onMouseEnter={() => onHover?.(row.id)} onMouseLeave={() => onHover?.(null)} onFocus={() => onHover?.(row.id)} onBlur={() => onHover?.(null)} onClick={() => onSelect(row.id)} aria-label={`${formatTime(row.ts, tz)} ${row.model} ${row.status ?? 200}`} />
+      <button className={`session-mark${selected === row.id || hovered === row.id ? ' selected' : ''}${(row.status ?? 200) >= 400 ? ' error' : ''}`} style={{ background: (row.status ?? 200) >= 400 ? 'var(--badge-error-text)' : modelColors.get(row.model) }} onMouseEnter={() => onHover?.(row.id)} onMouseLeave={() => onHover?.(null)} onFocus={() => onHover?.(row.id)} onBlur={() => onHover?.(null)} onClick={() => onSelect(row.id)} aria-label={`${formatTime(row.ts, tz)} ${row.model} ${row.status ?? 200}`} />
 
     </span>)}
     {layout.ticks.map((tick, i) => <span key={i} className="session-lane-tick" style={{ left: `${tick.x / layout.width * 100}%` }}>{axisTime(tick.time, tz)}</span>)}

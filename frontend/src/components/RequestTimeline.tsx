@@ -48,8 +48,8 @@ export type TimelineRowItem = {
   tools?: TimelineTool[]
 }
 
-const TTFT_COLOR = '#38bdf8' // Sky blue
-const GEN_COLOR = '#10b981' // Emerald green (matches reference timeline)
+const TTFT_COLOR = 'var(--chart-2)'
+const GEN_COLOR = 'var(--color-green)'
 
 function barPercents(startMs: number, durationMs: number, totalMs: number) {
   const left = Math.max(0, Math.min(100, (startMs / totalMs) * 100))
@@ -197,7 +197,7 @@ export function buildTimelineData({
           label: extra.label,
           startMs: extra.start_ms ?? 0,
           durationMs: extra.duration_ms,
-          color: extra.color || '#94a3b8',
+          color: extra.color || 'var(--chart-2)',
         },
       ],
     })
@@ -291,7 +291,7 @@ export function buildTimelineData({
           label: extra.label,
           startMs: extra.start_ms ?? genStart,
           durationMs: extra.duration_ms,
-          color: extra.color || '#94a3b8',
+          color: extra.color || 'var(--chart-2)',
         },
       ],
     })

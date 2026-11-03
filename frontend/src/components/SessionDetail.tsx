@@ -5,20 +5,17 @@ import { RequestDetail } from './RequestDetail'
 import { SessionLane } from './SessionLane'
 import { renderRequestCell } from './RequestCell'
 import { useApp } from '../contexts/AppContext'
-import { formatCost, formatDuration, formatLatency, formatNumber, formatTime } from '../utils'
+import { formatCost, formatDuration, formatNumber } from '../utils'
 import { t } from '../i18n'
 import { SessionContextChart, type SessionContext } from './SessionContextChart'
 
-type Tool = TimelineTool & { usage_id: string | null }
 export function SessionDetail({ session, tz, onNavigateToLogs }: { session: SessionSummary; tz?: string; onNavigateToLogs: (filters: { sessionFilter: string }) => void }) {
   const { showToast } = useApp()
   const listRef = useRef<HTMLDivElement>(null)
   const [context, setContext] = useState<SessionContext | null>(null)
   const [contextError, setContextError] = useState(false)
   const [rows, setRows] = useState<UsageRow[] | null>(null)
-  const [tools, setTools] = useState<Tool[] | null>(null)
   const [rowsError, setRowsError] = useState(false)
-  const [toolsError, setToolsError] = useState(false)
   const [hovered, setHovered] = useState<string | null>(null)
   const [recalculatingId, setRecalculatingId] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -30,7 +27,6 @@ export function SessionDetail({ session, tz, onNavigateToLogs }: { session: Sess
     fetch(`/sessions/${encodeURIComponent(session.session_id)}/context`, { signal: c.signal }).then(r => { if (!r.ok) throw new Error(); return r.json() }).then(setContext).catch(() => { if (!c.signal.aborted) setContextError(true) })
     const query = new URLSearchParams({ session_id: session.session_id, limit: '30' })
     fetch(`/usage?${query}`, { signal: c.signal }).then(r => { if (!r.ok) throw new Error(); return r.json() }).then(setRows).catch(() => { if (!c.signal.aborted) setRowsError(true) })
-    fetch(`/sessions/${encodeURIComponent(session.session_id)}/tool-calls`, { signal: c.signal }).then(r => { if (!r.ok) throw new Error(); return r.json() }).then(setTools).catch(() => { if (!c.signal.aborted) setToolsError(true) })
     return () => c.abort()
   }, [session.session_id])
   useEffect(() => {
@@ -72,6 +68,5 @@ export function SessionDetail({ session, tz, onNavigateToLogs }: { session: Sess
       </tr>{selected === row.id && <tr className="expanded-row"><td colSpan={7}>{callsError ? <p role="alert">{t('Failed to fetch tool calls')}</p> : !calls ? <p>{t('Loading...')}</p> : <><div className="session-request-breakdown">{[[t('Input'), formatNumber(row.prompt_tokens)], [t('Output'), formatNumber(row.completion_tokens)], [t('Cached'), formatNumber(row.cached_tokens)], [t('Cache write'), formatNumber(row.cache_creation_tokens)], [t('Input cost'), formatCost(row.normal_input_cost_usd)], [t('Output cost'), formatCost(row.output_cost_usd)], [t('Cache cost'), formatCost(row.cache_read_cost_usd)], [t('Cache write cost'), formatCost(row.cache_write_cost_usd)]].map(([label, val]) => <span key={label}>{label}: {val}</span>)}</div><RequestDetail row={row} toolCalls={calls} showToast={showToast} /></>}</td></tr>}</Fragment>)}</tbody></table></div>
       <div className="session-pager"><span>{t('Latest {shown} requests').replace('{shown}', String(rows.length))}</span><button className="btn-ghost" onClick={() => onNavigateToLogs({ sessionFilter: session.session_id })}>{t('View all in Request Logs')} →</button></div>
     </>}
-    {toolsError ? <p role="alert">{t('Failed to fetch tool calls')}</p> : tools && tools.some(tool => !tool.usage_id) && <div><strong>{t('Unattributed')}</strong><ul>{tools.filter(tool => !tool.usage_id).map((tool, i) => <li key={`${tool.tool_use_id}-${i}`}>{tool.tool_name} · {tool.ts ? formatTime(tool.ts * 1000, tz) : '—'} · {tool.duration_ms == null ? '—' : formatLatency(tool.duration_ms)}</li>)}</ul></div>}
   </div>
 }

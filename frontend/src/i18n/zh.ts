@@ -20,7 +20,6 @@ export const zh: Record<string, string> = {
   'Peak': '峰值',
   'Failed to fetch context size': '获取上下文大小失败',
   'Timeline': '时间线',
-  'Unattributed': '未归属',
   'Failed to fetch interactions': '获取交互失败',
   'Failed to fetch tool calls': '获取工具调用失败',
   'Failed to fetch session distributions': '获取会话分布失败',

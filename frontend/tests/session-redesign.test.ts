@@ -71,22 +71,16 @@ it('links row and mark hover without scrolling', async () => {
   await waitFor(() => expect(view.container.querySelector('.session-mark')).toBeTruthy())
   const row = view.container.querySelector('#session-request-a')!, mark = view.container.querySelector('.session-mark')!
   const style = document.createElement('style')
-  style.textContent = readFileSync('src/App.css', 'utf8').replace('background: var(--surface-hover); }', 'background: rgb(12, 34, 56); }')
+  style.textContent = readFileSync('src/App.css', 'utf8').replace('background: color-mix(in srgb, var(--color-blue) 18%, transparent); }', 'background: rgb(12, 34, 56); }')
   document.head.appendChild(style)
   fireEvent.mouseEnter(row); expect(mark.classList.contains('selected')).toBe(true)
+  expect(view.container.querySelector('.session-lane-track')!.classList.contains('has-hover')).toBe(true)
   fireEvent.mouseLeave(row); expect(mark.classList.contains('selected')).toBe(false)
   fireEvent.mouseEnter(mark); expect(row.classList.contains('session-row-hovered')).toBe(true)
   expect(getComputedStyle(row.querySelector('td')!).backgroundColor).toBe('rgb(12, 34, 56)')
   fireEvent.mouseLeave(mark); expect(row.classList.contains('session-row-hovered')).toBe(false)
   style.remove()
   fireEvent.keyDown(row, { key: ' ' }); expect(row.getAttribute('aria-expanded')).toBe('true')
-})
-
-it('formats unattributed tool timestamps in milliseconds', async () => {
-  const ts = Date.UTC(2025, 9, 21, 12, 30)
-  vi.stubGlobal('fetch', vi.fn(async (url: string) => ({ ok: true, json: async () => url.startsWith('/usage?') ? [] : [{ tool_name: 'Search', tool_use_id: 'a', usage_id: null, ts }] })))
-  render(createElement(SessionDetail, { session: { session_id: 'abc', duration_s: 1, request_count: 0, total_tokens: 0, total_cost_usd: 0 } as SessionSummary, tz: 'UTC', onNavigateToLogs: vi.fn() }))
-  expect(await screen.findByText(/Search · Oct 21/)).toBeTruthy()
 })
 
 it('shows missing latency in the interaction and expanded detail', async () => {

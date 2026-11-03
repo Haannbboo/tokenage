@@ -333,7 +333,6 @@ a {
   color: var(--text-primary);
   text-decoration: underline;
   text-underline-offset: 2px;
-  text-decoration: none;
 }
 
 .table .expanded-detail .detail-value a:hover {

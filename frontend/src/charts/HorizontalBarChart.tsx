@@ -151,9 +151,9 @@ export function HorizontalBarChart({
   children?: React.ReactNode
 }) {
   // The row shown as active: hovered, focused or tapped. x is the pointer, null when focused.
-  const [active, setActive] = useState<{ name: string; x: number | null } | null>(null)
+  const [active, setActive] = useState<{ index: number; x: number | null } | null>(null)
   const tipRef = useRef<HTMLDivElement>(null)
-  const rowRefs = useRef(new Map<string, HTMLLIElement>())
+  const rowRefs = useRef(new Map<number, HTMLLIElement>())
   const tipId = useId()
 
   const sorted = [...items].sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
@@ -162,11 +162,11 @@ export function HorizontalBarChart({
   // Shares only make sense for metrics that add up.
   const additive = additiveMetrics.includes(metric)
   const total = additive ? sorted.reduce((sum, item) => sum + metricValue(item, metric), 0) : 0
-  const activeIndex = active ? sorted.findIndex((item) => item.name === active.name) : -1
+  const activeIndex = active?.index ?? -1
   const activeItem = activeIndex >= 0 ? sorted[activeIndex] : null
 
   useLayoutEffect(() => {
-    const row = active && rowRefs.current.get(active.name)
+    const row = active && rowRefs.current.get(active.index)
     if (tipRef.current && row) placeTip(tipRef.current, row, active.x)
   })
 
@@ -174,7 +174,7 @@ export function HorizontalBarChart({
   useLayoutEffect(() => {
     if (!active) return
     const follow = () => {
-      const row = rowRefs.current.get(active.name)
+      const row = rowRefs.current.get(active.index)
       if (!row || !tipRef.current) return
       const r = row.getBoundingClientRect()
       const list = row.parentElement!.getBoundingClientRect()
@@ -203,21 +203,21 @@ export function HorizontalBarChart({
             const currentVal = metricValue(s, metric)
             const percentage = (currentVal / maxValue) * 100
             const sub = metric === 'cost' && s.pricePerMillion != null ? formatRate(s.pricePerMillion) : null
-            const isActive = activeItem === s
+            const isActive = activeIndex === index
 
             return (
               <li
                 key={`${s.name}-${index}`}
-                ref={(el) => { if (el) rowRefs.current.set(s.name, el); else rowRefs.current.delete(s.name) }}
+                ref={(el) => { if (el) rowRefs.current.set(index, el); else rowRefs.current.delete(index) }}
                 className={`rank-row${toolBadges ? ' rank-row-tools' : ''}${isActive ? ' is-active' : ''}`}
                 tabIndex={0}
                 aria-describedby={isActive ? tipId : undefined}
-                onMouseEnter={(e) => setActive({ name: s.name, x: e.clientX })}
+                onMouseEnter={(e) => setActive({ index, x: e.clientX })}
                 onMouseMove={(e) => { if (isActive && tipRef.current) placeTip(tipRef.current, e.currentTarget, e.clientX) }}
-                onFocus={() => setActive((cur) => cur?.name === s.name ? cur : { name: s.name, x: null })}
+                onFocus={() => setActive((cur) => cur?.index === index ? cur : { index, x: null })}
                 // A window blur (tab switch) keeps the row; focus moving elsewhere in the page hides it.
-                onBlur={() => { if (document.hasFocus()) setActive((cur) => cur?.name === s.name ? null : cur) }}
-                onClick={(e) => setActive({ name: s.name, x: e.clientX })}
+                onBlur={() => { if (document.hasFocus()) setActive((cur) => cur?.index === index ? null : cur) }}
+                onClick={(e) => setActive({ index, x: e.clientX })}
                 onKeyDown={(e) => { if (e.key === 'Escape') setActive(null) }}
               >
                 <span className="rank-n">{index + 1}</span>

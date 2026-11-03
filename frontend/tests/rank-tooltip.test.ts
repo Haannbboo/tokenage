@@ -59,6 +59,24 @@ describe('rank row interaction', () => {
     expect(first.classList.contains('is-active')).toBe(false)
   })
 
+  it('tracks duplicate names as separate rows on hover and focus', () => {
+    render(createElement(HorizontalBarChart, { title: 'Top', items: [
+      { ...item, name: 'MiniMax', tokens: 10 },
+      { ...item, name: 'MiniMax', tokens: 20 },
+    ], metric: 'tokens' }))
+    const [first, second] = screen.getAllByRole('listitem')
+    fireEvent.mouseEnter(second)
+    expect(second.classList.contains('is-active')).toBe(true)
+    expect(first.classList.contains('is-active')).toBe(false)
+    expect(screen.getByRole('tooltip').textContent).toContain('#2')
+    expect(screen.getByRole('tooltip').textContent).toContain('Total10')
+    fireEvent.focus(first)
+    expect(first.classList.contains('is-active')).toBe(true)
+    expect(second.classList.contains('is-active')).toBe(false)
+    expect(screen.getByRole('tooltip').textContent).toContain('#1')
+    expect(screen.getByRole('tooltip').textContent).toContain('Total20')
+  })
+
   it('hides the tooltip on blur and follows hover between rows', () => {
     const [first, second] = renderChart()
     const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false)

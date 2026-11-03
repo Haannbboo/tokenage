@@ -577,8 +577,8 @@
 .badge-error { background: var(--badge-error-bg); color: var(--badge-error-text); }
 .badge-warn { background: var(--badge-warn-bg); color: var(--badge-warn-text); }
 
-/* Model / provider / tool / source: one neutral badge; identity comes from the
-   small logo or a colour dot, never from a fill colour. */
+/* Model / provider / tool / source: one neutral badge. `.tinted` takes the
+   identity colour from --tint as a soft fill, with text of the same hue. */
 .entity-badge {
   display: inline-flex;
   align-items: center;
@@ -597,7 +597,11 @@
   text-overflow: ellipsis;
 }
 .entity-badge > span { overflow: hidden; text-overflow: ellipsis; }
-.entity-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; }
+.entity-badge.tinted {
+  border-color: color-mix(in oklab, var(--tint) 28%, var(--card-bg));
+  background: color-mix(in oklab, var(--tint) 14%, var(--card-bg));
+  color: color-mix(in oklab, var(--tint) 70%, var(--text-primary));
+}
 .mono { font-family: var(--font-mono); font-size: 12px; }
 .entity-badge.mono { font-size: 11px; }
 /* Brand logos keep their hue, a little calmer. */
@@ -633,6 +637,8 @@ img[src^="/models/"] { filter: saturate(0.7); }
   padding-right: 12px;
   vertical-align: middle;
 }
+
+.sessions-table td > span:has(> .entity-badge) + span { margin-left: 4px; }
 
 .sessions-table .sessions-session-cell {
   position: relative;
@@ -728,17 +734,12 @@ img[src^="/models/"] { filter: saturate(0.7); }
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-.request-log-session-filter:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-}
-
 /* Pill only — sibling rows of the hovered row's session keep their row clean */
+.request-log-session-filter:hover,
 .request-log-session-filter.session-hover-active {
-  background: var(--surface-hover);
-  border-color: var(--border-strong);
-  color: var(--text-primary);
+  border-color: color-mix(in oklab, var(--hue-blue) 60%, var(--card-bg));
+  background: color-mix(in oklab, var(--hue-blue) 22%, var(--card-bg));
+  color: color-mix(in oklab, var(--hue-blue) 75%, var(--text-primary));
 }
 
 .request-log-session-empty {
@@ -1218,7 +1219,7 @@ img[src^="/models/"] { filter: saturate(0.7); }
 }
 
 .trend-segment {
-  opacity: 0.9;
+  opacity: 1;
   transition: opacity 240ms ease, filter 240ms ease;
 }
 

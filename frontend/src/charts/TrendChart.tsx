@@ -228,7 +228,7 @@ export function TrendChart({
             onClick={() => setShowRequests(visible => !visible)}
             style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: 0, border: 0, background: 'none', cursor: 'pointer', opacity: showRequests ? 1 : 0.4 }}
           >
-            <div style={{ width: '12px', height: '3px', background: 'var(--text-secondary)', borderRadius: '2px' }} />
+            <div style={{ width: '12px', height: '3px', background: 'var(--hue-red)', borderRadius: '2px' }} />
             <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-secondary)', textDecoration: showRequests ? 'none' : 'line-through' }}>{t('Requests')}</span>
           </button>
           <div className="tab-toggle">
@@ -317,7 +317,7 @@ export function TrendChart({
                     {metric === 'cost' ? formatNumber(value(hoveredData.total_tokens)) : formatCost(hoveredData.total_cost_usd)}
                   </span>
                 </TooltipRow>
-                {showRequests && <TooltipRow label={t('Requests:')} labelColor="var(--text-secondary)">
+                {showRequests && <TooltipRow label={t('Requests:')} labelColor="var(--hue-red)">
                   <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>{formatNumber(hoveredData.requests)}</span>
                 </TooltipRow>}
               </ChartTooltip>
@@ -446,11 +446,11 @@ export function TrendChart({
                       className={activeHighlight !== null ? 'trend-requests is-softened' : 'trend-requests'}
                       points={points}
                       fill="none"
-                      stroke="var(--text-secondary)"
+                      stroke="var(--hue-red)"
                       strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.45 : 0.22 }}
+                      style={{ pointerEvents: 'none', opacity: hoveredIdx === null ? 0.9 : 0.45 }}
                     />
                     {showDots && filled.map((d, i) => {
                       const x = paddingX + (i + 0.5) / filled.length * chartWidth;
@@ -463,9 +463,9 @@ export function TrendChart({
                             className={activeHighlight !== null ? 'trend-requests is-softened' : 'trend-requests'}
                             cx={0} cy={0} r={hoveredIdx === i ? "5" : "3"}
                             fill="var(--chart-dot-fill)"
-                            stroke="var(--text-secondary)"
+                            stroke="var(--hue-red)"
                             strokeWidth={hoveredIdx === i ? "3" : "2"}
-                            style={{ opacity: hoveredIdx === null || hoveredIdx === i ? 0.45 : 0.22 }}
+                            style={{ opacity: hoveredIdx === null || hoveredIdx === i ? 0.9 : 0.45 }}
                           />
                         </g>
                       );
@@ -481,8 +481,8 @@ export function TrendChart({
                           transition: 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1)',
                           pointerEvents: 'none',
                         }}>
-                          <circle cx={0} cy={0} r="5" fill="var(--chart-dot-fill)" stroke="var(--text-secondary)" strokeWidth="3" />
-                          <circle cx={0} cy={0} r="9" fill="none" stroke="var(--text-secondary)" strokeWidth="1.5" opacity="0.35" className="trend-hover-pulse" />
+                          <circle cx={0} cy={0} r="5" fill="var(--chart-dot-fill)" stroke="var(--hue-red)" strokeWidth="3" />
+                          <circle cx={0} cy={0} r="9" fill="none" stroke="var(--hue-red)" strokeWidth="1.5" opacity="0.35" className="trend-hover-pulse" />
                         </g>
                       );
                     })()}

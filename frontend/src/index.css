@@ -17,29 +17,29 @@
   /* Identity colours for models, providers, agents and tools: brand hues at
      one perceived lightness per theme (OKLCH), calmer chroma than the brand
      marks. They go on small marks (dots, thin bars, lines), never on fills. */
-  --hue-orange: oklch(0.62 0.150 45);
-  --hue-amber: oklch(0.64 0.140 65);
-  --hue-yellow: oklch(0.69 0.130 88);
-  --hue-sand: oklch(0.66 0.070 80);
-  --hue-lime: oklch(0.64 0.140 130);
-  --hue-green: oklch(0.62 0.130 155);
-  --hue-teal: oklch(0.62 0.110 180);
-  --hue-cyan: oklch(0.62 0.110 205);
-  --hue-sky: oklch(0.62 0.120 232);
-  --hue-blue: oklch(0.62 0.150 258);
-  --hue-royal: oklch(0.58 0.160 268);
-  --hue-indigo: oklch(0.62 0.140 280);
-  --hue-violet: oklch(0.62 0.150 295);
-  --hue-purple: oklch(0.62 0.140 318);
-  --hue-pink: oklch(0.62 0.140 350);
-  --hue-rose: oklch(0.62 0.150 10);
-  --hue-red: oklch(0.60 0.160 27);
-  --hue-slate: oklch(0.62 0.035 258);
+  --hue-orange: oklch(0.63 0.170 45);
+  --hue-amber: oklch(0.66 0.160 65);
+  --hue-yellow: oklch(0.71 0.150 88);
+  --hue-sand: oklch(0.67 0.090 80);
+  --hue-lime: oklch(0.66 0.170 132);
+  --hue-green: oklch(0.64 0.170 152);
+  --hue-teal: oklch(0.63 0.130 180);
+  --hue-cyan: oklch(0.64 0.130 205);
+  --hue-sky: oklch(0.63 0.145 232);
+  --hue-blue: oklch(0.62 0.175 258);
+  --hue-royal: oklch(0.58 0.185 268);
+  --hue-indigo: oklch(0.62 0.165 280);
+  --hue-violet: oklch(0.62 0.175 295);
+  --hue-purple: oklch(0.62 0.165 318);
+  --hue-pink: oklch(0.62 0.165 350);
+  --hue-rose: oklch(0.62 0.175 10);
+  --hue-red: oklch(0.60 0.185 27);
+  --hue-slate: oklch(0.62 0.045 258);
   --hue-grey: oklch(0.64 0.000 0);
   --hue-ink: #3f3f46;
 
   --color-blue: var(--hue-blue);
-  --color-green: #047857;
+  --color-green: oklch(0.55 0.150 152);
   --color-yellow: var(--hue-yellow);
   --color-pink: var(--hue-rose);
   --color-purple: var(--hue-purple);
@@ -58,10 +58,17 @@
   --series-8: var(--hue-indigo);
 
   /* Daily Activity heatmap: a low-saturation green ramp. */
-  --heat-1: oklch(0.92 0.040 155);
-  --heat-2: oklch(0.82 0.080 155);
-  --heat-3: oklch(0.70 0.110 155);
-  --heat-4: oklch(0.56 0.110 155);
+  --heat-1: oklch(0.93 0.050 152);
+  --heat-2: oklch(0.84 0.110 152);
+  --heat-3: oklch(0.73 0.155 152);
+  --heat-4: oklch(0.60 0.160 152);
+  /* Daily Activity: a wider less-to-more ramp than --heat-*, so heavy days stand out. */
+  --activity-1: oklch(0.95 0.040 152);
+  --activity-2: oklch(0.84 0.110 152);
+  --activity-3: oklch(0.66 0.170 152);
+  --activity-4: oklch(0.50 0.170 152);
+  /* Hourly/Daily Usage Trend series chroma, as a multiplier of the --hue-* colour. */
+  --trend-saturation: 0.8;
 
   /* Component states */
   --tab-active-bg: var(--surface-active);
@@ -137,32 +144,36 @@
   --text-secondary: #a3a3a3;
   --text-muted: #737373;
 
-  --hue-orange: oklch(0.74 0.130 45);
-  --hue-amber: oklch(0.76 0.130 65);
-  --hue-yellow: oklch(0.80 0.120 88);
-  --hue-sand: oklch(0.77 0.070 80);
-  --hue-lime: oklch(0.76 0.130 130);
-  --hue-green: oklch(0.74 0.130 155);
-  --hue-teal: oklch(0.74 0.110 180);
-  --hue-cyan: oklch(0.74 0.110 205);
-  --hue-sky: oklch(0.74 0.110 232);
-  --hue-blue: oklch(0.74 0.130 258);
-  --hue-royal: oklch(0.72 0.130 268);
-  --hue-indigo: oklch(0.74 0.120 280);
-  --hue-violet: oklch(0.74 0.130 295);
-  --hue-purple: oklch(0.74 0.130 318);
-  --hue-pink: oklch(0.74 0.130 350);
-  --hue-rose: oklch(0.74 0.130 10);
-  --hue-red: oklch(0.74 0.140 27);
-  --hue-slate: oklch(0.74 0.035 258);
+  --hue-orange: oklch(0.75 0.150 45);
+  --hue-amber: oklch(0.77 0.150 65);
+  --hue-yellow: oklch(0.81 0.140 88);
+  --hue-sand: oklch(0.78 0.085 80);
+  --hue-lime: oklch(0.78 0.160 132);
+  --hue-green: oklch(0.78 0.165 152);
+  --hue-teal: oklch(0.75 0.125 180);
+  --hue-cyan: oklch(0.75 0.125 205);
+  --hue-sky: oklch(0.75 0.130 232);
+  --hue-blue: oklch(0.74 0.150 258);
+  --hue-royal: oklch(0.72 0.150 268);
+  --hue-indigo: oklch(0.74 0.140 280);
+  --hue-violet: oklch(0.74 0.150 295);
+  --hue-purple: oklch(0.74 0.150 318);
+  --hue-pink: oklch(0.74 0.150 350);
+  --hue-rose: oklch(0.74 0.150 10);
+  --hue-red: oklch(0.74 0.160 27);
+  --hue-slate: oklch(0.74 0.045 258);
   --hue-grey: oklch(0.68 0.000 0);
   --hue-ink: #c8c8cc;
-  --color-green: #45c08e;
+  --color-green: var(--hue-green);
   --accent-bg: rgba(69, 192, 142, 0.12);
-  --heat-1: oklch(0.32 0.050 155);
-  --heat-2: oklch(0.44 0.080 155);
-  --heat-3: oklch(0.58 0.110 155);
-  --heat-4: oklch(0.72 0.130 155);
+  --heat-1: oklch(0.34 0.070 152);
+  --heat-2: oklch(0.47 0.110 152);
+  --heat-3: oklch(0.62 0.150 152);
+  --heat-4: oklch(0.78 0.165 152);
+  --activity-1: oklch(0.29 0.045 152);
+  --activity-2: oklch(0.42 0.100 152);
+  --activity-3: oklch(0.61 0.160 152);
+  --activity-4: oklch(0.84 0.200 152);
 
   --tab-toggle-active-bg: #262626;
   --progress-bg: #222222;

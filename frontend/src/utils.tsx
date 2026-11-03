@@ -400,7 +400,7 @@ export function distinctColors(keys: string[], colorOf: (key: string) => string)
     taken.set(color, n + 1)
     if (n === 0) return [key, color]
     const toward = n % 2 ? 'var(--card-bg)' : 'var(--text-primary)'
-    return [key, `color-mix(in oklab, ${color} ${Math.max(35, 100 - 30 * Math.ceil(n / 2))}%, ${toward})`]
+    return [key, `color-mix(in oklab, ${color} ${Math.max(45, 100 - 25 * Math.ceil(n / 2))}%, ${toward})`]
   }))
 }
 
@@ -551,8 +551,8 @@ export function getSetupAgentKey(name: string) {
 
 export function ToolBadge({ name, count, style }: { name: string; count?: number; style?: React.CSSProperties }) {
   return (
-    <span className="entity-badge mono" style={style}>
-      <i className="entity-dot" style={{ background: toolColor(name) }} />{name}{count != null ? `×${count}` : ''}
+    <span className="entity-badge mono tinted" style={{ '--tint': toolColor(name), ...style } as React.CSSProperties}>
+      {name}{count != null ? `×${count}` : ''}
     </span>
   )
 }

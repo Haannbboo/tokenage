@@ -1,7 +1,8 @@
+import type { CSSProperties } from 'react'
 import type { UsageRow } from '../types'
 import type { RequestLogColumnId } from '../hooks/useRequestLogColumns'
 import { t } from '../i18n'
-import { formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime, value, getProviderIcon, getModelIcon, getSourceIcon, shortSessionId, ToolBadge, formatModelName, formatProviderName } from '../utils'
+import { formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime, value, getProviderIcon, getModelIcon, getSourceIcon, shortSessionId, ToolBadge, formatModelName, formatProviderName, modelColor, providerColor } from '../utils'
 
 type RequestCellOptions = { tz?: string; colWidths: { model: number; device: number }; hoveredSession: string | null; setSessionFilter: (id: string) => void; recalculatingId: string | null; handleRecalculateCost: (id: string) => Promise<void>; stopToolPropagation?: boolean }
 
@@ -16,7 +17,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
       case 'model':
         return (
           <td style={{ padding: '8px' }}>
-            <div className="entity-badge mono" style={{ maxWidth: colWidths.model - 10, cursor: 'pointer' }} title={row.model}>
+            <div className="entity-badge mono tinted" style={{ '--tint': modelColor(row.model), maxWidth: colWidths.model - 10, cursor: 'pointer' } as CSSProperties} title={row.model}>
               {getModelIcon(row.model)}
               <span style={{
                 overflow: 'hidden',
@@ -31,7 +32,7 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
       case 'provider':
         return (
           <td style={{ padding: '8px' }}>
-            <div className="entity-badge">
+            <div className="entity-badge tinted" style={{ '--tint': providerColor(row.provider) } as CSSProperties}>
               {getProviderIcon(row.provider)}
               {formatProviderName(row.provider)}
             </div>

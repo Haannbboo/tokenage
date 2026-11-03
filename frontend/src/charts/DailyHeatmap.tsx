@@ -99,10 +99,10 @@ export function DailyHeatmap({
     if (mode === 'activity') {
       if (metric === 0) return 'var(--heatmap-empty)'
       const ratio = Math.min(metric / (allWeeks.maxVal || 1), 1)
-      if (ratio < 0.25) return 'var(--heat-1)'
-      if (ratio < 0.5) return 'var(--heat-2)'
-      if (ratio < 0.75) return 'var(--heat-3)'
-      return 'var(--heat-4)'
+      if (ratio < 0.25) return 'var(--activity-1)'
+      if (ratio < 0.5) return 'var(--activity-2)'
+      if (ratio < 0.75) return 'var(--activity-3)'
+      return 'var(--activity-4)'
     } else {
       if (metric >= 100) return 'var(--heat-4)'
       if (metric >= 99) return 'var(--heat-3)'
@@ -118,7 +118,7 @@ export function DailyHeatmap({
 
   const title = mode === 'activity' ? t('Daily Activity') : t('Success Rate')
   const legendColors = mode === 'activity'
-    ? ['var(--heatmap-empty)', 'var(--heat-1)', 'var(--heat-2)', 'var(--heat-3)', 'var(--heat-4)']
+    ? ['var(--heatmap-empty)', 'var(--activity-1)', 'var(--activity-2)', 'var(--activity-3)', 'var(--activity-4)']
     : ['var(--heat-4)', 'var(--heat-3)', 'var(--heat-2)', 'var(--color-yellow)', 'var(--color-pink)', 'var(--badge-error-text)']
   const legendStart = mode === 'activity' ? t('Less') : t('100%')
   const legendEnd = mode === 'activity' ? t('More') : t('Fail')

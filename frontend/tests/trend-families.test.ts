@@ -78,13 +78,13 @@ describe('trend model families', () => {
     const button = within(container).getByRole('button', { name: 'Hide requests' })
     expect(button.getAttribute('aria-pressed')).toBe('true')
     expect(container.querySelector('polyline')).toBeTruthy()
-    expect(container.querySelectorAll('circle[stroke="var(--text-secondary)"]').length).toBeGreaterThan(0)
+    expect(container.querySelectorAll('circle[stroke="var(--hue-red)"]').length).toBeGreaterThan(0)
     expect(within(container).getByText('Requests:')).toBeTruthy()
 
     fireEvent.click(button)
     expect(button.getAttribute('aria-pressed')).toBe('false')
     expect(container.querySelector('polyline')).toBeNull()
-    expect(container.querySelectorAll('circle[stroke="var(--text-secondary)"]')).toHaveLength(0)
+    expect(container.querySelectorAll('circle[stroke="var(--hue-red)"]')).toHaveLength(0)
     expect(within(container).queryByText('Requests:')).toBeNull()
 
     fireEvent.click(button)
@@ -116,8 +116,8 @@ describe('trend model families', () => {
     expect(within(container.querySelector('.widget-header')!).getByText('Requests')).toBeTruthy()
     // Families are drawn in their dimmed identity colours.
     const fills = [...container.querySelectorAll('path')].map(path => path.getAttribute('fill') ?? '')
-    expect(fills).toContain('var(--hue-orange)')
-    expect(fills).toContain('var(--hue-slate)')
+    expect(fills.some(f => f.includes('var(--hue-orange)'))).toBe(true)
+    expect(fills.some(f => f.includes('var(--hue-slate)'))).toBe(true)
     expect(new Set(fills).size).toBe(fills.length)
   })
 
@@ -138,8 +138,8 @@ describe('trend colours', () => {
       { key: 'claude-two', model: 'claude-two' },
       { key: 'Claude', model: 'claude-three' },
     ])
-    expect(colours.get('claude-one')).toBe('var(--hue-orange)')
-    expect(colours.get('gpt-one')).toBe('var(--hue-slate)')
+    expect(colours.get('claude-one')).toContain('var(--hue-orange)')
+    expect(colours.get('gpt-one')).toContain('var(--hue-slate)')
     expect(colours.get('claude-two')).toContain('var(--hue-orange)')
     expect(new Set(colours.values()).size).toBe(4)
   })

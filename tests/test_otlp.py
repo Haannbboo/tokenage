@@ -186,6 +186,38 @@ def test_extract_claude_fields_basic(otlp_module):
     assert fields["cache_creation_tokens"] == 10
     assert fields["client_source"] == "claude-code"
     assert fields["session_id"] == "claude-sess-1"
+    assert fields["ttft_ms"] is None
+
+
+@pytest.mark.parametrize("ttft_ms, expected", [(794, 794), ("794", 794), (0, None)])
+def test_extract_claude_fields_ttft(otlp_module, ttft_ms, expected):
+    fields = otlp_module._extract_claude_fields(
+        {}, _attrs({"ttft_ms": ttft_ms}), "", user_id="test-user"
+    )
+
+    assert fields["ttft_ms"] == expected
+    if expected is not None:
+        assert isinstance(fields["ttft_ms"], int)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"stringValue": "not-a-number"},
+        {"stringValue": ""},
+        {"intValue": "not-a-number"},
+        {"intValue": -1},
+        {"stringValue": "-1"},
+        {"doubleValue": float("nan")},
+        {"doubleValue": float("inf")},
+    ],
+)
+def test_extract_claude_fields_ignores_bad_ttft(otlp_module, value):
+    fields = otlp_module._extract_claude_fields(
+        {}, [{"key": "ttft_ms", "value": value}], "", user_id="test-user"
+    )
+
+    assert fields["ttft_ms"] is None
 
 
 def test_extract_codex_fields_basic(otlp_module):

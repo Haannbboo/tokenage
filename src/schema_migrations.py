@@ -211,6 +211,17 @@ def migrate_database(db_path: str | None = None) -> list[str]:
             )
         applied.append("users.picture")
         insp = inspect(engine)
+    if not any(c["name"] == "token_epoch" for c in insp.get_columns("users")):
+        with engine.begin() as connection:
+            guard = "IF NOT EXISTS " if engine.dialect.name == "postgresql" else ""
+            connection.execute(
+                text(
+                    f"ALTER TABLE users ADD COLUMN {guard}token_epoch INTEGER "
+                    "NOT NULL DEFAULT 0"
+                )
+            )
+        applied.append("users.token_epoch")
+        insp = inspect(engine)
 
     missing_device_id = [
         table

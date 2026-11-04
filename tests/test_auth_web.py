@@ -160,6 +160,16 @@ def test_google_login_redirects_to_google_and_stores_state(api_module, monkeypat
     assert state  # state was generated, embedded in the authorize URL
 
 
+def _state_cookie_cleared(response) -> bool:
+    """Exactly one Set-Cookie for the state cookie, and it deletes it."""
+    headers = [
+        header
+        for header in response.headers.get_list("set-cookie")
+        if header.startswith("tokenage_oauth_state=")
+    ]
+    return len(headers) == 1 and "Max-Age=0" in headers[0]
+
+
 def test_google_callback_happy_path(api_module, monkeypatch, fresh_db):
     _enable_auth(monkeypatch)
     _mock_google_flow(api_module, monkeypatch, name="Alice")
@@ -171,6 +181,7 @@ def test_google_callback_happy_path(api_module, monkeypatch, fresh_db):
     )
     assert callback.status_code == 302
     assert callback.headers["location"] == "/"
+    assert _state_cookie_cleared(callback)
 
     cookie = callback.cookies.get(SESSION_COOKIE)
     assert cookie and cookie.startswith("tokenage_web_")
@@ -360,6 +371,7 @@ def test_google_callback_email_unverified(api_module, monkeypatch, fresh_db):
     )
     assert callback.status_code == 302
     assert callback.headers["location"] == "/?auth_error=email_unverified"
+    assert _state_cookie_cleared(callback)
 
     engine = fresh_db.database_module.get_engine(fresh_db.db_path)
     with engine.connect() as conn:
@@ -380,6 +392,7 @@ def test_google_callback_allowlist_rejects_without_user_row(
     )
     assert callback.status_code == 302
     assert callback.headers["location"] == "/?auth_error=not_allowlisted"
+    assert _state_cookie_cleared(callback)
 
     engine = fresh_db.database_module.get_engine(fresh_db.db_path)
     with engine.connect() as conn:
@@ -416,6 +429,7 @@ def test_google_callback_oauth_failed(api_module, monkeypatch, fresh_db):
     )
     assert callback.status_code == 302
     assert callback.headers["location"] == "/?auth_error=oauth_failed"
+    assert _state_cookie_cleared(callback)
 
     engine = fresh_db.database_module.get_engine(fresh_db.db_path)
     with engine.connect() as conn:
@@ -1142,6 +1156,34 @@ def test_anonymous_signin_starts_share_per_ip_limit(api_module, monkeypatch, pat
     assert 1 <= int(limited.headers["retry-after"]) <= 60
     other = TestClient(api_module.app, client=("203.0.113.2", 1))
     assert other.get(path, follow_redirects=False).status_code != 429
+
+
+@pytest.mark.parametrize(
+    "path", ["/auth/google/login", "/auth/cli/start?code_challenge=" + "a" * 43]
+)
+def test_signin_limit_runs_off_the_event_loop(api_module, monkeypatch, path):
+    import asyncio
+
+    import src.ratelimit
+
+    _enable_auth(monkeypatch)
+    _mock_authorize_url(api_module, monkeypatch)
+    _limit_signin(monkeypatch, 5)
+    on_loop = []
+    original = src.ratelimit.rate_limit_hit
+
+    def rate_limit_hit(key, limit_name):
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return original(key, limit_name)
+
+    monkeypatch.setattr(src.ratelimit, "rate_limit_hit", rate_limit_hit)
+    client = TestClient(api_module.app, client=("203.0.113.1", 1))
+    assert client.get(path, follow_redirects=False).status_code == 302
+    assert on_loop == [False]
 
 
 def test_signin_limit_keys_ipv6_by_64_and_mapped_ipv4_as_ipv4():

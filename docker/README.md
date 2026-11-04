@@ -134,12 +134,9 @@ writes (logout, revoke, pricing edits) need `server.base_url` or a proxy that
 preserves Host; otherwise they return 403.
 
 `rate_limits.signin_per_minute` (default 0, off) caps anonymous sign-in starts
-per client IP across all nodes. It keys on Uvicorn's client address, which is the
-proxy's unless `FORWARDED_ALLOW_IPS` trusts it (Gunicorn trusts only loopback by
-default), so leave it off until the API sees real client IPs; otherwise every
-caller shares one budget. Behind Cloudflare the real IP is in `CF-Connecting-IP`,
-so Caddy must forward that, too. Restrict `FORWARDED_ALLOW_IPS` to the direct
-proxy's addresses, keep the API unreachable from other peers, and never use `*`.
+per client IP. Keep it at 0 unless the API sees real client IPs, that is,
+`FORWARDED_ALLOW_IPS` trusts a proxy that sets them; otherwise every caller
+shares the proxy's budget.
 
 For an existing Postgres:
 

@@ -371,6 +371,30 @@ def test_load_config_rejects_non_list_allowlist(config_module, tmp_path, allowli
         config_module.load_config(str(config_path))
 
 
+def test_load_config_null_allowlist_and_limits_use_defaults(config_module, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "auth:\n  provider: google\n  allowlist:\nrate_limits:\n  signin_per_minute:\n",
+        encoding="utf-8",
+    )
+
+    config = config_module.load_config(str(config_path))
+
+    assert config["auth"]["allowlist"] == []
+    assert config["rate_limits"]["signin_per_minute"] == 0
+    assert config["rate_limits"]["cli_approve_per_minute"] == 10
+
+
+@pytest.mark.parametrize("key", ["signin_per_minute", "cli_approve_per_minute"])
+@pytest.mark.parametrize("value", ['"30"', "-1", "true", "1.5"])
+def test_load_config_rejects_bad_auth_rate_limits(config_module, tmp_path, key, value):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"rate_limits:\n  {key}: {value}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=f"rate_limits.{key}"):
+        config_module.load_config(str(config_path))
+
+
 def test_load_config_google_creds_prefer_env(config_module, tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(

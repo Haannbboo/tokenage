@@ -168,7 +168,6 @@ def merge_duplicate_usage(
                 *shape_filters,
                 func.coalesce(Usage.reasoning_tokens, 0)
                 == func.coalesce(reasoning_tokens, 0),
-                func.coalesce(Usage.tool_tokens, 0) == func.coalesce(tool_tokens, 0),
                 Usage.latency_ms.is_not_distinct_from(latency_ms),
                 Usage.status == status,
                 Usage.endpoint == "otlp",

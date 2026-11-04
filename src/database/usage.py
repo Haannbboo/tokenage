@@ -1422,7 +1422,10 @@ def distinct_tool_names(
         filters.append(ToolCall.ts >= _iso_to_millis(since))
     if until:
         filters.append(ToolCall.ts <= _iso_to_millis(until))
-    query = select(ToolCall.tool_name).distinct().order_by(ToolCall.tool_name).limit(20)
+    # A filter list: far more than anyone picks from, but bounded on remote Postgres.
+    query = (
+        select(ToolCall.tool_name).distinct().order_by(ToolCall.tool_name).limit(500)
+    )
     if filters:
         query = query.where(and_(*filters))
     with get_engine(db_path).connect() as connection:

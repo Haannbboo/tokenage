@@ -3958,6 +3958,18 @@ def test_distinct_tool_names(fresh_db):
     assert result == ["bash", "edit", "read"]  # sorted, deduped
 
 
+def test_distinct_tool_names_returns_every_tool(fresh_db):
+    database_module = fresh_db.database_module
+    db_path = fresh_db.db_path
+    database_module.init_db(db_path)
+
+    tools = [f"tool-{n:02d}" for n in range(25)]
+    _insert_usage_with_tools(database_module, db_path, TS_2026_04_17_00, tools[::-1])
+
+    result = database_module.distinct_tool_names(db_path=db_path, user_id="test-user")
+    assert result == tools  # more than the old cap of 20, still sorted
+
+
 def test_distinct_tool_names_with_time_range(fresh_db):
     database_module = fresh_db.database_module
     db_path = fresh_db.db_path

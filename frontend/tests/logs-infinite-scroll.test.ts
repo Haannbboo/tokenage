@@ -69,9 +69,6 @@ async function intersectSentinel() {
 }
 
 const columnHeaders = () => screen.getAllByRole('columnheader').map(header => header.textContent)
-const columnCheckbox = (label: string) => screen.getByRole('checkbox', {
-  name: name => name.startsWith(label),
-}) as HTMLInputElement
 
 beforeEach(() => {
   app.refreshTrigger = 0
@@ -340,10 +337,55 @@ describe('Request Logs table', () => {
     // Full-width rows fit the scroller's visible width.
     expect(document.querySelector<HTMLElement>('.panel')!.style.getPropertyValue('--logs-table-visible')).toBe('358px')
     fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
-    for (const checkbox of screen.getAllByRole('checkbox')) {
-      const label = checkbox.closest('label')!.querySelector('span')!.textContent!
-      expect((checkbox as HTMLInputElement).checked).toBe(labels.includes(label))
+    for (const row of screen.getAllByRole('menuitemcheckbox')) {
+      expect(row.getAttribute('aria-checked')).toBe(String(labels.includes(row.lastChild!.textContent!)))
     }
+  })
+
+  it('toggles, resets and shows all columns from the Columns menu', async () => {
+    mockHistory([])
+    render(logsPage())
+    await screen.findByText('No requests found for the selected filters.')
+    const trigger = screen.getByRole('button', { name: 'Columns' })
+    fireEvent.click(trigger)
+    const row = (name: string) => screen.getByRole('menuitemcheckbox', { name })
+    expect(document.activeElement).toBe(row('Time'))
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(row('Model'))
+    fireEvent.click(row('Model'))
+    expect(row('Model').getAttribute('aria-checked')).toBe('false')
+    expect(columnHeaders()).not.toContain('Model')
+    fireEvent.click(row('Device'))
+    expect(columnHeaders()).toContain('Device')
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
+    expect(columnHeaders()).toEqual(REQUEST_LOG_COLUMNS.filter(({ id }) => DEFAULT_REQUEST_LOG_COLUMNS.includes(id)).map(({ label }) => label))
+    fireEvent.click(screen.getByRole('button', { name: 'All columns' }))
+    expect(columnHeaders()).toEqual(REQUEST_LOG_COLUMNS.map(({ label }) => label))
+    expect(screen.getAllByRole('menuitemcheckbox').every(item => item.getAttribute('aria-checked') === 'true')).toBe(true)
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('jumps with Home and End and closes the Columns menu when focus tabs out', async () => {
+    mockHistory([])
+    render(logsPage())
+    await screen.findByText('No requests found for the selected filters.')
+    const trigger = screen.getByRole('button', { name: 'Columns' })
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-controls')).toBe(screen.getByRole('menu').parentElement!.id)
+    const rows = screen.getAllByRole('menuitemcheckbox')
+    fireEvent.keyDown(document.activeElement!, { key: 'End' })
+    expect(document.activeElement).toBe(rows[rows.length - 1])
+    fireEvent.keyDown(document.activeElement!, { key: 'Home' })
+    expect(document.activeElement).toBe(rows[0])
+    // Focus moving within the control keeps it open (Shift+Tab to the trigger)...
+    fireEvent.focusOut(rows[0], { relatedTarget: trigger })
+    expect(screen.getByRole('menu')).toBeTruthy()
+    // ...and leaving it closes it (Tab past "All columns").
+    const allColumns = screen.getByRole('button', { name: 'All columns' })
+    fireEvent.focusOut(allColumns, { relatedTarget: screen.getByRole('button', { name: /refresh/i }) })
+    expect(screen.queryByRole('menu')).toBeNull()
   })
 
   it('resizes a column to the dragged width and keeps the others, even past the panel width', async () => {

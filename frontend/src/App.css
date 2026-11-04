@@ -548,6 +548,20 @@
   overflow-x: auto;
   background: var(--surface-sunken);
 }
+/* Its scrollbar is the table's: a slim indicator on no track, stronger on hover.
+   Chromium ignores ::-webkit-scrollbar once the standard properties are set,
+   so those are for Firefox only. */
+.logs-table-head::-webkit-scrollbar { height: 6px; }
+.logs-table-head::-webkit-scrollbar-track { background: transparent; }
+.logs-table-head::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--text-muted) 30%, transparent) padding-box; border: 1px solid transparent; border-radius: 999px; }
+.logs-table-head:hover::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--text-muted) 60%, transparent) padding-box; }
+/* The header's bottom border runs under its scrollbar, so the bar sits inside the header. */
+.logs-table-head { border-bottom: 1px solid var(--border-color); }
+.logs-table-head th { border-bottom: 0; }
+@supports not selector(::-webkit-scrollbar) {
+  .logs-table-head { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--text-muted) 30%, transparent) transparent; }
+  .logs-table-head:hover { scrollbar-color: color-mix(in oklab, var(--text-muted) 60%, transparent) transparent; }
+}
 /* overflow-x: auto makes overflow-y auto too, but with an auto height it never
    scrolls vertically: the window still scrolls the rows. Its own scrollbar
    would sit at the bottom of the whole list, out of reach, so it is hidden;
@@ -837,55 +851,91 @@ img[src^="/models/"] { filter: saturate(0.7); }
 }
 
 .request-log-columns-trigger {
-  height: 30px;
-}
-
-.request-log-columns-menu {
-  right: 0;
-  top: calc(100% + 6px);
-  min-width: 220px;
-  max-width: min(260px, calc(100vw - 48px));
-  padding: 10px;
-}
-
-.request-log-columns-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.request-log-columns-option {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 14px;
+}
+
+/* The control sits at the right end of the filter bar, so the menu opens leftwards. */
+.request-log-columns-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 50;
+  box-sizing: border-box;
+  width: min(240px, calc(100vw - 24px));
+  background: var(--card-bg);
   color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-menu);
+  overflow: hidden;
+}
+
+/* Tall enough for every column without scrolling, on any usual screen. */
+.request-log-columns-list {
+  max-height: min(440px, 60vh);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+  padding: 7px 7px 8px;
+}
+
+.request-log-columns-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  text-align: left;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.request-log-columns-row:hover {
+  background: var(--surface-hover);
+}
+
+.request-log-columns-row:focus-visible {
+  background: var(--surface-hover);
+  outline: 2px solid var(--color-green);
+  outline-offset: -2px;
+}
+
+.request-log-columns-mark {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--text-muted);
+  border-radius: 4px;
   font-size: 12px;
 }
 
-.request-log-columns-option input {
-  flex: 0 0 auto;
+.request-log-columns-row[aria-checked="true"] .request-log-columns-mark {
+  background: var(--text-primary);
+  color: var(--card-bg);
+  border-color: var(--text-primary);
 }
 
 .request-log-columns-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border-color);
 }
 
-.request-log-columns-action {
-  flex: 1;
-  justify-content: center;
-  padding: 6px 8px;
+.request-log-columns-actions button {
+  color: var(--text-primary);
   font-size: 11px;
 }
 
-
-
-
-
-
-
-
+.request-log-columns-actions button:hover {
+  text-decoration: underline;
+}
 
 .session-status-circle {
   display: inline-block;

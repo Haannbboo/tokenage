@@ -10,7 +10,7 @@ import { TREND_NEUTRAL, trendSeriesColors } from './trendColors'
 import { sortTrendRows, trendTooltipX } from './trendTooltip'
 import { trendBarHeight, trendDotScale, trendLabelIndices } from './trendScale'
 import { getLang, LANG_LOCALES, t } from '../i18n/index.ts'
-import { ReadState } from '../components/ReadState'
+import { ReadState, useReadRetry } from '../components/ReadState'
 
 type ModelBucketRow = {
   dimension: string
@@ -131,13 +131,11 @@ export function TrendChart({
   const tzOffset = getTimezoneOffset(tz);
   // null while a new view loads; a refresh of the same view keeps the rows.
   const [modelRows, setModelRows] = useState<ModelBucketRow[] | null>(null);
-  const [modelError, setModelError] = useState(false);
-  const [modelAttempt, setModelAttempt] = useState(0);
+  const { error: modelError, setError: setModelError, attempt: modelAttempt, retry: retryModel } = useReadRetry();
   const view = filterParams.view ?? filterParams;
   const modelViewRef = useRef<unknown>(view);
   useEffect(() => {
-    if (modelViewRef.current !== view) { modelViewRef.current = view; setModelRows(null); }
-    setModelError(false);
+    if (modelViewRef.current !== view) { modelViewRef.current = view; setModelRows(null); setModelError(false); }
     const controller = new AbortController();
     async function fetchModelRows() {
       try {
@@ -159,12 +157,12 @@ export function TrendChart({
           setModelError(false);
         }
       } catch {
-        if (!controller.signal.aborted) setModelError(true);
+        if (!controller.signal.aborted) setModelError('failed');
       }
     }
     fetchModelRows();
     return () => controller.abort();
-  }, [filterParams, granularity, tzOffset, modelAttempt, view]);
+  }, [filterParams, granularity, tzOffset, modelAttempt, view, setModelError]);
 
   const modelBuckets = useMemo(() => {
     const map = new Map<string, Map<string, { tokens: number; cost: number; requests: number }>>();
@@ -181,6 +179,8 @@ export function TrendChart({
     }
     return map;
   }, [modelRows, filled]);
+
+  const modelErrorLine = modelError && <ReadState compact error={modelError === 'failed' ? t('Failed to load model breakdown') : null} onRetry={retryModel} />;
 
   // The bars stack the model split, which can outgrow the daily totals (or
   // arrive without them): scale to whichever is taller.
@@ -274,14 +274,17 @@ export function TrendChart({
             gets its own line and the chart keeps what did load. */}
         {totals === 'pending' || (modelRows === null && !modelError) || (totals === 'failed' && modelError) ? (
           <ReadState
-            error={totals === 'failed' && modelError ? t('Failed to load usage trend') : null}
-            onRetry={() => { onRetryTotals?.(); setModelAttempt(a => a + 1); }}
+            error={totals === 'failed' && modelError === 'failed' ? t('Failed to load usage trend') : null}
+            onRetry={() => { onRetryTotals?.(); retryModel(); }}
           />
         ) : filled.length === 0 ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>{t('No trend data available')}</div>
+          <>
+            {modelErrorLine}
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>{t('No trend data available')}</div>
+          </>
         ) : (
           <>
-            {modelError && <ReadState compact error={t('Failed to load model breakdown')} onRetry={() => setModelAttempt(a => a + 1)} />}
+            {modelErrorLine}
             {totals === 'failed' && <ReadState compact error={t('Failed to load usage trend')} onRetry={onRetryTotals} />}
             {hoveredIdx !== null && hoveredData && (
               <ChartTooltip
@@ -334,12 +337,12 @@ export function TrendChart({
                 <TooltipDivider />
                 <TooltipRow label={metric === 'cost' ? t('Total Cost:') : t('Total Tokens:')}>
                   <span style={{ fontWeight: 800 }}>
-                    {metric === 'cost' ? formatCost(hoveredData.total_cost_usd) : formatNumber(value(hoveredData.total_tokens))}
+                    {totals !== 'ready' ? '—' : metric === 'cost' ? formatCost(hoveredData.total_cost_usd) : formatNumber(value(hoveredData.total_tokens))}
                   </span>
                 </TooltipRow>
                 <TooltipRow label={metric === 'cost' ? t('Tokens:') : t('Est. Cost:')} labelColor="var(--text-primary)">
                   <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>
-                    {metric === 'cost' ? formatNumber(value(hoveredData.total_tokens)) : formatCost(hoveredData.total_cost_usd)}
+                    {totals !== 'ready' ? '—' : metric === 'cost' ? formatNumber(value(hoveredData.total_tokens)) : formatCost(hoveredData.total_cost_usd)}
                   </span>
                 </TooltipRow>
                 {requestsShown && <TooltipRow label={t('Requests:')} labelColor="var(--hue-red)">

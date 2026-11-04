@@ -36,6 +36,8 @@ type OverviewTabProps = {
   dailyError: boolean
   dailyPending: boolean
   heatmapError: boolean
+  /** `heatmapData` still belongs to another filter. */
+  heatmapPending: boolean
   onRetry: () => void
   dateRange: DateRangeOption
   dashboardFilterParams: any
@@ -69,6 +71,7 @@ export function OverviewTab({
   dailyError,
   dailyPending,
   heatmapError,
+  heatmapPending,
   onRetry,
   dateRange,
   dashboardFilterParams,
@@ -493,9 +496,9 @@ export function OverviewTab({
           />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {heatmapError ? (
+            {heatmapError || heatmapPending ? (
               <div className="widget" style={{ flex: 1 }}>
-                <ReadState error={t('Failed to load activity')} onRetry={onRetry} />
+                <ReadState error={heatmapError ? t('Failed to load activity') : null} onRetry={onRetry} />
               </div>
             ) : <>
               <DailyHeatmap mode="activity" data={heatmapData} />

@@ -418,7 +418,7 @@ export function PricingPage() {
             </tbody>
           </table>
         </div>
-        {total > 0 && (
+        {pageState === 'ready' && total > 0 && (
           <div style={{ padding: '8px 16px', fontSize: '11px', color: 'var(--text-muted)', borderTop: '1px solid var(--border-color)' }}>
             {t('Showing')} {pricedModels.length} / {total} {t('models')}
           </div>

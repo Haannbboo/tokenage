@@ -6,7 +6,7 @@ import { formatModelName, formatProviderName, getModelIcon, getProviderIcon, get
 import { useApp } from '../contexts/AppContext'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
-import { ReadState } from '../components/ReadState'
+import { ReadState, useReadRetry } from '../components/ReadState'
 import { t } from '../i18n/index.ts'
 
 type Dimension = 'model' | 'provider' | 'source' | 'device'
@@ -69,8 +69,8 @@ export function TopUsageChart({
   // null while loading, so another range's rows never show as current.
   const [sourceSummary, setSourceSummary] = useState<SourceSummaryRow[] | null>(null)
   const [deviceRows, setDeviceRows] = useState<DeviceDailyRow[] | null>(null)
-  const [readError, setReadError] = useState(false)
-  const [attempt, setAttempt] = useState(0)
+  // Shared by the source and device reads: a dimension change clears it.
+  const { error: readError, setError: setReadError, attempt, retry } = useReadRetry()
   // A refresh of the same view keeps the rows (dimmed by the page); another view clears them.
   const view = filterParams.view ?? filterParams
   const sourceViewRef = useRef<unknown>(view)
@@ -80,7 +80,7 @@ export function TopUsageChart({
   // Fetch source summary data when source dimension is selected
   useEffect(() => {
     if (dimension !== 'source') return
-    if (sourceViewRef.current !== view) { sourceViewRef.current = view; setSourceSummary(null) }
+    if (sourceViewRef.current !== view) { sourceViewRef.current = view; setSourceSummary(null); setReadError(false) }
     const controller = new AbortController()
     async function fetchSourceSummary() {
       try {
@@ -94,21 +94,18 @@ export function TopUsageChart({
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (!res.ok) throw new Error(String(res.status))
         const rows = await res.json()
-        if (!controller.signal.aborted) setSourceSummary(rows)
+        if (!controller.signal.aborted) { setSourceSummary(rows); setReadError(false) }
       } catch {
-        if (!controller.signal.aborted) setReadError(true)
+        if (!controller.signal.aborted) setReadError('failed')
       }
     }
     fetchSourceSummary()
-    return () => {
-      controller.abort()
-      setReadError(false)
-    }
-  }, [dimension, filterParams, attempt, view])
+    return () => controller.abort()
+  }, [dimension, filterParams, attempt, view, setReadError])
 
   useEffect(() => {
     if (dimension !== 'device') return
-    if (deviceViewRef.current !== view) { deviceViewRef.current = view; setDeviceRows(null) }
+    if (deviceViewRef.current !== view) { deviceViewRef.current = view; setDeviceRows(null); setReadError(false) }
     const controller = new AbortController()
     async function fetchDeviceRows() {
       try {
@@ -124,17 +121,14 @@ export function TopUsageChart({
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (!res.ok) throw new Error(String(res.status))
         const rows = await res.json()
-        if (!controller.signal.aborted) setDeviceRows(rows)
+        if (!controller.signal.aborted) { setDeviceRows(rows); setReadError(false) }
       } catch {
-        if (!controller.signal.aborted) setReadError(true)
+        if (!controller.signal.aborted) setReadError('failed')
       }
     }
     fetchDeviceRows()
-    return () => {
-      controller.abort()
-      setReadError(false)
-    }
-  }, [dimension, filterParams, tzOffset, attempt, view])
+    return () => controller.abort()
+  }, [dimension, filterParams, tzOffset, attempt, view, setReadError])
 
   const items: BarItem[] = useMemo(() => {
     if (dimension === 'model') {
@@ -285,7 +279,7 @@ export function TopUsageChart({
       mono={dimension === 'model'}
       metric={metric}
       status={readError || (summaryPending && (dimension === 'model' || dimension === 'provider')) || (dimension === 'source' && sourceSummary === null) || (dimension === 'device' && deviceRows === null)
-        ? <ReadState error={readError ? t('Failed to fetch dashboard data') : null} onRetry={() => setAttempt(a => a + 1)} />
+        ? <ReadState error={readError === 'failed' ? t('Failed to fetch dashboard data') : null} onRetry={retry} />
         : undefined}
     >
       <div className="top-list-controls">
@@ -294,7 +288,7 @@ export function TopUsageChart({
             <button
               key={d}
               className={`tab-toggle-btn ${dimension === d ? 'active' : ''}`}
-              onClick={() => setDimension(d)}
+              onClick={() => { if (d !== dimension) { setDimension(d); setReadError(false) } }}
             >
               {d === 'model' ? t('Models') : d === 'provider' ? t('Providers') : d === 'device' ? t('Devices') : t('Sources')}
             </button>

@@ -86,7 +86,8 @@ export function usePricingData() {
   const [refreshing, setRefreshing] = useState(false)
   const loadedViewRef = useRef<string | null>(null)
   // Set while the page-wide error is a failed "load more", so the next first
-  // page clears it without wiping a save error.
+  // page clears it without wiping a save error. Any action that clears the
+  // page error clears this too, so its own error survives the refetch.
   const loadMoreFailedRef = useRef(false)
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
   const [repricePast, setRepricePast] = useState(true)
@@ -210,6 +211,7 @@ export function usePricingData() {
   const handleSavePricing = useCallback(async () => {
     const entries = Object.entries(drafts)
     if (entries.length === 0) return
+    loadMoreFailedRef.current = false
     setError(null)
     const bodies: Array<[string, Record<string, any>]> = []
     for (const [model, draft] of entries) {
@@ -274,6 +276,7 @@ export function usePricingData() {
   ])
 
   const handleResetPricing = useCallback(async (model: string) => {
+    loadMoreFailedRef.current = false
     setError(null)
     try {
       const response = await fetch(`/pricing/overrides/${encodeURIComponent(model)}`, { method: 'DELETE' })
@@ -293,6 +296,7 @@ export function usePricingData() {
 
   /** Price the caller's unpriced usage of one model at its current price. */
   const handleRepriceModel = useCallback(async (model: string) => {
+    loadMoreFailedRef.current = false
     setError(null)
     setRepricing(model)
     try {

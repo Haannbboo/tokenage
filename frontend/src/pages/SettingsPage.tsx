@@ -91,7 +91,7 @@ export function SettingsPage() {
                 </thead>
                 <tbody>
                   {devicesError || devices === null ? (
-                    <tr><td colSpan={6} style={{ padding: 0 }}><ReadState error={devicesError ? t('Failed to load devices') : null} onRetry={refreshDevices} /></td></tr>
+                    <tr><td colSpan={6} style={{ padding: 0 }}><ReadState error={devicesError === 'failed' ? t('Failed to load devices') : null} onRetry={refreshDevices} /></td></tr>
                   ) : devices && devices.length > 0 ? devices.map((device) => (
                     <Fragment key={device.id}>
                       <tr
@@ -169,7 +169,7 @@ export function SettingsPage() {
                 </thead>
                 <tbody>
                   {devicesError || webSessions === null ? (
-                    <tr><td colSpan={4} style={{ padding: 0 }}><ReadState error={devicesError ? t('Failed to load web sessions') : null} onRetry={refreshDevices} /></td></tr>
+                    <tr><td colSpan={4} style={{ padding: 0 }}><ReadState error={devicesError === 'failed' ? t('Failed to load web sessions') : null} onRetry={refreshDevices} /></td></tr>
                   ) : webSessions && webSessions.length > 0 ? webSessions.map((session) => (
                     <tr key={session.id}>
                       <td style={{ fontWeight: 500 }}>

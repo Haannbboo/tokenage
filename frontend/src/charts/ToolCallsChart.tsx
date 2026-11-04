@@ -4,7 +4,7 @@ import { toolColor } from '../utils'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
 import { t } from '../i18n/index.ts'
-import { ReadState } from '../components/ReadState'
+import { ReadState, useReadRetry } from '../components/ReadState'
 
 type ToolCallRow = {
   tool_name: string
@@ -35,13 +35,11 @@ export function ToolCallsChart({
   const [rows, setRows] = useState<ToolCallRow[] | null>(null)
   const view = filterParams.view ?? filterParams
   const viewRef = useRef<unknown>(view)
-  const [error, setError] = useState(false)
-  const [attempt, setAttempt] = useState(0)
+  const { error, setError, attempt, retry } = useReadRetry()
   const [metric, setMetric] = useState<ToolMetric>('count')
 
   useEffect(() => {
-    if (viewRef.current !== view) { viewRef.current = view; setRows(null) }
-    setError(false)
+    if (viewRef.current !== view) { viewRef.current = view; setRows(null); setError(false) }
     const controller = new AbortController()
     async function fetchToolCalls() {
       try {
@@ -55,14 +53,14 @@ export function ToolCallsChart({
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (!res.ok) throw new Error(String(res.status))
         const data = await res.json()
-        if (!controller.signal.aborted) setRows(data)
+        if (!controller.signal.aborted) { setRows(data); setError(false) }
       } catch {
-        if (!controller.signal.aborted) setError(true)
+        if (!controller.signal.aborted) setError('failed')
       }
     }
     fetchToolCalls()
     return () => controller.abort()
-  }, [filterParams, attempt, view])
+  }, [filterParams, attempt, view, setError])
 
   const items: BarItem[] = (rows ?? []).map(row => ({
     name: row.tool_name,
@@ -80,7 +78,7 @@ export function ToolCallsChart({
       items={items}
       toolBadges
       metric={metric}
-      status={error || rows === null ? <ReadState error={error ? t('Failed to load tool calls') : null} onRetry={() => setAttempt(a => a + 1)} /> : undefined}
+      status={error || rows === null ? <ReadState error={error === 'failed' ? t('Failed to load tool calls') : null} onRetry={retry} /> : undefined}
     >
       <div className="top-list-controls">
         <div className="tab-toggle compact">

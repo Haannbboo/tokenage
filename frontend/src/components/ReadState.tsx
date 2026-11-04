@@ -1,5 +1,21 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { t } from '../i18n/index.ts'
+
+/** A read's failure as a panel tracks it. A retry turns 'failed' into
+ *  'retrying', which keeps the failed panel's ReadState (and its focused Retry)
+ *  mounted, pending, until the retry settles: only a success or another view
+ *  clears it, with `setError(false)`. */
+export type ReadError = false | 'failed' | 'retrying'
+
+export function useReadRetry() {
+  const [error, setError] = useState<ReadError>(false)
+  const [attempt, setAttempt] = useState(0)
+  const retry = useCallback(() => {
+    setError(e => e && 'retrying')
+    setAttempt(a => a + 1)
+  }, [])
+  return { error, setError, attempt, retry }
+}
 
 /** Stands in for data that is still loading or failed to load, so a view never
  *  shows zeros, "No data" or another range's numbers as if they were current.

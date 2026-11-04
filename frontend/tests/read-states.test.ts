@@ -176,6 +176,28 @@ it('ReadState keeps the Retry button, and its focus, while the retry runs', asyn
   expect(retry.getAttribute('aria-disabled')).toBe('true')
 })
 
+it('Tool Calls: a retry over cached rows keeps Retry, and its focus, until it settles', async () => {
+  const replies: Record<string, Reply> = { '/usage/summary': SUMMARY, '/usage/by-tool': [{ tool_name: 'bash', count: 7 }] }
+  stubApi(replies)
+  open('/dashboard')
+  const panel = () => screen.getByText('Tool Calls').closest('.widget') as HTMLElement
+  await waitFor(() => expect(within(panel()).getByText('bash')).toBeTruthy())
+
+  replies['/usage/by-tool'] = 'fail'
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Refresh' })) })
+  const retry = await waitFor(() => within(panel()).getByRole('button', { name: 'Retry' }))
+  // The cached rows and their total do not show beside the error.
+  expect(within(panel()).queryByText('bash')).toBeNull()
+  expect(panel().querySelector('.widget-meta')).toBeNull()
+  retry.focus()
+  replies['/usage/by-tool'] = 'pending'
+  await act(async () => { fireEvent.click(retry) })
+  expect(within(panel()).getByRole('status')).toBeTruthy()
+  expect(within(panel()).queryByText('bash')).toBeNull()
+  expect(document.activeElement).toBe(retry)
+  expect(retry.getAttribute('aria-disabled')).toBe('true')
+})
+
 it('Pricing: a failed "load more" error clears when the next first page loads', async () => {
   const model = (name: string) => ({ name, input: 1, output: 1, cache_read: 0, cache_write: null, source: 'litellm' })
   const calls = stubApi({})

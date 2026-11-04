@@ -176,7 +176,8 @@ export function HorizontalBarChart({
     return `${item.name}\u0000${n}`
   })
   const activeIndex = active ? rowKeys.indexOf(active.key) : -1
-  const activeItem = activeIndex >= 0 ? sorted[activeIndex] : null
+  // A status stands in for the list: nothing from the cached rows shows beside it.
+  const activeItem = activeIndex >= 0 && status == null ? sorted[activeIndex] : null
 
   useLayoutEffect(() => {
     const row = active && rowRefs.current.get(active.key)
@@ -202,7 +203,7 @@ export function HorizontalBarChart({
     <div className="widget top-list">
       <div className="widget-header">
         <span>{title}</span>
-        {additive && total > 0 && <span className="widget-meta">{t('Total')} {format(total)}</span>}
+        {additive && total > 0 && status == null && <span className="widget-meta">{t('Total')} {format(total)}</span>}
       </div>
       {children}
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column' }}>

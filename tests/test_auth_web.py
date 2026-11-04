@@ -1118,3 +1118,16 @@ def test_picture_write_failure_does_not_raise(api_module, monkeypatch, fresh_db)
 
     monkeypatch.setattr(tokens, "get_engine", fail)
     tokens.update_user_picture("missing", "https://example.com/a.png")
+
+
+def test_google_callback_rejects_local_owner_identity(api_module, monkeypatch):
+    _enable_auth(monkeypatch)
+    _mock_google_flow(api_module, monkeypatch, email="owner@localhost")
+    client = TestClient(api_module.app)
+    state = _start_login(api_module, monkeypatch, client)
+    response = client.get(
+        "/auth/google/callback",
+        params={"state": state, "code": "x"},
+        follow_redirects=False,
+    )
+    assert response.headers["location"] == "/?auth_error=not_allowlisted"

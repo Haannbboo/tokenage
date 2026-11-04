@@ -36,18 +36,33 @@ def parse_token_args(argv: list[str]) -> argparse.Namespace:
         "--kind", choices=("cli", "ingest", "web"), default="cli", help="token kind"
     )
     create.add_argument("--name", help="device name to label the token with")
+    revoke = subparsers.add_parser(
+        "revoke",
+        help="revoke all of a user's tokens",
+        description=(
+            "Revoke all CLI, ingest and web tokens for a user. "
+            "Switching to Google strands owner@localhost devices; "
+            "sign them in again with a Google account."
+        ),
+    )
+    revoke.add_argument("--email", required=True, help="user email")
     return parser.parse_args(argv)
 
 
 def run_token_command(argv: list[str]) -> int:
     # Lazy: importing these loads the config, which `start` has to create first.
     from src.auth import mint_token
+    from src.auth.tokens import revoke_user_tokens
     from src.database import init_db
 
     token_args = parse_token_args(argv)
 
     init_db()
     try:
+        if token_args.action == "revoke":
+            count = revoke_user_tokens(token_args.email)
+            print(f"Revoked {count} tokens for {token_args.email.strip().lower()}.")
+            return 0
         token, user = mint_token(
             token_args.email, kind=token_args.kind, device_name=token_args.name
         )

@@ -22,6 +22,7 @@ from .tokens import (
     get_local_owner,
     get_or_create_user,
     get_user_by_id,
+    google_email_allowed,
     list_user_devices,
     list_user_tokens,
     mint_device_tokens,
@@ -416,9 +417,7 @@ async def auth_google_callback(request: Request):
     email = str(claims.get("email", "")).strip().lower()
     if not email:
         return _frontend_redirect(origin, auth_error="email_unverified")
-    allowlist = CONFIG.get("auth", {}).get("allowlist") or []
-    normalized_allowlist = [str(entry).strip().lower() for entry in allowlist if entry]
-    if normalized_allowlist and email not in normalized_allowlist:
+    if not google_email_allowed(email):
         # No user/token row is created for a rejected email.
         return _frontend_redirect(origin, auth_error="not_allowlisted")
     picture = claims.get("picture")

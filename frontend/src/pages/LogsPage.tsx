@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type CSSProperties } from 'react'
+import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, type CSSProperties } from 'react'
 import { useWindowVirtualizer } from '@tanstack/react-virtual'
 import { useSearchParams } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
@@ -27,7 +27,6 @@ export function LogsPage() {
     columns,
     visibleColumns,
     visibleColumnIds: selectedColumnIds,
-    pinnedColumnIds,
     setColumnVisible,
     resetColumns,
     showAllColumns,
@@ -57,7 +56,7 @@ export function LogsPage() {
   const {
     usageRows, setUsageRows, hasMore, loadMore, loadMoreFailed, initialLoadFailed, scrollReset,
     logsLoading, expandedRow, setExpandedRow,
-    colWidths, isResizing, handleResizeStart,
+    colWidths, handleResizeStart,
   } = useLogsData({ activeFilter, activeSource, sessionFilter, toolFilter, deviceFilter: activeDevice })
 
   // Sessions data for the session filter dropdown
@@ -75,14 +74,20 @@ export function LogsPage() {
     return () => controller.abort()
   }, [refreshTrigger])
 
-  const tableContainerRef = useRef<HTMLDivElement>(null)
+  // The visible header is its own table, outside the rows' sideways scroller:
+  // inside it, the scroller (not the window) would be the header's sticky
+  // container. It scrolls sideways too, so its scrollbar sits under the sticky
+  // header, and the two mirror each other's scrollLeft.
+  const headRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // The scroller's visible width: what full-width rows (empty state, details) fit.
+  const [visibleWidth, setVisibleWidth] = useState<number | null>(null)
+  // The body table: its document offset is where the virtualized rows start.
   const tableRef = useRef<HTMLTableElement>(null)
   const filterBarRef = useRef<HTMLDivElement>(null)
-  const [tableWidth, setTableWidth] = useState(0)
-  // Document offset of the table: the window scrolls, so the virtualizer
+  // Document offset of the rows: the window scrolls, so the virtualizer
   // needs to know where the list starts inside the document.
   const [tableTop, setTableTop] = useState(0)
-  const [tableHeaderHeight, setTableHeaderHeight] = useState(0)
   const [filterHeight, setFilterHeight] = useState(0)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const rowVirtualizer = useWindowVirtualizer({
@@ -90,7 +95,6 @@ export function LogsPage() {
     estimateSize: () => 52,
     getItemKey: useCallback((index: number) => usageRows[index].id, [usageRows]),
     overscan: 8,
-    paddingStart: tableHeaderHeight,
     scrollMargin: tableTop,
   })
   const virtualRows = rowVirtualizer.getVirtualItems()
@@ -110,7 +114,8 @@ export function LogsPage() {
     const styles = getComputedStyle(document.documentElement)
     const size = (name: string) => parseFloat(styles.getPropertyValue(name)) || 0
     const navBottom = size('--navbar-top') + size('--navbar-height')
-    const top = table.getBoundingClientRect().top + window.scrollY
+    // Read live: on mount no state would hold the header's height yet.
+    const top = table.getBoundingClientRect().top + window.scrollY - (headRef.current?.offsetHeight ?? 0)
     window.scrollTo({ top: Math.max(0, top - navBottom - filterHeight - size('--sticky-gap')) })
   }, [filterHeight])
   useLayoutEffect(() => {
@@ -118,7 +123,6 @@ export function LogsPage() {
     if (!table) return
     const top = table.getBoundingClientRect().top + window.scrollY
     setTableTop(prev => (Math.abs(prev - top) < 1 ? prev : top))
-    setTableHeaderHeight(table.tHead?.offsetHeight ?? 0)
   })
   useLayoutEffect(() => {
     const head = usageRows[0]?.id ?? ''
@@ -142,6 +146,17 @@ export function LogsPage() {
     observer.observe(filter)
     return () => observer.disconnect()
   }, [])
+  useEffect(() => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    const observer = new ResizeObserver(() => setVisibleWidth(scroller.clientWidth))
+    observer.observe(scroller)
+    return () => observer.disconnect()
+  }, [])
+  const syncScroll = (from: HTMLElement, to: HTMLElement | null) => {
+    // Same value is a no-op, so mirroring both ways cannot loop.
+    if (to && to.scrollLeft !== from.scrollLeft) to.scrollLeft = from.scrollLeft
+  }
   useEffect(() => {
     window.addEventListener('scroll', rememberAnchor, { passive: true })
     return () => window.removeEventListener('scroll', rememberAnchor)
@@ -204,49 +219,13 @@ export function LogsPage() {
     }
   }
 
-  useEffect(() => {
-    const container = tableContainerRef.current
-    if (!container) return
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setTableWidth(entry.contentRect.width)
-      }
-    })
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [])
-
-  const effectiveVisibleColumns = useMemo(() => {
-    if (tableWidth === 0) return visibleColumns
-    // Dropping a column mid-drag moves the handle away from the cursor, so
-    // keep the set stable while a column is being resized.
-    if (isResizing) return visibleColumns
-
-    const hidePriority: RequestLogColumnId[] = [
-      'speed', 'session', 'device', 'source', 'cost', 'status',
-      'provider', 'output', 'time', 'input', 'model',
-    ]
-
-    const visibleIds = visibleColumns.map(c => c.id)
-    const totalWidth = visibleIds.reduce((sum, id) => sum + (colWidths[id] ?? 100), 0)
-    if (totalWidth <= tableWidth) return visibleColumns
-
-    const toRemove = new Set<RequestLogColumnId>()
-    let remaining = totalWidth
-    for (const col of hidePriority) {
-      if (!visibleIds.includes(col) || pinnedColumnIds.includes(col)) continue
-      if (toRemove.size >= visibleIds.length - 1) break
-      toRemove.add(col)
-      remaining -= colWidths[col] ?? 100
-      if (remaining <= tableWidth) break
-    }
-
-    return visibleColumns.filter(c => !toRemove.has(c.id))
-  }, [visibleColumns, pinnedColumnIds, colWidths, tableWidth, isResizing])
-
-  const getHeaderStyle = (columnId: RequestLogColumnId): CSSProperties => ({
-    width: colWidths[columnId],
-  })
+  // Both tables take their column widths from the same colgroup, so the header
+  // lines up with the rows; wider than the panel, the rows scroll sideways.
+  const colgroup = (
+    <colgroup>
+      {visibleColumns.map(column => <col key={column.id} style={{ width: colWidths[column.id] }} />)}
+    </colgroup>
+  )
 
   const renderLoadingCell = (columnId: RequestLogColumnId) => {
     switch (columnId) {
@@ -332,7 +311,6 @@ export function LogsPage() {
            <RequestLogColumnsControl
             columns={columns}
             selectedColumnIds={selectedColumnIds}
-            displayedColumnIds={effectiveVisibleColumns.map(column => column.id)}
             setColumnVisible={setColumnVisible}
             resetColumns={resetColumns}
             showAllColumns={showAllColumns}
@@ -357,18 +335,18 @@ export function LogsPage() {
         </div>
       )}
 
-      <div className="panel">
-          <div ref={tableContainerRef} className="panel-body" style={{ padding: 0, overflowAnchor: 'none' }}>
+      <div className="panel" style={visibleWidth ? { '--logs-table-visible': `${visibleWidth}px` } as CSSProperties : undefined}>
+          {/* Visual only: the body table carries the column headers for assistive tech. */}
+          <div ref={headRef} className="logs-table-head" aria-hidden="true" onScroll={(e) => syncScroll(e.currentTarget, scrollRef.current)}>
             <table
-              ref={tableRef}
               className="table"
               style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0 }}
-              data-request-log-column-count={effectiveVisibleColumns.length}
             >
+            {colgroup}
             <thead>
               <tr>
-                {effectiveVisibleColumns.map((column) => (
-                  <th key={column.id} style={getHeaderStyle(column.id)}>
+                {visibleColumns.map((column) => (
+                  <th key={column.id} data-column-id={column.id}>
                     {t(column.label)}
                     <div
                       className="col-resize-handle"
@@ -378,18 +356,36 @@ export function LogsPage() {
                 ))}
               </tr>
             </thead>
+            </table>
+          </div>
+          <div
+            ref={scrollRef}
+            className="panel-body logs-table-scroll"
+            style={{ padding: 0, overflowAnchor: 'none' }}
+            onScroll={(e) => syncScroll(e.currentTarget, headRef.current)}
+          >
+            <table
+              ref={tableRef}
+              className="table"
+              style={{ tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0 }}
+              data-request-log-column-count={visibleColumns.length}
+            >
+            {colgroup}
+            <thead className="logs-sr-head">
+              <tr>{visibleColumns.map(column => <th key={column.id} scope="col">{t(column.label)}</th>)}</tr>
+            </thead>
             <tbody>
               {logsLoading && usageRows.length === 0 ? (
                 Array.from({ length: 5 }, (_, i) => (
                   <tr key={`skeleton-${i}`}>
-                    {effectiveVisibleColumns.map((column) => (
+                    {visibleColumns.map((column) => (
                       <Fragment key={column.id}>{renderLoadingCell(column.id)}</Fragment>
                     ))}
                   </tr>
                 ))
               ) : null}
               {virtualRows.length > 0 && (
-                <tr aria-hidden="true"><td colSpan={effectiveVisibleColumns.length} style={{ height: Math.max(0, virtualRows[0].start - tableTop - tableHeaderHeight), padding: 0, border: 0 }} /></tr>
+                <tr aria-hidden="true"><td colSpan={visibleColumns.length} style={{ height: Math.max(0, virtualRows[0].start - tableTop), padding: 0, border: 0 }} /></tr>
               )}
             </tbody>
               {virtualRows.map(virtualRow => {
@@ -401,14 +397,16 @@ export function LogsPage() {
                     onMouseEnter={() => setHoveredSession(row.session_id ?? null)}
                     onMouseLeave={() => setHoveredSession(null)}
                   >
-                    {effectiveVisibleColumns.map((column) => (
+                    {visibleColumns.map((column) => (
                       <Fragment key={column.id}>{renderRequestCell(row, column.id, { tz, colWidths, hoveredSession, setSessionFilter, recalculatingId, handleRecalculateCost })}</Fragment>
                     ))}
                   </tr>
                   {expandedRow === row.id && (
                     <tr className="expanded-row">
-                      <td colSpan={effectiveVisibleColumns.length}>
-                        <RequestDetail row={row} toolCalls={expandedToolCalls} showToast={showToast} />
+                      <td colSpan={visibleColumns.length}>
+                        <div className="logs-visible">
+                          <RequestDetail row={row} toolCalls={expandedToolCalls} showToast={showToast} />
+                        </div>
                       </td>
                     </tr>
                   )}
@@ -418,23 +416,26 @@ export function LogsPage() {
             <tbody>
               {/* Item offsets include scrollMargin; total size is table-relative. */}
               {virtualRows.length > 0 && (
-                <tr aria-hidden="true"><td colSpan={effectiveVisibleColumns.length} style={{ height: Math.max(0, rowVirtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1].end - tableTop)), padding: 0, border: 0 }} /></tr>
+                <tr aria-hidden="true"><td colSpan={visibleColumns.length} style={{ height: Math.max(0, rowVirtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1].end - tableTop)), padding: 0, border: 0 }} /></tr>
               )}
               {usageRows.length === 0 && !logsLoading && (
                 <tr>
-                  <td colSpan={effectiveVisibleColumns.length} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-                    {initialLoadFailed ? (
-                      <>{t('Failed to fetch log data')} <button className="btn-ghost" onClick={requestUsageRefresh}>{t('Retry')}</button></>
-                    ) : t('No requests found for the selected filters.')}
+                  <td colSpan={visibleColumns.length} style={{ padding: 0 }}>
+                    <div className="logs-visible" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                      {initialLoadFailed ? (
+                        <>{t('Failed to fetch log data')} <button className="btn-ghost" onClick={requestUsageRefresh}>{t('Retry')}</button></>
+                      ) : t('No requests found for the selected filters.')}
+                    </div>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
-          <div ref={sentinelRef} data-testid="logs-sentinel" role="status" style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>
+        </div>
+          {/* Outside the scroller, so it stays in view when the rows scroll sideways. */}
+          <div ref={sentinelRef} data-testid="logs-sentinel" role="status" style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', overflowAnchor: 'none' }}>
             {logsLoading ? t('Loading...') : loadMoreFailed ? <button className="btn-ghost" onClick={() => void loadMore()}>{t('Retry')}</button> : !hasMore ? t('No more logs') : null}
           </div>
-        </div>
 
       </div>
     </div>

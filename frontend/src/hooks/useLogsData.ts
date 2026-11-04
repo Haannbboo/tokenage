@@ -56,14 +56,15 @@ export function useLogsData(opts: {
   const [logsLoading, setLogsLoading] = useState(true)
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
   const [colWidths, setColWidths] = useState<Record<RequestLogColumnId, number>>(DEFAULT_COL_WIDTHS)
-  const [isResizing, setIsResizing] = useState(false)
   const resizeRef = useRef<{
     columnId: RequestLogColumnId
     startX: number
     /** The column's rendered width when the drag started. */
     startWidth: number
-    table: HTMLTableElement | null
-    th: HTMLTableCellElement | null
+    /** The other columns' rendered widths when the drag started. */
+    others: Partial<Record<RequestLogColumnId, number>>
+    /** The visible width the columns fill when they are narrower than it. */
+    panelWidth: number
   } | null>(null)
 
 
@@ -71,13 +72,18 @@ export function useLogsData(opts: {
     e.preventDefault()
     const startX = e.clientX
     const thEl = (e.currentTarget as HTMLElement).closest('th')
-    setIsResizing(true)
+    const table = thEl?.closest('table')
+    const others: Partial<Record<RequestLogColumnId, number>> = {}
+    for (const th of table?.querySelectorAll<HTMLElement>('thead th[data-column-id]') ?? []) {
+      const id = th.dataset.columnId as RequestLogColumnId
+      if (th !== thEl && th.offsetWidth > 0) others[id] = th.offsetWidth
+    }
     resizeRef.current = {
       columnId,
       startX,
-      startWidth: thEl?.offsetWidth ?? colWidths[columnId],
-      table: thEl?.closest('table') ?? null,
-      th: thEl ?? null,
+      startWidth: thEl?.offsetWidth || colWidths[columnId],
+      others,
+      panelWidth: table?.parentElement?.clientWidth ?? 0,
     }
     document.body.style.userSelect = 'none'
     document.body.style.cursor = 'col-resize'
@@ -85,32 +91,18 @@ export function useLogsData(opts: {
       const state = resizeRef.current
       if (!state) return
       const desired = Math.max(80, state.startWidth + (e.clientX - state.startX))
-      setColWidths(prev => {
-        // Fixed layout scales the columns up to fill the table, so a rendered
-        // pixel is worth less than a specified pixel. Measure the live ratio
-        // and solve for the width that renders at the dragged size.
-        const spec = prev[state.columnId]
-        const rendered = state.th?.offsetWidth ?? spec
-        const perSpec = spec > 0 && rendered > 0 ? rendered / spec : 1
-        const othersRendered = state.table
-          ? [...state.table.querySelectorAll('thead th')]
-            .filter(th => th !== state.th)
-            .reduce((sum, th) => sum + (th as HTMLElement).offsetWidth, 0)
-          : 0
-        const othersSpec = perSpec > 0 ? othersRendered / perSpec : 0
-        const tableWidth = state.table?.parentElement?.clientWidth ?? 0
-        // Fits the table: rendered = spec * tableWidth / (othersSpec + spec).
-        const scaled = tableWidth > desired
-          ? (desired * othersSpec) / (tableWidth - desired)
-          : desired
-        // Overflows the table: the columns keep their exact widths.
-        const next = othersSpec + scaled > tableWidth ? desired : scaled
-        return { ...prev, [state.columnId]: Math.max(80, Math.round(next)) }
-      })
+      // The table may be wider than the panel (it scrolls sideways), so the
+      // other columns keep the widths they had and the dragged one takes the
+      // dragged width. Only when the columns end up narrower than the panel
+      // does fixed layout stretch them all to fill it: solve for the width
+      // that still renders at the dragged size.
+      const othersWidth = Object.values(state.others).reduce((sum, width) => sum + width, 0)
+      const fills = othersWidth + desired < state.panelWidth
+      const next = fills ? (desired * othersWidth) / (state.panelWidth - desired) : desired
+      setColWidths(prev => ({ ...prev, ...state.others, [state.columnId]: Math.max(80, Math.round(next)) }))
     }
     const handleMouseUp = () => {
       resizeRef.current = null
-      setIsResizing(false)
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
       document.removeEventListener('mousemove', handleMouseMove)
@@ -219,6 +211,6 @@ export function useLogsData(opts: {
   return {
     usageRows, setUsageRows, hasMore, loadMore, loadMoreFailed, initialLoadFailed, scrollReset,
     logsLoading, expandedRow, setExpandedRow,
-    colWidths, isResizing, handleResizeStart,
+    colWidths, handleResizeStart,
   }
 }

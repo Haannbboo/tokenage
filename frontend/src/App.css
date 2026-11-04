@@ -534,11 +534,39 @@
 }
 
 /* The log table scrolls with the page, so its header sticks right under the
-   filter bar (and the phone top bar). */
-.logs-page .table thead th {
+   filter bar (and the phone top bar). Wider than the panel, the rows scroll
+   sideways in their own container and the header follows its scrollLeft; the
+   header sits outside that scroller, which would otherwise be its sticky container. */
+.logs-table-head {
   position: sticky;
   top: calc(var(--sticky-nav-bottom) + var(--logs-filter-height, 0px));
   z-index: 3;
+  overflow-x: auto;
+  background: var(--surface-sunken);
+}
+/* overflow-x: auto makes overflow-y auto too, but with an auto height it never
+   scrolls vertically: the window still scrolls the rows. Its own scrollbar
+   would sit at the bottom of the whole list, out of reach, so it is hidden;
+   the header's scrollbar (or a swipe on the rows) scrolls both. */
+.logs-table-scroll { overflow-x: auto; scrollbar-width: none; }
+.logs-table-scroll::-webkit-scrollbar { display: none; }
+/* Full-width rows (empty or error state, the expanded detail) span the whole
+   table: pinned to the visible part, so they stay readable and reachable. */
+.logs-visible {
+  position: sticky;
+  left: 0;
+  width: var(--logs-table-visible, 100%);
+  box-sizing: border-box;
+}
+/* The body table's header row: for assistive tech only, no height. */
+.logs-table-scroll .logs-sr-head th {
+  height: 0;
+  padding: 0;
+  border: 0;
+  line-height: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .col-resize-handle {

@@ -445,13 +445,55 @@ def test_cookie_origin_accepts_the_addressed_host_besides_base_url(
     from src.auth.tokens import mint_token
     from src.config.app import CONFIG
 
-    monkeypatch.setitem(CONFIG, "server", {"base_url": "https://usage.example"})
+    monkeypatch.setitem(CONFIG, "server", {"base_url": "http://usage.example"})
     token, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
     client = _remote(api_module, base_url="http://192.168.1.10:4001")
     client.cookies.set(SESSION_COOKIE, token)
     assert (
         client.post(
             "/auth/logout", headers={"origin": "http://192.168.1.10:4001"}
+        ).status_code
+        == 204
+    )
+
+
+def test_https_base_url_requires_an_https_origin_on_the_addressed_host(
+    api_module, fresh_db, monkeypatch
+):
+    from src.auth.tokens import mint_token
+    from src.config.app import CONFIG
+
+    monkeypatch.setitem(CONFIG, "server", {"base_url": "https://usage.example"})
+
+    http_client = _remote(api_module, base_url="http://tracker.example")
+    http_token, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
+    http_client.cookies.set(SESSION_COOKIE, http_token)
+    assert (
+        http_client.post(
+            "/auth/logout", headers={"origin": "http://tracker.example"}
+        ).status_code
+        == 403
+    )
+
+    https_client = _remote(api_module, base_url="https://tracker.example")
+    https_token, _ = mint_token("b@example.com", kind="web", db_path=fresh_db.db_path)
+    https_client.cookies.set(SESSION_COOKIE, https_token)
+    assert (
+        https_client.post(
+            "/auth/logout", headers={"origin": "https://tracker.example"}
+        ).status_code
+        == 204
+    )
+
+    # Loopback is a secure context: browsers keep the Secure cookie there.
+    loopback_client = _remote(api_module, base_url="http://localhost:5173")
+    loopback_token, _ = mint_token(
+        "c@example.com", kind="web", db_path=fresh_db.db_path
+    )
+    loopback_client.cookies.set(SESSION_COOKIE, loopback_token)
+    assert (
+        loopback_client.post(
+            "/auth/logout", headers={"origin": "http://localhost:5173"}
         ).status_code
         == 204
     )

@@ -136,13 +136,19 @@ def _require_cookie_origin(request: Request) -> None:
     actual = _origin(source)
     if actual is not None:
         # The configured public URL, or the Host the browser addressed. A
-        # cross-site page can't set Host. The scheme is ignored there because
-        # TLS often terminates before this app sees the request.
+        # cross-site page can't set Host. The Host branch also compares the
+        # scheme: TLS often terminates before this app sees the request, so an
+        # https deployment only accepts an https origin (loopback is a secure
+        # context, so browsers keep the Secure cookie there).
         if CONFIG.get("server", {}).get("base_url") and actual == _origin(
             resolve_server_urls(CONFIG)["api_url"]
         ):
             return
-        if actual == _origin(f"{actual[0]}://{request.headers.get('host', '')}"):
+        if actual == _origin(f"{actual[0]}://{request.headers.get('host', '')}") and (
+            actual[0] == "https"
+            or actual[1] in _LOOPBACK_HOSTNAMES
+            or not _cookie_is_secure()
+        ):
             return
     raise HTTPException(status_code=403, detail="same-origin request required")
 

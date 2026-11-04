@@ -129,7 +129,9 @@ Restore the node and reload when healthy. Requests through Caddy do not receive
 local-owner access: the API sees Caddy’s container address, not loopback. Host
 passes through; Caddy sets `X-Forwarded-For/Proto/Host` and ignores client-supplied
 values. Do not configure `trusted_proxies`, even when TLS terminates upstream;
-set the public HTTPS origin in `server.base_url` instead.
+set the public HTTPS origin in `server.base_url` instead. Cookie-authenticated
+writes (logout, revoke, pricing edits) need `server.base_url` or a proxy that
+preserves Host; otherwise they return 403.
 
 For an existing Postgres:
 

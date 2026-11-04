@@ -130,18 +130,21 @@ def _origin(url: str) -> tuple[str, str, int] | None:
 def _require_cookie_origin(request: Request) -> None:
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
         return
-    # The configured public URL survives TLS termination and multiple nodes.
-    # Direct local access uses the browser-facing URL even when a public URL
-    # is configured.
-    expected = str(request.url)
-    if CONFIG.get("server", {}).get("base_url") and not is_direct_loopback(request):
-        expected = resolve_server_urls(CONFIG)["api_url"]
     source = request.headers.get("origin")
     if source is None:
         source = request.headers.get("referer", "")
     actual = _origin(source)
-    if actual is None or actual != _origin(expected):
-        raise HTTPException(status_code=403, detail="same-origin request required")
+    if actual is not None:
+        # The configured public URL, or the Host the browser addressed. A
+        # cross-site page can't set Host. The scheme is ignored there because
+        # TLS often terminates before this app sees the request.
+        if CONFIG.get("server", {}).get("base_url") and actual == _origin(
+            resolve_server_urls(CONFIG)["api_url"]
+        ):
+            return
+        if actual == _origin(f"{actual[0]}://{request.headers.get('host', '')}"):
+            return
+    raise HTTPException(status_code=403, detail="same-origin request required")
 
 
 def _resolve_request_user(

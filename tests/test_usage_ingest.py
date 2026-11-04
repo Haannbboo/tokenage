@@ -219,3 +219,26 @@ def test_validation_does_not_echo_input(api_module, fresh_db, body):
     )
     assert response.status_code == 422
     assert response.json() == {"detail": "invalid usage report"}
+
+
+def test_deeply_nested_json_returns_static_422(api_module, fresh_db):
+    token, _ = _token(fresh_db)
+    response = TestClient(api_module.app).post(
+        "/ingest/v1/usage", content=b"[" * 200_000, headers={"x-tokenage-token": token}
+    )
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid usage report"}
+
+
+def test_auth_lookup_timeout_returns_503(api_module, monkeypatch):
+    import time
+
+    import src.ratelimit as ratelimit
+
+    monkeypatch.setattr(ratelimit, "AUTH_LOOKUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(ratelimit, "resolve_ingest_user", lambda _r: time.sleep(0.05))
+    response = TestClient(api_module.app).post(
+        "/ingest/v1/usage", json=_report(), headers={"x-tokenage-token": "x"}
+    )
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"

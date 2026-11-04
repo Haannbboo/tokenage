@@ -362,7 +362,6 @@ def test_api_is_rate_limited_per_user_but_loopback_owner_is_exempt(
         "null",
         "https://sibling.example",
         "http://tracker.example:5173",
-        "https://tracker.example",
         "http://tracker.example.evil",
     ],
 )
@@ -387,6 +386,8 @@ def test_cookie_unsafe_requests_require_same_origin(
         {"origin": "http://tracker.example"},
         {"origin": "http://TRACKER.example:80"},
         {"referer": "http://tracker.example/settings"},
+        # TLS terminated before the app: the browser's scheme is not the hop's.
+        {"origin": "https://tracker.example"},
     ],
 )
 def test_cookie_matching_origin_or_referer_accepted(api_module, fresh_db, headers):
@@ -438,13 +439,35 @@ def test_public_cookie_origin_uses_config_not_forwarded_headers(
     )
 
 
-def test_direct_local_cookie_origin_uses_request_url(api_module, fresh_db, monkeypatch):
+def test_cookie_origin_accepts_the_addressed_host_besides_base_url(
+    api_module, fresh_db, monkeypatch
+):
     from src.auth.tokens import mint_token
     from src.config.app import CONFIG
 
     monkeypatch.setitem(CONFIG, "server", {"base_url": "https://usage.example"})
     token, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
-    client = TestClient(api_module.app, base_url="http://localhost:5173")
+    client = _remote(api_module, base_url="http://192.168.1.10:4001")
+    client.cookies.set(SESSION_COOKIE, token)
+    assert (
+        client.post(
+            "/auth/logout", headers={"origin": "http://192.168.1.10:4001"}
+        ).status_code
+        == 204
+    )
+
+
+def test_direct_local_cookie_origin_uses_request_host(
+    api_module, fresh_db, monkeypatch
+):
+    from src.auth.tokens import mint_token
+    from src.config.app import CONFIG
+
+    monkeypatch.setitem(CONFIG, "server", {"base_url": "https://usage.example"})
+    token, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
+    client = TestClient(
+        api_module.app, base_url="http://localhost:5173", client=("127.0.0.1", 5)
+    )
     client.cookies.set(SESSION_COOKIE, token)
     assert (
         client.post(

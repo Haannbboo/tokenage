@@ -782,3 +782,24 @@ def test_cli_code_store_caps_pending_entries(api_module, isolated_home, monkeypa
     assert auth_google.pop_cli_code("c0") is None
     for i in range(1, 4):
         assert auth_google.pop_cli_code(f"c{i}") is not None
+
+
+@pytest.mark.parametrize(
+    ("path", "content_type"),
+    [
+        ("/auth/cli/exchange", "application/json"),
+        ("/auth/cli/start", "multipart/form-data; boundary=x"),
+    ],
+)
+@pytest.mark.parametrize("declared", [True, False])
+def test_unauthenticated_body_is_capped_before_routing(
+    api_module, monkeypatch, path, content_type, declared
+):
+    from src.config.app import CONFIG
+
+    monkeypatch.setitem(CONFIG, "otlp", {"max_body_bytes": 128})
+    body = b"x" * 129 if declared else iter([b"x" * 64, b"x" * 65])
+    response = TestClient(api_module.app).post(
+        path, content=body, headers={"content-type": content_type}
+    )
+    assert response.status_code == 413

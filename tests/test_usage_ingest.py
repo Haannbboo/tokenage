@@ -162,3 +162,60 @@ def test_redelivered_report_does_not_double_count_tool_calls(api_module, fresh_d
     assert len(usage) == 2  # the report itself is not deduplicated
     assert [t.tool_use_id for t in tools] == ["toolu_dup"]
     assert tools[0].usage_id in {u.id for u in usage}
+
+
+@pytest.mark.parametrize("headers", [{}, {"x-tokenage-token": "invalid"}])
+def test_authentication_precedes_body_read(api_module, monkeypatch, headers):
+    async def unread(_request):
+        pytest.fail("unauthenticated request body was read")
+
+    monkeypatch.setattr(api_module, "_read_capped_json", unread)
+    response = TestClient(api_module.app).post(
+        "/ingest/v1/usage", content=b"invalid", headers=headers
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("declared", [True, False])
+def test_oversized_body_rejected_before_validation(
+    api_module, fresh_db, monkeypatch, declared
+):
+    from protocol.usage_report import UsageReport
+    from src.config.app import CONFIG
+
+    monkeypatch.setitem(CONFIG, "otlp", {"max_body_bytes": 128})
+    token, _ = _token(fresh_db)
+
+    def unvalidated(*args, **kwargs):
+        pytest.fail("oversized body reached validation")
+
+    monkeypatch.setattr(UsageReport, "model_validate", unvalidated)
+    headers = {"x-tokenage-token": token}
+    if declared:
+        from starlette.requests import Request
+
+        async def unread(_request):
+            pytest.fail("declared oversized body was read")
+            yield b""
+
+        monkeypatch.setattr(Request, "stream", unread)
+        headers["content-length"] = "129"
+        body = b"x" * 129
+    else:
+        body = iter([b"x" * 64, b"x" * 65])
+    response = TestClient(api_module.app).post(
+        "/ingest/v1/usage", content=body, headers=headers
+    )
+    assert response.status_code == 413
+
+
+@pytest.mark.parametrize(
+    "body", [b"not-json-private-marker", b'{"model":"private-marker"}', b"[]"]
+)
+def test_validation_does_not_echo_input(api_module, fresh_db, body):
+    token, _ = _token(fresh_db)
+    response = TestClient(api_module.app).post(
+        "/ingest/v1/usage", content=body, headers={"x-tokenage-token": token}
+    )
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid usage report"}

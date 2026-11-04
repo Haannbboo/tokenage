@@ -72,6 +72,7 @@ from .ingest_queue import (
 )
 from .metrics import MetricsMiddleware
 from .metrics import configure as configure_metrics
+from .otlp import _read_capped_json
 from .otlp import app as otlp_app
 from .pricing.costs import resolve_cost_match
 from .pricing.models import ResolvedCost
@@ -691,11 +692,15 @@ def post_device_status(
 
 
 @app.post("/ingest/v1/usage", status_code=204)
-def ingest_usage(request: Request, report: UsageReport):
+async def ingest_usage(request: Request):
     """Record one client-proxy usage report. Ingest tokens only: no cookie,
     bearer or loopback-owner fallback. The server prices; the client sends
     metadata only."""
-    user_id, device_id = resolve_ingest_request(request)
+    user_id, device_id = await asyncio.to_thread(resolve_ingest_request, request)
+    try:
+        report = UsageReport.model_validate(await _read_capped_json(request))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="invalid usage report") from None
     fields = report.model_dump(exclude={"tool_calls", "base_url"})
     if fields["ts"] is None:
         fields["ts"] = time.time_ns() // 1000
@@ -705,7 +710,9 @@ def ingest_usage(request: Request, report: UsageReport):
         base_url_source="proxy_config",
         tool_calls=[(tc.tool_use_id, tc.tool_name) for tc in report.tool_calls],
     )
-    publish(user_id, [{"kind": "usage", "device_id": device_id, "fields": fields}])
+    await asyncio.to_thread(
+        publish, user_id, [{"kind": "usage", "device_id": device_id, "fields": fields}]
+    )
     return Response(status_code=204)
 
 

@@ -938,9 +938,9 @@ async def _read_capped_json(request: Request) -> dict:
 
     body_bytes = bytearray()
     async for chunk in request.stream():
-        body_bytes.extend(chunk)
-        if len(body_bytes) > max_body:
+        if len(body_bytes) + len(chunk) > max_body:
             raise HTTPException(status_code=413, detail="request body too large")
+        body_bytes.extend(chunk)
     return json.loads(body_bytes)
 
 

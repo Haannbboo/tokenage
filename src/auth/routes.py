@@ -17,6 +17,7 @@ from src.utils import client_commit, client_version
 
 from ..database import AuthToken, User
 from . import google as auth_google
+from .signin import check_signin_rate_limit
 from .tokens import (
     LOCAL_OWNER_EMAIL,
     get_local_owner,
@@ -331,6 +332,7 @@ def auth_local_login(request: Request, code: str = ""):
     """Redeem a one-time link from `tokenage server login-link` for a session."""
     if auth_provider() != "local":
         raise HTTPException(status_code=404, detail="not found")
+    check_signin_rate_limit(request)
     if auth_google.pop_login_code(code) is None:
         raise HTTPException(status_code=400, detail="invalid or expired link")
     plaintext_token, _ = mint_token(
@@ -351,6 +353,7 @@ def auth_local_login(request: Request, code: str = ""):
 async def auth_google_login(request: Request):
     """Start the Google authorization-code flow (public when auth enabled)."""
     _require_google()
+    check_signin_rate_limit(request)
     if auth_google.google_credentials() is None:
         raise HTTPException(status_code=503, detail="google oauth not configured")
     state = secrets.token_urlsafe(24)
@@ -671,6 +674,7 @@ async def auth_cli_start(
     """Start the CLI login: confirm page for a resolved user (session token or
     local loopback owner); Google for anyone else under the google provider."""
     challenge, device = _validate_cli_start_params(code_challenge, device_name)
+    check_signin_rate_limit(request)
     resolved = _resolve_request_user(request)
     if resolved is not None:
         return HTMLResponse(
@@ -728,6 +732,7 @@ def auth_cli_start_approve(
     owner rule also refuses a cross-site Origin (see is_direct_loopback).
     """
     challenge, device = _validate_cli_start_params(code_challenge, device_name)
+    check_signin_rate_limit(request)
     resolved = _resolve_request_user(request)
     if resolved is None:
         raise HTTPException(status_code=401, detail="login required")

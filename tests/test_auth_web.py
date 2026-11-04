@@ -1120,6 +1120,109 @@ def test_picture_write_failure_does_not_raise(api_module, monkeypatch, fresh_db)
     tokens.update_user_picture("missing", "https://example.com/a.png")
 
 
+@pytest.mark.parametrize(
+    "method,path,kwargs",
+    [
+        ("get", "/auth/google/login", {}),
+        ("get", "/auth/cli/start?code_challenge=" + "a" * 43, {}),
+        ("post", "/auth/cli/start", {"data": {"code_challenge": "a" * 43}}),
+        ("get", "/auth/local/login?code=invalid", {}),
+    ],
+)
+def test_signin_starts_share_per_ip_limit(
+    api_module, monkeypatch, method, path, kwargs
+):
+    from src.auth import signin
+
+    if "/local/" not in path:
+        _enable_auth(monkeypatch)
+    _mock_authorize_url(api_module, monkeypatch)
+    monkeypatch.setattr(signin, "SIGNIN_PER_MINUTE", 2)
+    client = TestClient(api_module.app, client=("203.0.113.1", 1))
+    for i in range(2):
+        # A direct caller cannot rotate its budget with forged forwarding headers.
+        response = getattr(client, method)(
+            path,
+            headers={"x-forwarded-for": f"198.51.100.{i}"},
+            follow_redirects=False,
+            **kwargs,
+        )
+        assert response.status_code != 429
+    limited = getattr(client, method)(path, follow_redirects=False, **kwargs)
+    assert limited.status_code == 429
+    assert 1 <= int(limited.headers["retry-after"]) <= 60
+    other = TestClient(api_module.app, client=("203.0.113.2", 1))
+    assert (
+        getattr(other, method)(path, follow_redirects=False, **kwargs).status_code
+        != 429
+    )
+
+
+def test_another_ips_oauth_state_survives_signin_flood(api_module, monkeypatch):
+    _enable_auth(monkeypatch)
+    _mock_authorize_url(api_module, monkeypatch)
+    victim = TestClient(api_module.app, client=("203.0.113.1", 1))
+    state = _start_login(api_module, monkeypatch, victim)
+    flooder = TestClient(api_module.app, client=("203.0.113.2", 1))
+    for i in range(520):
+        path = (
+            "/auth/google/login"
+            if i % 2
+            else "/auth/cli/start?code_challenge=" + "a" * 43
+        )
+        response = flooder.get(path, follow_redirects=False)
+        assert response.status_code == (302 if i < 10 else 429)
+    assert _routes_module().auth_google.pop_oauth_state(state) is not None
+
+
+def test_signin_limit_expires_without_evicting_active_budgets(api_module, monkeypatch):
+    from starlette.requests import Request
+
+    from src.auth import signin
+
+    monkeypatch.setattr(signin, "MAX_SIGNIN_IPS", 1)
+    monkeypatch.setattr(signin, "SIGNIN_PER_MINUTE", 1)
+    now = [0.0]
+    monkeypatch.setattr(signin.time, "monotonic", lambda: now[0])
+    first = Request({"type": "http", "client": ("203.0.113.1", 1)})
+    second = Request({"type": "http", "client": ("203.0.113.2", 1)})
+    signin.check_signin_rate_limit(first)
+    for request in (second, first):
+        with pytest.raises(signin.HTTPException) as exc:
+            signin.check_signin_rate_limit(request)
+        assert exc.value.status_code == 429
+    now[0] = 60.0
+    signin.check_signin_rate_limit(second)
+
+
+def test_signin_uses_only_server_trusted_proxy_headers(api_module, monkeypatch):
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    from src.auth import signin
+
+    _enable_auth(monkeypatch)
+    _mock_authorize_url(api_module, monkeypatch)
+    monkeypatch.setattr(signin, "SIGNIN_PER_MINUTE", 1)
+    app = ProxyHeadersMiddleware(api_module.app, trusted_hosts=["10.0.0.2"])
+    trusted = TestClient(app, client=("10.0.0.2", 1))
+    for ip in ("203.0.113.1", "203.0.113.2"):
+        assert (
+            trusted.get(
+                "/auth/google/login",
+                headers={"x-forwarded-for": ip},
+                follow_redirects=False,
+            ).status_code
+            == 302
+        )
+    untrusted = TestClient(app, client=("10.0.0.3", 1))
+    for i, ip in enumerate(("203.0.113.3", "203.0.113.4")):
+        assert untrusted.get(
+            "/auth/google/login",
+            headers={"x-forwarded-for": ip},
+            follow_redirects=False,
+        ).status_code == (302 if i == 0 else 429)
+
+
 def test_google_callback_rejects_local_owner_identity(api_module, monkeypatch):
     _enable_auth(monkeypatch)
     _mock_google_flow(api_module, monkeypatch, email="owner@localhost")

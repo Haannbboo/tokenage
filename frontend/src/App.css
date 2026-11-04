@@ -41,7 +41,7 @@
   padding: 10px 8px 8px;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border-color);
-  transition: width 0.15s ease;
+  transition: width var(--sidebar-motion);
 }
 
 .sidebar-brand {
@@ -57,6 +57,7 @@
   display: flex;
   align-items: center;
   min-width: 0;
+  overflow: hidden;
   color: var(--text-primary);
 }
 
@@ -68,7 +69,7 @@
   user-select: none;
 }
 
-.sidebar-collapse { margin-left: auto; }
+.sidebar-collapse { margin-left: auto; transition: transform var(--sidebar-motion); }
 
 .account { position: relative; margin-bottom: 12px; }
 
@@ -83,6 +84,7 @@
   border-radius: var(--r-md);
   background: var(--card-bg);
   text-align: left;
+  transition: padding var(--sidebar-motion), border-color var(--sidebar-motion), background var(--sidebar-motion);
 }
 
 .account-trigger:hover { border-color: var(--border-strong); }
@@ -95,6 +97,16 @@
   color: var(--text-primary);
   font-size: 10px;
   font-weight: 600;
+}
+
+/* The name and chevron clip as the rail narrows; the avatar stays put. */
+.account-rest {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
 }
 
 .account-name {
@@ -146,22 +158,12 @@
 
 .menu-item:hover { background: var(--surface-hover); color: var(--text-primary); }
 
-.section-label {
-  padding: 10px 8px 4px;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-:lang(zh-CN) .section-label, :lang(zh) .section-label { letter-spacing: 0; }
-
 .sidebar-nav {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  padding-top: 8px;
 }
 
 .is-phone .sidebar-nav { overflow-y: auto; }
@@ -189,6 +191,7 @@
   color: var(--text-secondary);
   font-weight: 400;
   white-space: nowrap;
+  transition: padding var(--sidebar-motion);
 }
 
 .sidebar-link:hover { background: var(--surface-hover); color: var(--text-primary); }
@@ -207,6 +210,8 @@
 }
 
 .sidebar-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Holds its pill, so the pill clips with the label as the rail narrows. */
+.sidebar-label.has-pill { flex: 1; display: flex; align-items: center; }
 
 .pill {
   margin-left: auto;
@@ -220,15 +225,23 @@
   white-space: nowrap;
 }
 
+/* Wraps rather than switching to a column, so the rail's buttons reflow in place. */
 .sidebar-utils {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   padding-top: 4px;
+  transition: padding var(--sidebar-motion);
 }
 
+/* A zero basis: it fills what is left of the row and never forces a wrap. */
 .sidebar-version {
-  margin-left: auto;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: right;
   padding-right: 6px;
   color: var(--text-muted);
   font-family: var(--font-mono);
@@ -251,23 +264,27 @@
 
 .icon-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
 
-/* Collapsed icon rail */
+/* Collapsed icon rail. The width animates; the text fades and clips instead of
+   snapping out, and every icon keeps its left edge, so none of them jumps.
+   Visibility flips once the fade ends (at once when expanding), which takes
+   the hidden text and the logo link out of the accessibility tree and tab order. */
+:root { --sidebar-motion: 0.18s ease; }
+.sidebar-logo,
+.sidebar-label,
+.account-rest,
+.sidebar-version { transition: opacity var(--sidebar-motion), visibility var(--sidebar-motion); }
 .is-collapsed .sidebar { width: 52px; }
 .is-collapsed .sidebar-logo,
-.is-collapsed .section-label,
 .is-collapsed .sidebar-label,
-.is-collapsed .sidebar .pill,
-.is-collapsed .account-name,
-.is-collapsed .account-chevron,
-.is-collapsed .sidebar-version { display: none; }
-.is-collapsed .sidebar-brand { flex-direction: column; height: auto; gap: 6px; padding: 0; }
-.is-collapsed .sidebar-collapse { margin-left: 0; transform: scaleX(-1); }
-.is-collapsed .account-trigger { justify-content: center; padding: 0; border-color: transparent; background: none; }
+.is-collapsed .account-rest,
+.is-collapsed .sidebar-version { opacity: 0; visibility: hidden; }
+/* Padding moved by a pixel or two centres each icon in the 52px rail. */
+.is-collapsed .sidebar-collapse { transform: scaleX(-1); }
+.is-collapsed .account-trigger { padding: 0 7px; border-color: transparent; background: none; }
 .is-collapsed .account-trigger:hover { background: var(--surface-hover); }
 .is-collapsed .account-menu { left: calc(100% + 8px); right: auto; top: 0; width: 220px; }
-.is-collapsed .sidebar-link { justify-content: center; padding: 0; }
-.is-collapsed .sidebar-nav { padding-top: 8px; }
-.is-collapsed .sidebar-utils { flex-direction: column; }
+.is-collapsed .sidebar-link { padding: 0 8px 0 10px; }
+.is-collapsed .sidebar-utils { padding-left: 4px; }
 
 /* Rail tooltips: an inverted chip to the right of the hovered or focused item. */
 .is-collapsed .sidebar [data-tip] { position: relative; }
@@ -334,10 +351,10 @@
 
 .is-phone.drawer-open .sidebar { transform: none; box-shadow: var(--shadow-menu); }
 .scrim { position: fixed; inset: 0; z-index: 350; background: var(--scrim); }
-.is-phone .sidebar-version { margin-left: 0; padding-left: 8px; }
+.is-phone .sidebar-version { flex: none; margin-left: 0; padding-left: 8px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .sidebar, .is-phone .sidebar { transition: none; }
+  .sidebar, .is-phone .sidebar, .sidebar * { transition: none; }
 }
 
 /* Main Content */

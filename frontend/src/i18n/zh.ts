@@ -406,7 +406,6 @@ export const zh: Record<string, string> = {
   // Sidebar and page headers
   'Projects': '项目',
   'Soon': '即将推出',
-  'Workspace': '工作区',
   'Open menu': '打开菜单',
   'Collapse sidebar': '收起侧边栏',
   'Expand sidebar': '展开侧边栏',

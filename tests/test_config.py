@@ -360,6 +360,17 @@ def test_load_config_rejects_unknown_auth_provider(config_module, tmp_path):
         config_module.load_config(str(config_path))
 
 
+@pytest.mark.parametrize(
+    "allowlist", ['"a@example.com"', "[a@example.com, 1]", "{a: b}"]
+)
+def test_load_config_rejects_non_list_allowlist(config_module, tmp_path, allowlist):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"auth:\n  allowlist: {allowlist}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="auth.allowlist"):
+        config_module.load_config(str(config_path))
+
+
 def test_load_config_google_creds_prefer_env(config_module, tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(

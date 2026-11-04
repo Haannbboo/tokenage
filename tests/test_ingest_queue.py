@@ -925,7 +925,7 @@ def test_consumer_waits_after_transient_failure_then_resumes_polling(
     [
         ("/auth/local/login?code=x", "local"),
         ("/auth/cli/exchange", "local"),
-        ("/auth/google/callback?state=x", "google"),
+        # The Google callback reads its state from a signed cookie, not the store.
     ],
 )
 def test_signin_store_unavailable_returns_503(api_module, monkeypatch, path, provider):

@@ -167,10 +167,7 @@ def test_signin_code_cross_instance_pop(api_module):
     from src.auth import google
     from src.shared_state import SQLiteSharedState, get_shared_state
 
-    google.store_oauth_state("oauth", {"nonce": "n"})
     other = SQLiteSharedState(get_shared_state().path)
-    assert other.pop(google.OAUTH_STATE_NAMESPACE, "oauth")["nonce"] == "n"
-    assert google.pop_oauth_state("oauth") is None
     google.store_cli_code("cli", {"user_id": "u"})
     assert other.pop(google.CLI_CODE_NAMESPACE, "cli")["user_id"] == "u"
     assert google.pop_cli_code("cli") is None

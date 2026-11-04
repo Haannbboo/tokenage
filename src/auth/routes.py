@@ -20,6 +20,8 @@ from . import google as auth_google
 from .signin import check_signin_rate_limit
 from .tokens import (
     LOCAL_OWNER_EMAIL,
+    auth_provider,
+    email_policy_allows,
     get_local_owner,
     get_or_create_user,
     get_user_by_id,
@@ -31,6 +33,7 @@ from .tokens import (
     resolve_token,
     revoke_device,
     revoke_token,
+    token_is_active,
     update_user_name,
     update_user_picture,
 )
@@ -42,11 +45,6 @@ OAUTH_STATE_COOKIE_NAME = "tokenage_oauth_state"
 _NO_STORE = {"Cache-Control": "no-store"}
 
 router = APIRouter()
-
-
-def auth_provider() -> str:
-    """The configured sign-in provider: "local" (default) or "google"."""
-    return CONFIG.get("auth", {}).get("provider", "local")
 
 
 def _require_local_owner() -> None:
@@ -365,17 +363,14 @@ async def auth_google_login(request: Request):
     except auth_google.OAuthFlowError:
         logger.exception("Failed to build Google authorize URL")
         raise HTTPException(status_code=503, detail="google oauth not configured")
-    await asyncio.to_thread(
-        auth_google.store_oauth_state,
-        state,
-        {"nonce": nonce, "redirect_uri": redirect_uri, "origin": origin},
-    )
     response = RedirectResponse(url, status_code=302)
     # Ties the callback to this browser (see auth_google_callback) so a
     # state/code pair captured by one browser can't be completed by another.
     response.set_cookie(
         OAUTH_STATE_COOKIE_NAME,
-        state,
+        auth_google.seal_oauth_state(
+            state, {"nonce": nonce, "redirect_uri": redirect_uri, "origin": origin}
+        ),
         httponly=True,
         samesite="lax",
         secure=_cookie_is_secure(),
@@ -389,21 +384,14 @@ async def auth_google_callback(request: Request):
     """Complete the Google flow: verify state, exchange the code, set the cookie."""
     _require_google()
     state = request.query_params.get("state", "")
-    cookie_state = request.cookies.get(OAUTH_STATE_COOKIE_NAME)
-    data = await asyncio.to_thread(auth_google.pop_oauth_state, state)
     # The state cookie ties this callback to the browser that started the
     # login. Without it, an attacker who completes their own Google login and
     # forwards the resulting callback URL to a victim could log the victim's
-    # browser into the attacker's account (OAuth login CSRF) — the stored
-    # state alone doesn't prove which browser is calling back.
-    if (
-        data is None
-        or not cookie_state
-        # compare_digest on str requires ASCII-only input (raises TypeError
-        # otherwise); encode first so a non-ASCII cookie/query value can't
-        # turn this pre-auth endpoint into an unhandled 500.
-        or not secrets.compare_digest(cookie_state.encode(), state.encode())
-    ):
+    # browser into the attacker's account (OAuth login CSRF).
+    data = auth_google.open_oauth_state(
+        request.cookies.get(OAUTH_STATE_COOKIE_NAME), state
+    )
+    if data is None:
         return _frontend_redirect(auth_error="invalid_state")
     origin = data.get("origin")
     if request.query_params.get("error") or not request.query_params.get("code"):
@@ -459,6 +447,7 @@ async def auth_google_callback(request: Request):
     update_user_name(user.id, str(claims.get("name") or "").strip() or None)
     update_user_picture(user.id, picture)
     response = _frontend_redirect(origin)
+    response.delete_cookie(OAUTH_STATE_COOKIE_NAME)
     response.set_cookie(
         SESSION_COOKIE_NAME,
         plaintext_token,
@@ -605,7 +594,12 @@ def _validate_cli_start_params(
     return code_challenge, _sanitize_device_name(device_name)
 
 
-def _mint_cli_code(user: User, device_name: str, code_challenge: str) -> str:
+def _mint_cli_code(
+    user: User,
+    device_name: str,
+    code_challenge: str,
+    approver: AuthToken | None = None,
+) -> str:
     code = "-".join(
         "".join(secrets.choice(_CLI_CODE_ALPHABET) for _ in range(4)) for _ in range(3)
     )
@@ -616,6 +610,8 @@ def _mint_cli_code(user: User, device_name: str, code_challenge: str) -> str:
             "user_id": user.id,
             "device_name": device_name,
             "code_challenge": code_challenge,
+            # Revoking the approving session also kills its unredeemed codes.
+            "approver_token_id": approver.id if approver is not None else None,
         },
     )
     return code
@@ -674,7 +670,6 @@ async def auth_cli_start(
     """Start the CLI login: confirm page for a resolved user (session token or
     local loopback owner); Google for anyone else under the google provider."""
     challenge, device = _validate_cli_start_params(code_challenge, device_name)
-    check_signin_rate_limit(request)
     resolved = _resolve_request_user(request)
     if resolved is not None:
         return HTMLResponse(
@@ -685,6 +680,7 @@ async def auth_cli_start(
             status_code=401,
             detail="login required: run `tokenage server login-link` on the server",
         )
+    check_signin_rate_limit(request)
     if auth_google.google_credentials() is None:
         raise HTTPException(status_code=503, detail="google oauth not configured")
     state = secrets.token_urlsafe(24)
@@ -695,23 +691,18 @@ async def auth_cli_start(
     except auth_google.OAuthFlowError:
         logger.exception("Failed to build Google authorize URL")
         raise HTTPException(status_code=503, detail="google oauth not configured")
-    await asyncio.to_thread(
-        auth_google.store_oauth_state,
-        state,
-        {
-            "nonce": nonce,
-            "redirect_uri": redirect_uri,
-            "origin": None,
-            "cli": {
-                "code_challenge": challenge,
-                "device_name": device,
-            },
-        },
-    )
     response = RedirectResponse(url, status_code=302)
     response.set_cookie(
         OAUTH_STATE_COOKIE_NAME,
-        state,
+        auth_google.seal_oauth_state(
+            state,
+            {
+                "nonce": nonce,
+                "redirect_uri": redirect_uri,
+                "origin": None,
+                "cli": {"code_challenge": challenge, "device_name": device},
+            },
+        ),
         httponly=True,
         samesite="lax",
         secure=_cookie_is_secure(),
@@ -732,11 +723,10 @@ def auth_cli_start_approve(
     owner rule also refuses a cross-site Origin (see is_direct_loopback).
     """
     challenge, device = _validate_cli_start_params(code_challenge, device_name)
-    check_signin_rate_limit(request)
     resolved = _resolve_request_user(request)
     if resolved is None:
         raise HTTPException(status_code=401, detail="login required")
-    code = _mint_cli_code(resolved[0], device, challenge)
+    code = _mint_cli_code(resolved[0], device, challenge, resolved[1])
     return HTMLResponse(_code_page(code, device), headers=_NO_STORE)
 
 
@@ -769,8 +759,11 @@ def auth_cli_exchange(body: CliExchangeRequest):
     if not secrets.compare_digest(derived, challenge):
         raise HTTPException(status_code=400, detail="invalid code")
     user = get_user_by_id(str(entry.get("user_id") or ""))
-    if user is None:
+    approver_id = entry.get("approver_token_id")
+    if user is None or (approver_id and not token_is_active(str(approver_id), user.id)):
         raise HTTPException(status_code=400, detail="invalid code")
+    if not email_policy_allows(user.email):
+        raise HTTPException(status_code=403, detail="account not allowed")
     device_name = _sanitize_device_name(str(entry.get("device_name") or ""))
     cli_token, ingest_token, device = mint_device_tokens(
         user.id,

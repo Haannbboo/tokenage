@@ -52,12 +52,10 @@ function normalizeRequestLogColumnIds(columnIds: unknown, fallback = DEFAULT_REQ
 
 type RequestLogColumnPreferences = {
   visibleColumnIds: RequestLogColumnId[]
-  pinnedColumnIds: RequestLogColumnId[]
 }
 
 const DEFAULT_COLUMN_PREFERENCES: RequestLogColumnPreferences = {
   visibleColumnIds: DEFAULT_REQUEST_LOG_COLUMNS,
-  pinnedColumnIds: [],
 }
 
 function readStoredRequestLogColumns(): RequestLogColumnPreferences {
@@ -66,11 +64,9 @@ function readStoredRequestLogColumns(): RequestLogColumnPreferences {
     if (!raw) return DEFAULT_COLUMN_PREFERENCES
 
     const parsed = JSON.parse(raw)
-    // Older preferences stored just the enabled column IDs.
-    const visibleColumnIds = normalizeRequestLogColumnIds(Array.isArray(parsed) ? parsed : parsed?.visibleColumnIds)
-    const pinnedColumnIds = normalizeRequestLogColumnIds(parsed?.pinnedColumnIds, [])
-      .filter(id => visibleColumnIds.includes(id))
-    return { visibleColumnIds, pinnedColumnIds }
+    // Older preferences stored just the enabled column IDs, and later also
+    // pinnedColumnIds, which kept columns from width-based hiding (now gone).
+    return { visibleColumnIds: normalizeRequestLogColumnIds(Array.isArray(parsed) ? parsed : parsed?.visibleColumnIds) }
   } catch {
     return DEFAULT_COLUMN_PREFERENCES
   }
@@ -78,18 +74,14 @@ function readStoredRequestLogColumns(): RequestLogColumnPreferences {
 
 export function useRequestLogColumns() {
   const [preferences, setPreferences] = useState(readStoredRequestLogColumns)
-  const { visibleColumnIds, pinnedColumnIds } = preferences
+  const { visibleColumnIds } = preferences
 
   const setColumnVisible = useCallback((columnId: RequestLogColumnId, visible: boolean) => {
-    setPreferences(current => {
-      const visibleColumnIds = normalizeRequestLogColumnIds(visible
+    setPreferences(current => ({
+      visibleColumnIds: normalizeRequestLogColumnIds(visible
         ? [...current.visibleColumnIds, columnId]
-        : current.visibleColumnIds.filter(id => id !== columnId))
-      const pinnedColumnIds = normalizeRequestLogColumnIds(visible
-        ? [...current.pinnedColumnIds, columnId]
-        : current.pinnedColumnIds.filter(id => id !== columnId), [])
-      return { visibleColumnIds, pinnedColumnIds }
-    })
+        : current.visibleColumnIds.filter(id => id !== columnId)),
+    }))
   }, [])
 
   useEffect(() => {
@@ -105,8 +97,7 @@ export function useRequestLogColumns() {
   }, [])
 
   const showAllColumns = useCallback(() => {
-    const columnIds = REQUEST_LOG_COLUMNS.map(({ id }) => id)
-    setPreferences({ visibleColumnIds: columnIds, pinnedColumnIds: columnIds })
+    setPreferences({ visibleColumnIds: REQUEST_LOG_COLUMNS.map(({ id }) => id) })
   }, [])
 
   const visibleColumns = useMemo(
@@ -117,7 +108,6 @@ export function useRequestLogColumns() {
   return {
     columns: REQUEST_LOG_COLUMNS,
     visibleColumnIds,
-    pinnedColumnIds,
     setColumnVisible,
     visibleColumns,
     resetColumns,

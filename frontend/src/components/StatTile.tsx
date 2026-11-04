@@ -24,12 +24,25 @@ type StatTileProps = {
   hoverLabel?: string | null
   onHover: (index: number | null) => void
   children?: ReactNode
+  /** The value belongs to another view that is still loading: show a placeholder. */
+  pending?: boolean
 }
 
 export function StatTile({
   label, color, points, animatedValue, format, formatHover,
-  scale = 'zero', cursorIdx, hoverLabel, onHover, children,
+  scale = 'zero', cursorIdx, hoverLabel, onHover, children, pending = false,
 }: StatTileProps) {
+  if (pending) {
+    return (
+      <div className="widget" aria-busy="true">
+        <div className="stat-label">{label}</div>
+        <div className="stat-value">—</div>
+        <div className="stat-detail">—</div>
+        {/* Holds the sparkline's height so nothing moves when the data lands. */}
+        <div style={{ height: 24 }} />
+      </div>
+    )
+  }
   const point = cursorIdx === null ? undefined : points[cursorIdx]
   const shown = !point ? format(animatedValue) : (formatHover ?? format)(point.value)
 
@@ -51,14 +64,14 @@ export function StatTile({
       <div className="stat-value">{shown}</div>
       {/* Hovering swaps the detail line for the period of the hovered point. */}
       <div className="stat-detail">{detail}</div>
-      <Sparkline
+      {points.length < 2 ? <div style={{ height: 24 }} /> : <Sparkline
         values={points.map(p => p.value)}
         color={color}
         height={24}
         mode={scale}
         cursorIdx={cursorIdx}
         onHover={onHover}
-      />
+      />}
     </div>
   )
 }

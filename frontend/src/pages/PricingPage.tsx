@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { ReadState } from '../components/ReadState'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 import { formatNumber, getModelIcon } from '../utils'
@@ -45,6 +46,9 @@ export function PricingPage() {
     setPricingSearch,
     models: pricedModels,
     counts,
+    pageState,
+    refreshing,
+    refetchPricing,
     total,
     hasMore,
     loadMore,
@@ -155,7 +159,8 @@ export function PricingPage() {
   const isOnly = (source: string) => sources.length === 1 && sources[0] === source
   const toggleSource = (source: string) =>
     setSources(source === 'user' || isOnly(source) ? DEFAULT_SOURCES : [source])
-  const cardCount = (key: string) => (key === 'user' ? (counts.user ?? 0) + (counts.server ?? 0) : counts[key] ?? 0)
+  // Counts from another view would read as current: show a dash until this one loads.
+  const cardCount = (key: string) => pageState !== 'ready' ? '—' : key === 'user' ? (counts.user ?? 0) + (counts.server ?? 0) : counts[key] ?? 0
 
   // Searching the Custom view for a name nothing lists offers to price it.
   const searchTerm = pricingSearch.trim().toLowerCase()
@@ -225,7 +230,8 @@ export function PricingPage() {
         </div>
       </div>
 
-      <div className="panel">
+      {/* A reload of this view (after a save) keeps the table, with the dashboard's refresh sheen. */}
+      <div className={`panel refresh-sheen${refreshing ? ' is-refreshing' : ''}`}>
         <div ref={scrollRef} className="panel-body" style={{ padding: '0', maxHeight: '640px', overflowY: 'auto' }}>
           <table className="table">
             <thead>
@@ -241,7 +247,13 @@ export function PricingPage() {
               </tr>
             </thead>
             <tbody>
-              {visibleModels.length > 0 ? visibleModels.map((model) => {
+              {pageState !== 'ready' ? (
+                <tr>
+                  <td colSpan={8} style={{ padding: 0 }}>
+                    <ReadState error={pageState === 'failed' ? t('Failed to load pricing') : null} onRetry={() => void refetchPricing()} />
+                  </td>
+                </tr>
+              ) : visibleModels.length > 0 ? visibleModels.map((model) => {
                 const style = sourceStyle(model.source)
                 const hasTiers = (model.tiers?.length ?? 0) > 0
                 const hasWindows = (model.time_rates?.length ?? 0) > 0
@@ -406,7 +418,7 @@ export function PricingPage() {
             </tbody>
           </table>
         </div>
-        {total > 0 && (
+        {pageState === 'ready' && total > 0 && (
           <div style={{ padding: '8px 16px', fontSize: '11px', color: 'var(--text-muted)', borderTop: '1px solid var(--border-color)' }}>
             {t('Showing')} {pricedModels.length} / {total} {t('models')}
           </div>

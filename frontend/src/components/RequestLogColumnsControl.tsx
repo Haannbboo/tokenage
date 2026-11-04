@@ -11,7 +11,6 @@ type RequestLogColumn = {
 type Props = {
   columns: RequestLogColumn[]
   selectedColumnIds: RequestLogColumnId[]
-  displayedColumnIds: RequestLogColumnId[]
   setColumnVisible: (columnId: RequestLogColumnId, visible: boolean) => void
   resetColumns: () => void
   showAllColumns: () => void
@@ -20,7 +19,6 @@ type Props = {
 export function RequestLogColumnsControl({
   columns,
   selectedColumnIds,
-  displayedColumnIds,
   setColumnVisible,
   resetColumns,
   showAllColumns,
@@ -53,13 +51,10 @@ export function RequestLogColumnsControl({
               <label key={column.id} className="request-log-columns-option">
                 <input
                   type="checkbox"
-                  checked={displayedColumnIds.includes(column.id)}
+                  checked={selectedColumnIds.includes(column.id)}
                   onChange={(event) => setColumnVisible(column.id, event.target.checked)}
                 />
                 <span>{t(column.label)}</span>
-                {selectedColumnIds.includes(column.id) && !displayedColumnIds.includes(column.id) && (
-                  <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{t('hidden: narrow window')}</span>
-                )}
               </label>
             ))}
           </div>

@@ -1,9 +1,10 @@
 import { appendModels } from '../modelFilter'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toolColor } from '../utils'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
 import { t } from '../i18n/index.ts'
+import { ReadState, useReadRetry } from '../components/ReadState'
 
 type ToolCallRow = {
   tool_name: string
@@ -14,8 +15,11 @@ type ToolCallRow = {
 
 type ToolMetric = Extract<Metric, 'count' | 'totalTime' | 'avgTime'>
 
+// A stable default: a fresh {} per render would re-run the fetch effect forever.
+const NO_FILTERS = {}
+
 export function ToolCallsChart({
-  filterParams = {},
+  filterParams = NO_FILTERS,
 }: {
   filterParams?: {
     provider?: string
@@ -23,13 +27,23 @@ export function ToolCallsChart({
     client_source?: string | null
     device_id?: string | null
     since?: string | null
+    view?: string
   }
 }) {
-  const [rows, setRows] = useState<ToolCallRow[]>([])
+  // null while a new view loads: the previous range's rows must not show
+  // under it. A refresh of the same view keeps them (dimmed by the page).
+  const [rows, setRows] = useState<ToolCallRow[] | null>(null)
+  const view = filterParams.view ?? filterParams
+  const viewRef = useRef<unknown>(view)
+  const { error, setError, attempt, retry } = useReadRetry()
+  // Its own read, apart from the page's: the rows stay, marked as refreshing, until it settles.
+  const [loading, setLoading] = useState(false)
   const [metric, setMetric] = useState<ToolMetric>('count')
 
   useEffect(() => {
+    if (viewRef.current !== view) { viewRef.current = view; setRows(null); setError(false) }
     const controller = new AbortController()
+    setLoading(true)
     async function fetchToolCalls() {
       try {
         const url = new URL('/usage/by-tool', window.location.origin)
@@ -40,18 +54,20 @@ export function ToolCallsChart({
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
 
         const res = await fetch(url.toString(), { signal: controller.signal })
-        if (res.ok) {
-          setRows(await res.json())
-        }
+        if (!res.ok) throw new Error(String(res.status))
+        const data = await res.json()
+        if (!controller.signal.aborted) { setRows(data); setError(false) }
       } catch {
-        // Ignore abort errors
+        if (!controller.signal.aborted) setError('failed')
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
     fetchToolCalls()
-    return () => controller.abort()
-  }, [filterParams])
+    return () => { controller.abort(); setLoading(false) }
+  }, [filterParams, attempt, view, setError])
 
-  const items: BarItem[] = rows.map(row => ({
+  const items: BarItem[] = (rows ?? []).map(row => ({
     name: row.tool_name,
     icon: null,
     color: toolColor(row.tool_name),
@@ -67,6 +83,8 @@ export function ToolCallsChart({
       items={items}
       toolBadges
       metric={metric}
+      refreshing={loading && rows !== null && !error}
+      status={error || rows === null ? <ReadState error={error === 'failed' ? t('Failed to load tool calls') : null} onRetry={retry} /> : undefined}
     >
       <div className="top-list-controls">
         <div className="tab-toggle compact">

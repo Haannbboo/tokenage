@@ -78,6 +78,17 @@ export function usePricingData() {
   // A failed page stops automatic loading until the view changes, so a
   // visible sentinel can't re-request a broken page in a loop.
   const [listFailed, setListFailed] = useState(false)
+  // The first page of the current view: until it lands (or fails) the list
+  // and the source counts belong to another view.
+  const [pageState, setPageState] = useState<'loading' | 'ready' | 'failed'>('loading')
+  // A reload of the view on screen (after a save or reset) keeps the table and
+  // counts, dimmed; only a new source or search starts from the loading state.
+  const [refreshing, setRefreshing] = useState(false)
+  const loadedViewRef = useRef<string | null>(null)
+  // Set while the page-wide error is a failed "load more", so the next first
+  // page clears it without wiping a save error. Any action that clears the
+  // page error clears this too, so its own error survives the refetch.
+  const loadMoreFailedRef = useRef(false)
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
   const [repricePast, setRepricePast] = useState(true)
   const [repricing, setRepricing] = useState<string | null>(null)
@@ -93,7 +104,12 @@ export function usePricingData() {
   /** Fetch one page of the current view; offset 0 replaces the list. */
   const fetchPage = useCallback(async (offset: number) => {
     const seq = offset === 0 ? ++seqRef.current : seqRef.current
-    if (offset === 0) setListFailed(false)
+    const view = JSON.stringify([sources, query])
+    if (offset === 0) {
+      setListFailed(false)
+      if (loadedViewRef.current === view) setRefreshing(true)
+      else setPageState('loading')
+    }
     setLoading(true)
     try {
       const response = await fetch(pricingUrl(sources, query, offset))
@@ -104,13 +120,29 @@ export function usePricingData() {
       setModels((prev) => (offset === 0 ? data.models : [...prev, ...data.models]))
       setTotal(data.total)
       setCounts(data.counts)
+      if (offset === 0) {
+        setPageState('ready')
+        loadedViewRef.current = view
+        if (loadMoreFailedRef.current) { loadMoreFailedRef.current = false; setError(null) }
+      }
     } catch (err) {
       if (seq !== seqRef.current) return
       console.error('Failed to load pricing:', err)
-      setError(t('Failed to load pricing'))
       setListFailed(true)
+      // A first page failure shows in the table with Retry; only a failed
+      // "load more", which has no such place, uses the page-wide error.
+      if (offset === 0) {
+        setPageState('failed')
+        loadedViewRef.current = null
+      } else {
+        loadMoreFailedRef.current = true
+        setError(t('Failed to load pricing'))
+      }
     } finally {
-      if (seq === seqRef.current) setLoading(false)
+      if (seq === seqRef.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
   }, [sources, query, setError])
 
@@ -179,6 +211,7 @@ export function usePricingData() {
   const handleSavePricing = useCallback(async () => {
     const entries = Object.entries(drafts)
     if (entries.length === 0) return
+    loadMoreFailedRef.current = false
     setError(null)
     const bodies: Array<[string, Record<string, any>]> = []
     for (const [model, draft] of entries) {
@@ -243,6 +276,7 @@ export function usePricingData() {
   ])
 
   const handleResetPricing = useCallback(async (model: string) => {
+    loadMoreFailedRef.current = false
     setError(null)
     try {
       const response = await fetch(`/pricing/overrides/${encodeURIComponent(model)}`, { method: 'DELETE' })
@@ -262,6 +296,7 @@ export function usePricingData() {
 
   /** Price the caller's unpriced usage of one model at its current price. */
   const handleRepriceModel = useCallback(async (model: string) => {
+    loadMoreFailedRef.current = false
     setError(null)
     setRepricing(model)
     try {
@@ -285,6 +320,9 @@ export function usePricingData() {
     setPricingSearch,
     models,
     counts,
+    pageState,
+    refreshing,
+    refetchPricing,
     total,
     hasMore,
     loadMore,

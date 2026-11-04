@@ -90,8 +90,10 @@ function AccountMenu({ onNavigate }: { onNavigate: () => void }) {
         onClick={() => setOpen(o => !o)}
       >
         <UserAvatar user={user} />
-        <span className="account-name">{name}</span>
-        <Icon name="chevron" className="account-chevron" />
+        <span className="account-rest">
+          <span className="account-name">{name}</span>
+          <Icon name="chevron" className="account-chevron" />
+        </span>
       </button>
       {open && (
         <div id="account-menu" className="menu account-menu">
@@ -202,7 +204,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="sidebar-brand">
           <Link to="/dashboard" onClick={closeNavigation} className="sidebar-logo" aria-label="tokenage">
             <pre aria-hidden="true">{ASCII_ART}</pre>
-            <span className="sidebar-monogram" aria-hidden="true">T</span>
           </Link>
           {!phone && (
             <button
@@ -220,12 +221,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <AccountMenu onNavigate={closeNavigation} />
         <nav className="sidebar-nav" aria-label={t('Main')}>
-          <div className="section-label">{t('Workspace')}</div>
           <ul className="sidebar-list">
             {WORKSPACE.map(item => <SidebarLink key={item.to} {...item} onNavigate={closeNavigation} />)}
             <li>
               <span className="sidebar-link is-disabled" role="link" aria-disabled="true" aria-label={`${t('Projects')} · ${t('Soon')}`} data-tip={`${t('Projects')} · ${t('Soon')}`}>
-                <Icon name="projects" /><span className="sidebar-label">{t('Projects')}</span><span className="pill">{t('Soon')}</span>
+                <Icon name="projects" /><span className="sidebar-label has-pill">{t('Projects')}<span className="pill">{t('Soon')}</span></span>
               </span>
             </li>
           </ul>

@@ -23,3 +23,10 @@ export function trendLabelIndices(count: number, width: number, labelPx = 44): n
   }
   return shown
 }
+
+/** A bar segment's height on the 200-unit plot: finite and never taller than
+ *  the plot, whatever the max (empty, zero, undefined) turns out to be. */
+export function trendBarHeight(segment: number, max: number): number {
+  const h = (segment / max) * 200
+  return Number.isFinite(h) ? Math.min(200, Math.max(0, h)) : 0
+}

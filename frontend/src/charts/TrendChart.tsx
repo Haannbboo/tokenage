@@ -8,8 +8,9 @@ import { useApp } from '../contexts/AppContext'
 import { ChartTooltip, TooltipRow, TooltipDivider, TooltipTitle } from './ChartTooltip'
 import { TREND_NEUTRAL, trendSeriesColors } from './trendColors'
 import { sortTrendRows, trendTooltipX } from './trendTooltip'
-import { trendDotScale, trendLabelIndices } from './trendScale'
+import { trendBarHeight, trendDotScale, trendLabelIndices } from './trendScale'
 import { getLang, LANG_LOCALES, t } from '../i18n/index.ts'
+import { ReadState, useReadRetry } from '../components/ReadState'
 
 type ModelBucketRow = {
   dimension: string
@@ -23,6 +24,7 @@ type ModelBucketRow = {
 const MODEL_LEGEND_MAX = 8
 /** Stable default: the model fetch keys on the filter object's identity. */
 const NO_FILTERS = {}
+const NO_ROWS: DailyUsage[] = []
 
 export function TrendChart({
   data,
@@ -31,6 +33,8 @@ export function TrendChart({
   periodCount,
   showDots = true,
   filterParams = NO_FILTERS,
+  totals = 'ready',
+  onRetryTotals,
 }: {
   data: DailyUsage[],
   title: string,
@@ -44,7 +48,11 @@ export function TrendChart({
     client_source?: string | null
     device_id?: string | null
     since?: string | null
+    view?: string
   }
+  /** The daily totals in `data`: still another view's ('pending'), or failed. */
+  totals?: 'ready' | 'pending' | 'failed'
+  onRetryTotals?: () => void
 }) {
   const { timezone, theme } = useApp()
   const tz = resolveTimezone(timezone)
@@ -69,11 +77,14 @@ export function TrendChart({
     return () => observer.disconnect();
   }, []);
   const dotScale = trendDotScale(plotWidth);
+  // Totals of another view, or none at all, must not draw the requests line.
+  const totalsRows = totals === 'ready' ? data : NO_ROWS;
+  const requestsShown = showRequests && totals === 'ready';
   const filled = useMemo(
     () => (periodCount === undefined
-      ? fillPeriodGaps(data, granularity)
-      : fillGaps(data, granularity, periodCount, tz)),
-    [data, granularity, periodCount, tz],
+      ? fillPeriodGaps(totalsRows, granularity)
+      : fillGaps(totalsRows, granularity, periodCount, tz)),
+    [totalsRows, granularity, periodCount, tz],
   );
   const maxTokens = Math.max(...filled.map(x => value(x.total_tokens)), 1);
   const maxCost = Math.max(...filled.map(x => value(x.total_cost_usd)), 0.001);
@@ -118,9 +129,13 @@ export function TrendChart({
   });
   // Model split: one row per (model, bucket) from /usage/daily-by-dimension.
   const tzOffset = getTimezoneOffset(tz);
-  const [modelRows, setModelRows] = useState<ModelBucketRow[]>([]);
-  const [modelError, setModelError] = useState(false);
+  // null while a new view loads; a refresh of the same view keeps the rows.
+  const [modelRows, setModelRows] = useState<ModelBucketRow[] | null>(null);
+  const { error: modelError, setError: setModelError, attempt: modelAttempt, retry: retryModel } = useReadRetry();
+  const view = filterParams.view ?? filterParams;
+  const modelViewRef = useRef<unknown>(view);
   useEffect(() => {
+    if (modelViewRef.current !== view) { modelViewRef.current = view; setModelRows(null); setModelError(false); }
     const controller = new AbortController();
     async function fetchModelRows() {
       try {
@@ -142,22 +157,17 @@ export function TrendChart({
           setModelError(false);
         }
       } catch {
-        if (!controller.signal.aborted) setModelError(true);
+        if (!controller.signal.aborted) setModelError('failed');
       }
     }
     fetchModelRows();
-    return () => {
-      controller.abort();
-      // The rows belong to the old filters until the new ones land.
-      setModelRows([]);
-      setModelError(false);
-    };
-  }, [filterParams, granularity, tzOffset]);
+    return () => controller.abort();
+  }, [filterParams, granularity, tzOffset, modelAttempt, view, setModelError]);
 
   const modelBuckets = useMemo(() => {
     const map = new Map<string, Map<string, { tokens: number; cost: number; requests: number }>>();
     const visiblePeriods = new Set(filled.map(row => row.period));
-    for (const row of modelRows) {
+    for (const row of modelRows ?? []) {
       if (!visiblePeriods.has(row.period)) continue;
       const bucket = map.get(row.period) ?? new Map();
       const stat = bucket.get(row.dimension) ?? { tokens: 0, cost: 0, requests: 0 };
@@ -169,6 +179,14 @@ export function TrendChart({
     }
     return map;
   }, [modelRows, filled]);
+
+  const modelErrorLine = modelError && <ReadState compact error={modelError === 'failed' ? t('Failed to load model breakdown') : null} onRetry={retryModel} />;
+
+  // The bars stack the model split, which can outgrow the daily totals (or
+  // arrive without them): scale to whichever is taller.
+  const stackMax = (key: 'tokens' | 'cost') => Math.max(0, ...[...modelBuckets.values()].map(bucket => [...bucket.values()].reduce((sum, stat) => sum + stat[key], 0)));
+  const barMaxTokens = Math.max(maxTokens, stackMax('tokens'));
+  const barMaxCost = Math.max(maxCost, stackMax('cost'));
 
   // Biggest first by tokens, so the legend order and colours stay put when
   // switching between the token and cost views.
@@ -251,11 +269,23 @@ export function TrendChart({
         display: 'flex',
         flexDirection: 'column'
       }}>
-        {modelError && <div role="alert" style={{ textAlign: 'center', color: 'var(--badge-error-text)' }}>{t('Failed to load model breakdown')}</div>}
-        {filled.length === 0 ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>{t('No trend data available')}</div>
+        {/* The whole panel waits only while one of its reads still belongs to
+            another view, or fails only when both failed; a single failed read
+            gets its own line and the chart keeps what did load. */}
+        {totals === 'pending' || (modelRows === null && !modelError) || (totals === 'failed' && modelError) ? (
+          <ReadState
+            error={totals === 'failed' && modelError === 'failed' ? t('Failed to load usage trend') : null}
+            onRetry={() => { onRetryTotals?.(); retryModel(); }}
+          />
+        ) : filled.length === 0 ? (
+          <>
+            {modelErrorLine}
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>{t('No trend data available')}</div>
+          </>
         ) : (
           <>
+            {modelErrorLine}
+            {totals === 'failed' && <ReadState compact error={t('Failed to load usage trend')} onRetry={onRetryTotals} />}
             {hoveredIdx !== null && hoveredData && (
               <ChartTooltip
                 ref={tooltipRef}
@@ -307,15 +337,15 @@ export function TrendChart({
                 <TooltipDivider />
                 <TooltipRow label={metric === 'cost' ? t('Total Cost:') : t('Total Tokens:')}>
                   <span style={{ fontWeight: 800 }}>
-                    {metric === 'cost' ? formatCost(hoveredData.total_cost_usd) : formatNumber(value(hoveredData.total_tokens))}
+                    {totals !== 'ready' ? '—' : metric === 'cost' ? formatCost(hoveredData.total_cost_usd) : formatNumber(value(hoveredData.total_tokens))}
                   </span>
                 </TooltipRow>
                 <TooltipRow label={metric === 'cost' ? t('Tokens:') : t('Est. Cost:')} labelColor="var(--text-primary)">
                   <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>
-                    {metric === 'cost' ? formatNumber(value(hoveredData.total_tokens)) : formatCost(hoveredData.total_cost_usd)}
+                    {totals !== 'ready' ? '—' : metric === 'cost' ? formatNumber(value(hoveredData.total_tokens)) : formatCost(hoveredData.total_cost_usd)}
                   </span>
                 </TooltipRow>
-                {showRequests && <TooltipRow label={t('Requests:')} labelColor="var(--hue-red)">
+                {requestsShown && <TooltipRow label={t('Requests:')} labelColor="var(--hue-red)">
                   <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>{formatNumber(hoveredData.requests)}</span>
                 </TooltipRow>}
               </ChartTooltip>
@@ -389,7 +419,7 @@ export function TrendChart({
                   const x = cx - barW / 2;
                   const dimmed = hoveredIdx !== null && hoveredIdx !== i;
 
-                  const maxValue = metric === 'cost' ? maxCost : maxTokens;
+                  const maxValue = metric === 'cost' ? barMaxCost : barMaxTokens;
                   const stack = bucketSegments(d.period)
                     .filter(m => (metric === 'cost' ? m.cost : m.tokens) > 0);
                   if (stack.length === 0) return null;
@@ -409,7 +439,7 @@ export function TrendChart({
                     >
                       {stack.map((m, mi) => {
                         const segment = metric === 'cost' ? m.cost : m.tokens;
-                        const h = (segment / maxValue) * 200;
+                        const h = trendBarHeight(segment, maxValue);
                         const y = yCursor - h;
                         yCursor = y;
                         const isTop = mi === stack.length - 1;
@@ -431,7 +461,7 @@ export function TrendChart({
               })()}
 
               {/* Requests line */}
-              {showRequests && (() => {
+              {requestsShown && (() => {
                 const points = filled.map((d, i) => {
                   const x = paddingX + (i + 0.5) / filled.length * chartWidth;
                   const y = 200 - (value(d.requests) / maxRequests) * 200;

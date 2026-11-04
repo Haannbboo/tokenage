@@ -6,7 +6,7 @@ import type { UsageRow } from '../src/types'
 import { useLogsData } from '../src/hooks/useLogsData'
 import { useSessionsData } from '../src/hooks/useSessionsData'
 import { useDashboardData } from '../src/hooks/useDashboardData'
-import { useRequestLogColumns } from '../src/hooks/useRequestLogColumns'
+import { DEFAULT_REQUEST_LOG_COLUMNS, REQUEST_LOG_COLUMNS, useRequestLogColumns } from '../src/hooks/useRequestLogColumns'
 import { SessionSelector } from '../src/components/SessionSelector'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { LogsPage } from '../src/pages/LogsPage'
@@ -68,26 +68,6 @@ async function intersectSentinel() {
   })
 }
 
-function mockTableWidth(initialWidth: number) {
-  const observers = new Map<Element, ResizeObserverCallback>()
-  vi.stubGlobal('ResizeObserver', class {
-    constructor(private callback: ResizeObserverCallback) {}
-    observe(target: Element) {
-      if (!target.classList.contains('panel-body')) return
-      observers.set(target, this.callback)
-      queueMicrotask(() => {
-        if (observers.has(target)) this.callback([{ target, contentRect: { width: initialWidth } } as ResizeObserverEntry], {} as ResizeObserver)
-      })
-    }
-    disconnect() { observers.clear() }
-  })
-  return (width: number) => act(() => {
-    for (const [target, callback] of observers) {
-      callback([{ target, contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver)
-    }
-  })
-}
-
 const columnHeaders = () => screen.getAllByRole('columnheader').map(header => header.textContent)
 const columnCheckbox = (label: string) => screen.getByRole('checkbox', {
   name: name => name.startsWith(label),
@@ -125,7 +105,7 @@ beforeEach(() => {
   // Give the real virtualizer a viewport and row geometry; do not mock its range calculation.
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
     if (this.classList.contains('filter-bar')) return 100
-    if (this.tagName === 'THEAD') return tableHeaderHeight
+    if (this.classList.contains('logs-table-head') || this.tagName === 'THEAD') return tableHeaderHeight
     return this.tagName === 'TBODY' ? (this.querySelector('.expanded-row') ? 252 : 52) : 520
   })
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(100000)
@@ -135,7 +115,8 @@ beforeEach(() => {
     const rect = (height: number, top: number) => ({ width: 1600, height, top, left: 0, right: 1600, bottom: top + height, x: 0, y: top, toJSON() {} })
     // The filter bar sticks under the navbar; the table starts below it.
     if (this.classList.contains('filter-bar')) return rect(100, 0)
-    if (this.tagName === 'TABLE') return rect(520, 300 - scrollY)
+    // The header table sits on top of the body table, which holds the rows.
+    if (this.tagName === 'TABLE') return rect(520, 300 + (this.closest('.logs-table-head') ? 0 : tableHeaderHeight) - scrollY)
     if (this.tagName === 'TBODY') return rect(this.querySelector('.expanded-row') ? 252 : 52, 0)
     return rect(520, 0)
   })
@@ -233,6 +214,8 @@ describe('Request Logs table', () => {
     app.requestUsageRefresh.mockClear()
     render(logsPage())
     expect(await screen.findByText('Failed to fetch log data')).toBeTruthy()
+    // Pinned to the visible part of the table, not centred in its full width.
+    expect(screen.getByRole('button', { name: 'Retry' }).closest('.logs-visible')).toBeTruthy()
     expect(screen.queryByText('secret detail')).toBeNull()
     expect(screen.queryByText('No requests found for the selected filters.')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
@@ -310,89 +293,75 @@ describe('Request Logs table', () => {
     localStorage.setItem('tokenage-request-log-columns', JSON.stringify(['time', 'device']))
     const saved = renderHook(() => useRequestLogColumns())
     expect(saved.result.current.visibleColumnIds).toEqual(['time', 'device'])
-    expect(saved.result.current.pinnedColumnIds).toEqual([])
   })
 
-  it('loads column preferences without pins and discards pins for disabled or unknown columns', () => {
+  it('loads saved columns and ignores the pins older versions stored', () => {
     const key = 'tokenage-request-log-columns'
-    localStorage.setItem(key, JSON.stringify({ visibleColumnIds: ['time', 'device'] }))
+    localStorage.setItem(key, JSON.stringify({ visibleColumnIds: ['time', 'device'], pinnedColumnIds: ['device', 'speed', 'unknown'] }))
     const saved = renderHook(() => useRequestLogColumns())
     expect(saved.result.current.visibleColumnIds).toEqual(['time', 'device'])
-    expect(saved.result.current.pinnedColumnIds).toEqual([])
-    saved.unmount()
-    localStorage.setItem(key, JSON.stringify({ visibleColumnIds: ['time', 'device'], pinnedColumnIds: ['device', 'speed', 'unknown'] }))
-    const pinned = renderHook(() => useRequestLogColumns())
-    expect(pinned.result.current.pinnedColumnIds).toEqual(['device'])
-    act(() => pinned.result.current.showAllColumns())
-    expect(pinned.result.current.pinnedColumnIds).toEqual(pinned.result.current.visibleColumnIds)
-    act(() => pinned.result.current.resetColumns())
-    expect(pinned.result.current.pinnedColumnIds).toEqual([])
-    expect(pinned.result.current.visibleColumnIds).not.toContain('device')
+    act(() => saved.result.current.setColumnVisible('speed', true))
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ visibleColumnIds: ['time', 'device', 'speed'] })
+    act(() => saved.result.current.resetColumns())
+    expect(saved.result.current.visibleColumnIds).not.toContain('device')
   })
 
-  it('checks only rendered columns and restores auto-hidden columns when the window widens', async () => {
-    mockHistory([])
-    const resize = mockTableWidth(350)
-    localStorage.setItem('tokenage-request-log-columns', JSON.stringify(['time', 'model', 'session', 'speed']))
+  it('renders every chosen column at a narrow width, scrolling the rows sideways under a matching header', async () => {
+    mockHistory()
+    // A phone-width panel, however it is measured.
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(358)
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) { queueMicrotask(() => this.callback([{ target, contentRect: { width: 358 } } as ResizeObserverEntry], this as unknown as ResizeObserver)) }
+      unobserve() {}
+      disconnect() {}
+    })
     render(logsPage())
-    await screen.findByText('No requests found for the selected filters.')
+    await waitFor(() => expect(document.querySelector('tbody[data-index]')).toBeTruthy())
+    const labels = REQUEST_LOG_COLUMNS.filter(({ id }) => DEFAULT_REQUEST_LOG_COLUMNS.includes(id)).map(({ label }) => label)
+    expect(columnHeaders()).toEqual(labels)
+    expect(document.querySelector('tbody[data-index] tr')!.children).toHaveLength(labels.length)
+    // The rows scroll inside their own container; the header shares their column widths.
+    const scroller = document.querySelector<HTMLElement>('.logs-table-scroll')!
+    expect(scroller.querySelector('tbody[data-index]')).toBeTruthy()
+    const widths = (root: Element) => [...root.querySelectorAll('col')].map(col => (col as HTMLElement).style.width)
+    expect(widths(document.querySelector('.logs-table-head')!)).toEqual(widths(scroller))
+    // Either one scrolls the other: the header's scrollbar sits under the sticky header.
+    const head = document.querySelector<HTMLElement>('.logs-table-head')!
+    scroller.scrollLeft = 120
+    fireEvent.scroll(scroller)
+    expect(head.scrollLeft).toBe(120)
+    head.scrollLeft = 40
+    fireEvent.scroll(head)
+    expect(scroller.scrollLeft).toBe(40)
+    // Assistive tech reads the column names from the body table; the visual header is hidden from it.
+    expect(head.getAttribute('aria-hidden')).toBe('true')
+    expect(screen.getAllByRole('columnheader').every(th => scroller.contains(th) && th.getAttribute('scope') === 'col')).toBe(true)
+    // Full-width rows fit the scroller's visible width.
+    expect(document.querySelector<HTMLElement>('.panel')!.style.getPropertyValue('--logs-table-visible')).toBe('358px')
     fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
-    expect(columnHeaders()).toEqual(['Time', 'Model', 'Session'])
     for (const checkbox of screen.getAllByRole('checkbox')) {
-      const label = checkbox.closest('label')!.querySelector('span')!.textContent
-      expect((checkbox as HTMLInputElement).checked).toBe(columnHeaders().includes(label))
+      const label = checkbox.closest('label')!.querySelector('span')!.textContent!
+      expect((checkbox as HTMLInputElement).checked).toBe(labels.includes(label))
     }
-    expect(columnCheckbox('Speed').closest('label')!.textContent).toContain('hidden: narrow window')
-    expect(columnCheckbox('Device').closest('label')!.textContent).not.toContain('hidden: narrow window')
-    resize(450)
-    expect(columnHeaders()).toEqual(['Time', 'Model', 'Session', 'Speed'])
-    expect(columnCheckbox('Speed').checked).toBe(true)
-    expect(screen.queryByText('hidden: narrow window')).toBeNull()
   })
 
-  it('pins a checked auto-hidden column, drops the next priority instead, persists and unpins on uncheck', async () => {
+  it('resizes a column to the dragged width and keeps the others, even past the panel width', async () => {
     mockHistory([])
-    mockTableWidth(350)
-    const key = 'tokenage-request-log-columns'
-    localStorage.setItem(key, JSON.stringify(['time', 'model', 'session', 'speed']))
-    const view = render(logsPage())
-    await screen.findByText('No requests found for the selected filters.')
-    fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
-    fireEvent.click(columnCheckbox('Speed'))
-    expect(columnHeaders()).toEqual(['Time', 'Model', 'Speed'])
-    expect(columnCheckbox('Speed').checked).toBe(true)
-    expect(columnCheckbox('Session').checked).toBe(false)
-    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({
-      visibleColumnIds: ['time', 'model', 'session', 'speed'], pinnedColumnIds: ['speed'],
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.tagName === 'TH' ? 100 : 0
     })
-    view.unmount()
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(358)
     render(logsPage())
-    await screen.findByText('No requests found for the selected filters.')
-    expect(columnHeaders()).toEqual(['Time', 'Model', 'Speed'])
-    fireEvent.click(screen.getByRole('button', { name: 'Columns' }))
-    fireEvent.click(columnCheckbox('Speed'))
-    expect(columnHeaders()).toEqual(['Time', 'Model', 'Session'])
-    expect(columnCheckbox('Speed').checked).toBe(false)
-    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({
-      visibleColumnIds: ['time', 'model', 'session'], pinnedColumnIds: [],
-    })
-  })
-
-  it('keeps pinned columns when their widths overflow and preserves the resize stability rule', async () => {
-    mockHistory([])
-    mockTableWidth(100)
-    localStorage.setItem('tokenage-request-log-columns', JSON.stringify({
-      visibleColumnIds: ['time', 'model', 'session', 'speed'], pinnedColumnIds: ['session', 'speed'],
-    }))
-    render(logsPage())
-    await screen.findByText('No requests found for the selected filters.')
-    expect(columnHeaders()).toEqual(['Session', 'Speed'])
-    const width = screen.getAllByRole('columnheader').reduce((sum, th) => sum + parseFloat(th.style.width), 0)
-    expect(width).toBeGreaterThan(100)
-    fireEvent.mouseDown(screen.getAllByRole('columnheader')[0].querySelector('.col-resize-handle')!)
-    expect(columnHeaders()).toEqual(['Time', 'Model', 'Session', 'Speed'])
+    const empty = await screen.findByText('No requests found for the selected filters.')
+    expect(empty.closest('.logs-visible')).toBeTruthy()
+    const head = document.querySelector('.logs-table-head')!
+    fireEvent.mouseDown(head.querySelector('th .col-resize-handle')!, { clientX: 0 })
+    fireEvent.mouseMove(document, { clientX: 50 })
     fireEvent.mouseUp(document)
-    expect(columnHeaders()).toEqual(['Session', 'Speed'])
+    const widths = [...head.querySelectorAll('col')].map(col => (col as HTMLElement).style.width)
+    expect(widths[0]).toBe('150px')
+    expect(widths.slice(1).every(width => width === '100px')).toBe(true)
   })
 
   it('keeps spacers in table coordinates and removes the bottom spacer at the last loaded row', async () => {
@@ -415,8 +384,9 @@ describe('Request Logs table', () => {
     scrollWindowTo(5000)
     await waitFor(() => expect(document.querySelector('tbody[data-index="99"]')).toBeTruthy())
     assertSpacers()
-    // The sentinel must not become the browser's anchor when another page appends.
-    expect(screen.getByTestId('logs-sentinel').parentElement!.style.overflowAnchor).toBe('none')
+    // Neither the rows nor the sentinel may become the browser's anchor when another page appends.
+    expect(screen.getByTestId('logs-sentinel').style.overflowAnchor).toBe('none')
+    expect(document.querySelector<HTMLElement>('.logs-table-scroll')!.style.overflowAnchor).toBe('none')
   })
 
   it('loads from the sentinel and renders only a window after accumulating a long history', async () => {

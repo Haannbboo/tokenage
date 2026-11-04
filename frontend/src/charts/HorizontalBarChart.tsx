@@ -141,6 +141,8 @@ export function HorizontalBarChart({
   metric,
   mono = false,
   toolBadges = false,
+  status,
+  refreshing = false,
   children,
 }: {
   title: string
@@ -148,6 +150,10 @@ export function HorizontalBarChart({
   mono?: boolean
   toolBadges?: boolean
   metric: Metric
+  /** Shown instead of the list while the items load or after they fail. */
+  status?: React.ReactNode
+  /** The shown rows are being re-read (a refresh of the same view). */
+  refreshing?: boolean
   children?: React.ReactNode
 }) {
   // The row shown as active: hovered, focused or tapped. Tracked by row key
@@ -173,7 +179,8 @@ export function HorizontalBarChart({
     return `${item.name}\u0000${n}`
   })
   const activeIndex = active ? rowKeys.indexOf(active.key) : -1
-  const activeItem = activeIndex >= 0 ? sorted[activeIndex] : null
+  // A status stands in for the list: nothing from the cached rows shows beside it.
+  const activeItem = activeIndex >= 0 && status == null ? sorted[activeIndex] : null
 
   useLayoutEffect(() => {
     const row = active && rowRefs.current.get(active.key)
@@ -196,14 +203,14 @@ export function HorizontalBarChart({
   }, [active])
 
   return (
-    <div className="widget top-list">
+    <div className={`widget top-list refresh-sheen${refreshing ? ' is-refreshing' : ''}`} aria-busy={refreshing || undefined}>
       <div className="widget-header">
         <span>{title}</span>
-        {additive && total > 0 && <span className="widget-meta">{t('Total')} {format(total)}</span>}
+        {additive && total > 0 && status == null && <span className="widget-meta">{t('Total')} {format(total)}</span>}
       </div>
       {children}
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {sorted.length === 0 ? (
+        {status ?? (sorted.length === 0 ? (
           <div style={{ padding: '20px' }}>
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>{t('No data available')}</div>
           </div>
@@ -251,7 +258,7 @@ export function HorizontalBarChart({
             })
           }
           </ol>
-        )}
+        ))}
       </div>
       {activeItem && createPortal(
         <ChartTooltip ref={tipRef} id={tipId} role="tooltip" className="rank-tip">

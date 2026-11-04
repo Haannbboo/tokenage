@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createElement } from 'react'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TrendChart } from '../src/charts/TrendChart'
 import { trendDotScale, trendLabelIndices } from '../src/charts/trendScale'
@@ -27,13 +27,15 @@ describe('usage trend request dots', () => {
     expect(radiusAt(trendDotScale(380), 380)).toBeCloseTo(radiusAt(trendDotScale(1200), 1200), 5)
   })
 
-  it('draws the dots inside the counter-scaled group instead of a stretched circle', () => {
+  it('draws the dots inside the counter-scaled group instead of a stretched circle', async () => {
     vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => [] })))
     const { container } = render(createElement(TrendChart, {
       data: [row('2026-10-26'), row('2026-10-27')],
       title: 'Trend',
     }))
+    // The plot waits for the model split.
+    await waitFor(() => expect(container.querySelector('circle')).toBeTruthy())
     const scaled = [...container.querySelectorAll('g')].filter(node => (node.getAttribute('style') ?? '').includes('scale('))
     expect(scaled.length).toBeGreaterThan(0)
     expect(scaled[0].querySelector('circle')).toBeTruthy()
@@ -87,4 +89,31 @@ describe('trend x-axis labels', () => {
       expect(Math.min(...gaps)).toBeGreaterThanOrEqual(Math.ceil(24 / Math.min(12, Math.floor(width / 44))))
     }
   })
+})
+
+it('keeps a model stack taller than the daily total inside the plot', async () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  // The daily total says 100 tokens, the model split 500 + 400.
+  const split = ['a', 'b'].map((dimension, i) => ({ period: '2026-10-26', dimension, total_tokens: i ? 400 : 500, total_cost_usd: 1, requests: 1 }))
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => split })))
+  const { container } = render(createElement(TrendChart, { data: [row('2026-10-26')], title: 'Trend' }))
+  await waitFor(() => expect(container.querySelectorAll('.trend-segment')).toHaveLength(2))
+  const ys = [...container.querySelectorAll('.trend-segment')]
+    .flatMap(path => [...(path.getAttribute('d') ?? '').matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map(m => Number(m[2])))
+  // The stack fills the 200-unit plot exactly: the bars scale to the taller of the two.
+  expect(Math.min(...ys)).toBeCloseTo(0, 5)
+  expect(Math.max(...ys)).toBeCloseTo(200, 5)
+})
+
+it('offers a scoped Retry when the model split fails, keeping the totals, and Retry reloads it', async () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false }).mockResolvedValue({ ok: true, json: async () => [] })
+  vi.stubGlobal('fetch', fetchMock)
+  const { container } = render(createElement(TrendChart, { data: [row('2026-10-26')], title: 'Trend' }))
+  const alert = await screen.findByRole('alert')
+  // Only the split failed: the chart keeps the totals' requests line.
+  expect(container.querySelector('polyline.trend-requests')).toBeTruthy()
+  fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  expect(fetchMock).toHaveBeenCalledTimes(2)
 })

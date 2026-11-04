@@ -177,7 +177,6 @@ export const zh: Record<string, string> = {
   'Columns': '列',
   'Reset columns': '重置列',
   'All columns': '全部列',
-  'hidden: narrow window': '已隐藏：窗口较窄',
 
   // Table headers
   'Time': '时间',
@@ -219,6 +218,11 @@ export const zh: Record<string, string> = {
   // Error messages
   'Failed to fetch dashboard data': '获取仪表盘数据失败',
   'Retry': '重试',
+  'Failed to load tool calls': '加载工具调用失败',
+  'Failed to load usage trend': '加载用量趋势失败',
+  'Failed to load activity': '加载活动数据失败',
+  'Failed to load devices': '加载设备失败',
+  'Failed to load web sessions': '加载网页会话失败',
   'Failed to fetch log data': '获取日志数据失败',
   'Unknown error': '未知错误',
 
@@ -401,7 +405,6 @@ export const zh: Record<string, string> = {
   // Sidebar and page headers
   'Projects': '项目',
   'Soon': '即将推出',
-  'Workspace': '工作区',
   'Open menu': '打开菜单',
   'Collapse sidebar': '收起侧边栏',
   'Expand sidebar': '展开侧边栏',

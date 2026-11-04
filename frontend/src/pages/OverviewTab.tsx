@@ -392,7 +392,8 @@ export function OverviewTab({
           color="var(--color-yellow)"
           points={tokenPoints}
           animatedValue={animatedTotalTokens}
-          format={(v) => formatCompact(v)}
+          // Whole tokens: the count-up passes fractions on the way.
+          format={(v) => formatCompact(Math.round(v))}
           cursorIdx={cursorIdx}
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}
@@ -408,7 +409,7 @@ export function OverviewTab({
           color="var(--color-pink)"
           points={requestPoints}
           animatedValue={animatedRequests}
-          format={(v) => formatNumber(v)}
+          format={(v) => formatNumber(Math.round(v))}
           cursorIdx={cursorIdx}
           hoverLabel={hoverLabel}
           onHover={setCursorIdx}

@@ -50,7 +50,7 @@ export function SettingsPage() {
         {[
           { id: 'pricing', label: t('Pricing') },
           { id: 'services', label: t('Services') },
-          { id: 'devices', label: t('Devices') },
+          { id: 'devices', label: t('Clients') },
         ].map((section) => (
           <button
             key={section.id}

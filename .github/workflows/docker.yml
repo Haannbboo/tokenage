@@ -80,7 +80,20 @@ jobs:
             ghcr.io/haannbboo/tokenage:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Pruned in the same job, so it runs under the publish lock and never
+      # queues a separate job that could cancel a pending publish.
+      # This action removes index children from the candidate set before applying
+      # retention, then deletes children only with their deleted parent index.
+      # https://github.com/dataaxiom/ghcr-cleanup-action#cleanup-algorithm
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1
+        with:
+          owner: haannbboo
+          package: tokenage
+          keep-n-tagged: 20
+          delete-untagged: "true"
+          validate: "true"
   cleanup:
+    # Weekly fallback and manual runs: nothing publishes on these events.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     permissions:
       packages: write

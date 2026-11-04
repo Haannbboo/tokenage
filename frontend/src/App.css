@@ -1398,10 +1398,13 @@ img[src^="/models/"] { filter: saturate(0.7); }
   position: relative;
 }
 
-.click-to-copy:hover {
+.click-to-copy:hover,
+.click-to-copy:focus-visible {
   color: var(--text-primary);
   text-decoration: underline;
 }
+
+.click-to-copy:focus-visible { outline: 2px solid var(--color-green); outline-offset: 1px; border-radius: 2px; }
 
 .click-to-copy::after {
   content: ' 📋';
@@ -1410,7 +1413,8 @@ img[src^="/models/"] { filter: saturate(0.7); }
   transition: opacity 0.2s;
 }
 
-.click-to-copy:hover::after {
+.click-to-copy:hover::after,
+.click-to-copy:focus-visible::after {
   opacity: 0.7;
 }
 

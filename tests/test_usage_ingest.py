@@ -162,3 +162,22 @@ def test_redelivered_report_does_not_double_count_tool_calls(api_module, fresh_d
     assert len(usage) == 2  # the report itself is not deduplicated
     assert [t.tool_use_id for t in tools] == ["toolu_dup"]
     assert tools[0].usage_id in {u.id for u in usage}
+
+
+def test_codex_tool_tokens_are_dropped(api_module, fresh_db):
+    token, _ = _token(fresh_db)
+    client = TestClient(api_module.app)
+    for i, source in enumerate(("codex", "claude-code")):
+        report = _report(
+            client_source=source, prompt_tokens=100 + i, tool_tokens=7, tool_calls=[]
+        )
+        r = client.post(
+            "/ingest/v1/usage", json=report, headers={"x-tokenage-token": token}
+        )
+        assert r.status_code == 204
+    drain()
+    usage, _ = _rows(fresh_db)
+    assert sorted((u.client_source, u.tool_tokens) for u in usage) == [
+        ("claude-code", 7),
+        ("codex", None),
+    ]

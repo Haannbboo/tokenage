@@ -357,3 +357,12 @@ class ToolCall(Base):
     client_source: Mapped[str | None] = mapped_column(String, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class DataMigration(Base):
+    """One-off data repairs that already ran; the row is the marker."""
+
+    __tablename__ = "data_migrations"
+
+    name: Mapped[str] = mapped_column(String, primary_key=True)
+    applied_at: Mapped[int] = mapped_column(BigInteger, nullable=False)

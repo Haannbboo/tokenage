@@ -73,6 +73,8 @@ def record_usage(
     ):
         return None
 
+    if client_source == "codex":
+        tool_tokens = None  # Codex reports no tool tokens; its count is total usage.
     provider = normalize_provider_name(provider)
     model = normalize_model_name(model)
     usage_ts = ts if ts is not None else time.time_ns() // 1000

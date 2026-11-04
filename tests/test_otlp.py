@@ -560,7 +560,7 @@ def test_extract_codex_fields_basic(otlp_module):
 
 
 def test_codex_replay_matches_legacy_tool_tokens(otlp_module, fresh_db):
-    from sqlalchemy import select
+    from sqlalchemy import select, update
     from sqlalchemy.orm import Session
 
     from src.database import get_engine
@@ -585,7 +585,6 @@ def test_codex_replay_matches_legacy_tool_tokens(otlp_module, fresh_db):
         record, attrs, "codex_cli_rs", user_id="test-user"
     )
     legacy_fields.pop("_tool_info")
-    legacy_fields["tool_tokens"] = legacy_fields["total_tokens"]
     first = ingest_write(
         otlp_module.record_usage,
         **legacy_fields,
@@ -593,6 +592,9 @@ def test_codex_replay_matches_legacy_tool_tokens(otlp_module, fresh_db):
         db_path=fresh_db.db_path,
     )
     assert first is not None
+    # Ingest now drops Codex tool_tokens; write the legacy value directly.
+    with get_engine(fresh_db.db_path).begin() as connection:
+        connection.execute(update(Usage).values(tool_tokens=Usage.total_tokens))
 
     ingest_write(
         otlp_module._parse_log_record,

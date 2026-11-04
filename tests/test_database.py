@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -5012,17 +5013,60 @@ def test_migrate_database_clears_codex_tool_tokens(fresh_db, fail_hourly):
             event.remove(engine, "before_cursor_execute", reject_hourly)
         assert rows() == before  # Raw and hourly corrections are atomic.
 
-    assert "usage.codex_tool_tokens" in migrate(fresh_db.db_path)
+    assert migrate(fresh_db.db_path) == [
+        "usage.codex_tool_tokens",
+        "usage_hourly.codex_tool_tokens",
+    ]
     assert rows() == expected  # All other agents and columns stay identical.
     assert migrate(fresh_db.db_path) == []
     assert rows() == expected
 
 
-def test_migrate_database_skips_codex_repair_without_legacy_rows(fresh_db):
+def _seed_codex_usage(fresh_db, tool_tokens):
+    db = fresh_db.database_module
+    usage = db.Usage(
+        id="codex-row",
+        user_id="u0",
+        device_id="test-device",
+        ts=TS_2026_04_17_10,
+        provider="openai",
+        model="m1",
+        client_source="codex",
+        endpoint="otlp",
+        prompt_tokens=10,
+        completion_tokens=5,
+        total_tokens=15,
+        tool_tokens=tool_tokens,
+    )
+    ingest_write(db.log_usage, usage, db_path=fresh_db.db_path)
+    return usage.id
+
+
+def _codex_tool_tokens(fresh_db):
+    db = fresh_db.database_module
+    with db.get_engine(fresh_db.db_path).connect() as connection:
+        return [
+            connection.execute(db.text(query)).all()
+            for query in (
+                "SELECT tool_tokens FROM usage",
+                "SELECT tool_tokens FROM usage_hourly",
+                "SELECT name FROM data_migrations",
+            )
+        ]
+
+
+def test_migrate_database_codex_repair_runs_once(fresh_db):
     from sqlalchemy import event
 
     db = fresh_db.database_module
     engine = db.get_engine(fresh_db.db_path)
+    migrate = fresh_db.schema_migrations_module.migrate_database
+    assert migrate(fresh_db.db_path) == [
+        "usage.codex_tool_tokens",
+        "usage_hourly.codex_tool_tokens",
+    ]
+    # Ingest drops these now; a direct write proves the marker skips the repair.
+    usage_id = _seed_codex_usage(fresh_db, 15)
     statements = []
 
     def capture(conn, cursor, statement, parameters, context, executemany):
@@ -5030,15 +5074,54 @@ def test_migrate_database_skips_codex_repair_without_legacy_rows(fresh_db):
 
     event.listen(engine, "before_cursor_execute", capture)
     try:
-        assert (
-            fresh_db.schema_migrations_module.migrate_database(fresh_db.db_path) == []
-        )
+        assert migrate(fresh_db.db_path) == []
     finally:
         event.remove(engine, "before_cursor_execute", capture)
-    assert any(
-        "SELECT 1 FROM usage WHERE client_source = 'codex'" in s for s in statements
-    )
-    assert not any(s.startswith("UPDATE usage") for s in statements)
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                db.text("SELECT tool_tokens FROM usage WHERE id = :id"),
+                {"id": usage_id},
+            ).scalar_one()
+            == 15
+        )
+    assert not [s for s in statements if re.search(r"\btool_tokens\b", s)]
+    assert not [s for s in statements if s.lstrip().startswith(("INSERT", "UPDATE"))]
+
+
+def test_migrate_database_codex_repair_skips_when_locked(fresh_db):
+    import sqlite3
+
+    from sqlalchemy import event
+
+    db = fresh_db.database_module
+    engine = db.get_engine(fresh_db.db_path)
+    migrate = fresh_db.schema_migrations_module.migrate_database
+    usage_id = _seed_codex_usage(fresh_db, 15)
+
+    def busy(conn, cursor, statement, parameters, context, executemany):
+        if statement.startswith("UPDATE usage SET tool_tokens"):
+            raise sqlite3.OperationalError("database is locked")
+
+    with engine.connect() as blocker:
+        if engine.dialect.name == "postgresql":
+            blocker.execute(
+                db.text("SELECT 1 FROM usage WHERE id = :id FOR UPDATE"),
+                {"id": usage_id},
+            )
+        else:
+            event.listen(engine, "before_cursor_execute", busy)
+        try:
+            assert "usage.codex_tool_tokens" not in migrate(fresh_db.db_path)
+        finally:
+            if engine.dialect.name == "sqlite":
+                event.remove(engine, "before_cursor_execute", busy)
+        blocker.rollback()
+    # Nothing committed, marker unset: the next migrate retries.
+    assert _codex_tool_tokens(fresh_db)[0] == [(15,)]
+    assert _codex_tool_tokens(fresh_db)[2] == []
+    assert "usage.codex_tool_tokens" in migrate(fresh_db.db_path)
+    assert _codex_tool_tokens(fresh_db)[:2] == [[(None,)], [(0,)]]
 
 
 def test_migrate_database_adds_user_picture_idempotently(fresh_db):

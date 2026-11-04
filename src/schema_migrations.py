@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
+import time
+
 from sqlalchemy import inspect, text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 from .database import get_engine, init_db
 from .database.models import metadata
+
+log = logging.getLogger(__name__)
 
 TENANT_TABLES = ("usage", "usage_hourly", "sessions", "tool_calls")
 DEVICE_ID_TABLES = ("usage", "usage_hourly")
@@ -171,6 +176,54 @@ def _drop_evaluator_schema(engine) -> list[str]:
     return applied
 
 
+def _clear_codex_tool_tokens(engine) -> list[str]:
+    """Old Codex tool_token_count was total usage, not tool tokens: clear it once.
+
+    Ingest drops Codex tool_tokens, so a data_migrations row marks it done.
+    ponytail: one transaction, not chunks; prod has ~16k Codex rows. A lock
+    wait over 2s (or SQLite busy) skips the repair until the next migrate.
+    """
+    with engine.connect() as connection:
+        if connection.execute(
+            text("SELECT 1 FROM data_migrations WHERE name = 'codex_tool_tokens'")
+        ).first():
+            return []
+    try:
+        with engine.begin() as connection:
+            if engine.dialect.name == "postgresql":
+                connection.execute(text("SET LOCAL lock_timeout = '2s'"))
+            # Marker first: a racing node waits on it, then finds it and skips.
+            if not connection.execute(
+                text(
+                    "INSERT INTO data_migrations (name, applied_at) "
+                    "VALUES ('codex_tool_tokens', :now) ON CONFLICT (name) DO NOTHING"
+                ),
+                {"now": time.time_ns() // 1000},
+            ).rowcount:
+                return []
+            connection.execute(
+                text(
+                    "UPDATE usage SET tool_tokens = NULL "
+                    "WHERE client_source = 'codex' AND tool_tokens IS NOT NULL"
+                )
+            )
+            # Hourly counters use zero for missing tokens, just like ingest.
+            connection.execute(
+                text(
+                    "UPDATE usage_hourly SET tool_tokens = 0 "
+                    "WHERE client_source = 'codex' AND tool_tokens <> 0"
+                )
+            )
+    except OperationalError as exc:
+        code = getattr(exc.orig, "pgcode", None) or getattr(exc.orig, "sqlstate", None)
+        # Lock timeout, deadlock or SQLite busy: nothing committed, retry later.
+        if code not in ("55P03", "40P01") and "database is locked" not in str(exc.orig):
+            raise
+        log.warning("Codex tool-token repair skipped, retried next migrate: %s", exc)
+        return []
+    return ["usage.codex_tool_tokens", "usage_hourly.codex_tool_tokens"]
+
+
 def migrate_database(db_path: str | None = None) -> list[str]:
     """Bring a database up to the models: create missing indexes, replace the
     daily rollup with the hourly one, and make user_id NOT NULL (Postgres).
@@ -238,31 +291,7 @@ def migrate_database(db_path: str | None = None) -> list[str]:
         applied.append("usage_hourly.backfill")
         insp = inspect(engine)
 
-    # Old Codex tool_token_count was total usage, not tool tokens. Neither
-    # Codex ingest path now writes tool_tokens, so remaining non-NULL values
-    # gate this one-off repair without a separate migration ledger. The proxy
-    # never populated it either; no endpoint restriction is needed.
-    with engine.begin() as connection:
-        if connection.execute(
-            text(
-                "SELECT 1 FROM usage WHERE client_source = 'codex' "
-                "AND tool_tokens IS NOT NULL LIMIT 1"
-            )
-        ).first():
-            connection.execute(
-                text(
-                    "UPDATE usage SET tool_tokens = NULL "
-                    "WHERE client_source = 'codex' AND tool_tokens IS NOT NULL"
-                )
-            )
-            # Hourly counters use zero for missing tokens, just like ingest.
-            connection.execute(
-                text(
-                    "UPDATE usage_hourly SET tool_tokens = 0 "
-                    "WHERE client_source = 'codex' AND tool_tokens <> 0"
-                )
-            )
-            applied.append("usage.codex_tool_tokens")
+    applied += _clear_codex_tool_tokens(engine)
 
     existing = {
         table: {index["name"] for index in indexes}

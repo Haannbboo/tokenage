@@ -204,6 +204,7 @@ _TRUNCATE_TABLES = [
     "devices",
     "user_model_prices",
     "users",
+    "data_migrations",
 ]
 
 

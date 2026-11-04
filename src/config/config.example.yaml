@@ -87,6 +87,13 @@ db: {}
 #                     # `tokenage server login-link`. google: hosted Google sign-in.
 #   # google_client_id / google_client_secret / allowlist apply to `google` only.
 
+# rate_limits:          # sliding one-minute windows, shared across workers/nodes
+#   ingest_per_minute: 1000   # per ingest token
+#   api_per_minute: 1200      # per user
+#   signin_per_minute: 0      # per client IP (IPv6 /64) on sign-in starts; 0 = off.
+#                             # Enable only once the API sees real client IPs
+#                             # (FORWARDED_ALLOW_IPS), else the proxy is one client.
+
 # Event queue + shared state (leases, rate limits, sign-in codes).
 # Unset → SQLite file on this machine ($TOKENAGE_HOME/state.db).
 # queue:

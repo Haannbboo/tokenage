@@ -105,7 +105,10 @@ def main(argv: list[str] | None = None) -> int:
             return ops.COMMANDS[args[0]]()
         return ops.COMMANDS[args[0]](args[1:])
     commands = " | ".join(["login-link", *ops.COMMANDS])
-    print(f"usage: {PROG} token create --email <email> | {commands}", file=sys.stderr)
+    print(
+        f"usage: {PROG} token create|revoke --email <email> | {commands}",
+        file=sys.stderr,
+    )
     return 2
 
 

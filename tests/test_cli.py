@@ -89,7 +89,9 @@ def test_run_token_command_prints_the_token_once(cli_module, isolated_home, caps
 
 def test_main_without_a_command_prints_usage(cli_module, isolated_home, capsys):
     assert cli_module.main([]) == 2
-    assert "usage: tokenage server token create --email" in capsys.readouterr().err
+    assert (
+        "usage: tokenage server token create|revoke --email" in capsys.readouterr().err
+    )
 
 
 # ------------------------------------------------------------ launcher wiring

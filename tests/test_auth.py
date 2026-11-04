@@ -1,5 +1,6 @@
 """Tests for PR 1 auth foundation (docs/design/specs/pr1-auth-foundation.md)."""
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
@@ -317,3 +318,15 @@ def test_google_rejects_local_owner_tokens(fresh_db, monkeypatch):
     CONFIG["auth"]["allowlist"] = []
     for token in tokens:
         assert resolve_token(token, fresh_db.db_path) is None
+
+
+def test_mint_token_applies_google_policy(fresh_db, monkeypatch):
+    from src.auth.tokens import CONFIG, mint_token
+
+    monkeypatch.setitem(
+        CONFIG, "auth", {"provider": "google", "allowlist": ["a@example.com"]}
+    )
+    assert mint_token(" A@example.com ", db_path=fresh_db.db_path)[0]
+    for email in ("b@example.com", "owner@localhost"):
+        with pytest.raises(ValueError, match="not allowed"):
+            mint_token(email, db_path=fresh_db.db_path)

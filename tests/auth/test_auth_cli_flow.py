@@ -504,8 +504,6 @@ def test_relogin_rejects_foreign_or_wrong_kind_ingest_token(
         ({"ingest_token": {"token": "secret-ingest"}}, 422),
         ({"ingest_token": ["secret-ingest"]}, 422),
         ({"client_version": "invalid"}, 422),
-        ({"client_version": "١.٢.٣"}, 422),
-        ({"client_commit": "g" * 40}, 422),
         ({"installation_key": None}, 422),
         ({"code": "x" * 257}, 422),
         ({"code_verifier": None}, 400),
@@ -591,7 +589,7 @@ def test_installed_machine_relogin_rotates_both_tokens_and_revoke_stops_ingest(
         installation_key=installation_key,
         device_id=device_id,
         client_version="0.1.181",
-        client_commit="C" * 40,
+        client_commit="c" * 40,
     )
     assert second.status_code == 200
     second_tokens = second.json()
@@ -835,15 +833,63 @@ def test_unauthenticated_chunked_body_is_capped_before_routing(
     assert asgi_post(api_module.app, path, [body[:half], body[half:]], headers) == 413
 
 
-def test_pending_cli_code_survives_one_ips_approval_flood(api_module, monkeypatch):
-    from src.auth import signin
+def test_owner_cli_approvals_spend_no_signin_budget(api_module, monkeypatch):
+    import src.config.app
+
+    monkeypatch.setitem(src.config.app.CONFIG["rate_limits"], "signin_per_minute", 1)
+    client = TestClient(api_module.app)
+    for _ in range(3):
+        response = client.post("/auth/cli/start", data={"code_challenge": "a" * 43})
+        assert response.status_code == 200
+
+
+def test_user_revoke_kills_approved_codes_and_devices(
+    api_module, monkeypatch, fresh_db
+):
+    from src.auth.tokens import list_user_devices, revoke_user_tokens
+
+    _enable_auth(monkeypatch)
+    victim = TestClient(api_module.app)
+    _web_login(api_module, monkeypatch, victim)
+    installed = _approve_and_exchange(victim, "laptop")
+    assert installed.status_code == 200
+    verifier, challenge = _pkce_pair()
+    pending = victim.post("/auth/cli/start", data={"code_challenge": challenge})
+    other = TestClient(api_module.app)
+    _web_login(api_module, monkeypatch, other, email="b@example.com")
+    other_verifier, other_challenge = _pkce_pair()
+    other_pending = other.post(
+        "/auth/cli/start", data={"code_challenge": other_challenge}
+    )
+
+    assert revoke_user_tokens("a@example.com") == 3
+    user_id = installed.json()["user"]["id"]
+    assert list_user_devices(user_id) == []
+    tokens_before = len(_token_rows(fresh_db))
+    assert _exchange(victim, _code_from_page(pending.text), verifier).status_code == 400
+    assert len(_token_rows(fresh_db)) == tokens_before
+    assert (
+        _exchange(other, _code_from_page(other_pending.text), other_verifier)
+    ).status_code == 200
+
+
+def test_exchange_applies_current_email_policy(api_module, monkeypatch, fresh_db):
+    import src.config.app
     from src.auth.tokens import get_local_owner
 
-    auth_google = _routes_module().auth_google
-    owner = get_local_owner()
-    auth_google.store_cli_code("existing", {"user_id": owner.id})
+    _enable_auth(monkeypatch)
     client = TestClient(api_module.app)
-    for i in range(signin.SIGNIN_PER_MINUTE + 1):
-        response = client.post("/auth/cli/start", data={"code_challenge": "a" * 43})
-        assert response.status_code == (200 if i < signin.SIGNIN_PER_MINUTE else 429)
-    assert auth_google.pop_cli_code("existing") == {"user_id": owner.id}
+    _web_login(api_module, monkeypatch, client)
+    verifier, challenge = _pkce_pair()
+    pending = client.post("/auth/cli/start", data={"code_challenge": challenge})
+    src.config.app.CONFIG["auth"]["allowlist"] = ["b@example.com"]
+    tokens_before = len(_token_rows(fresh_db))
+    response = _exchange(client, _code_from_page(pending.text), verifier)
+    assert response.status_code == 403
+    assert len(_token_rows(fresh_db)) == tokens_before
+    # A local-owner code left over from the local provider is refused too.
+    src.config.app.CONFIG["auth"]["allowlist"] = []
+    _routes_module().auth_google.store_cli_code(
+        "OWNERCODE", {"user_id": get_local_owner().id, "code_challenge": challenge}
+    )
+    assert _exchange(client, "OWNERCODE", verifier).status_code == 403

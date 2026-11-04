@@ -109,6 +109,8 @@ def mint_token(
         raise ValueError(
             f"invalid token kind: {kind!r} (expected one of {TOKEN_KINDS})"
         )
+    if not email_policy_allows(email):
+        raise ValueError(f"{email.strip().lower()} is not allowed by auth policy")
     token = f"tokenage_{kind}_{secrets.token_hex(24)}"
     user = get_or_create_user(email, db_path)
     engine = get_engine(db_path)
@@ -146,6 +148,11 @@ def _web_session_expired(token: AuthToken, now: int) -> bool:
     return token.kind == "web" and last_active <= now - WEB_IDLE_TIMEOUT_MICROS
 
 
+def auth_provider() -> str:
+    """The configured sign-in provider: "local" (default) or "google"."""
+    return CONFIG.get("auth", {}).get("provider", "local")
+
+
 def google_email_allowed(email: str) -> bool:
     """Apply the Google email policy to both sign-in and existing credentials."""
     email = email.strip().lower()
@@ -156,6 +163,11 @@ def google_email_allowed(email: str) -> bool:
         and email != LOCAL_OWNER_EMAIL
         and (not normalized or email in normalized)
     )
+
+
+def email_policy_allows(email: str) -> bool:
+    """Whether the current provider lets this user hold credentials at all."""
+    return auth_provider() != "google" or google_email_allowed(email)
 
 
 def resolve_token(
@@ -183,9 +195,8 @@ def resolve_token(
             if row is None:
                 return None
             auth_token, user, device_id, device_revoked_at, device_user_id = row
-            if CONFIG.get("auth", {}).get("provider", "local") == "google":
-                if not google_email_allowed(user.email):
-                    return None
+            if not email_policy_allows(user.email):
+                return None
             if auth_token.revoked_at is not None:
                 return None
             # An ingest token not bound to a device is a pre-device-binding leftover.
@@ -300,22 +311,46 @@ def revoke_token(token_id: str, user_id: str, db_path: str | None = None) -> boo
 
 
 def revoke_user_tokens(email: str, db_path: str | None = None) -> int:
-    """Revoke all token kinds for one email without creating a missing user."""
+    """Revoke all of one email's tokens and machines without creating a user.
+
+    Unredeemed CLI codes approved by a revoked token die with it (see
+    token_is_active at exchange)."""
     email = email.strip().lower()
     if not email:
         raise ValueError("email must not be empty")
+    user_ids = select(User.id).where(User.email == email)
+    now = _now_micros()
     with Session(get_engine(db_path)) as session:
         _set_auth_statement_timeout(session)
+        # Device before token: mint_device_tokens locks in that order.
+        session.execute(
+            sa_update(Device)
+            .where(Device.user_id.in_(user_ids), Device.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
         result = session.execute(
             sa_update(AuthToken)
-            .where(
-                AuthToken.user_id.in_(select(User.id).where(User.email == email)),
-                AuthToken.revoked_at.is_(None),
-            )
-            .values(revoked_at=_now_micros())
+            .where(AuthToken.user_id.in_(user_ids), AuthToken.revoked_at.is_(None))
+            .values(revoked_at=now)
         )
         session.commit()
         return result.rowcount  # type: ignore[attr-defined]
+
+
+def token_is_active(token_id: str, user_id: str, db_path: str | None = None) -> bool:
+    """Whether this user's token row still exists and is not revoked."""
+    with Session(get_engine(db_path)) as session:
+        _set_auth_statement_timeout(session)
+        return (
+            session.execute(
+                select(AuthToken.id).where(
+                    AuthToken.id == token_id,
+                    AuthToken.user_id == user_id,
+                    AuthToken.revoked_at.is_(None),
+                )
+            ).first()
+            is not None
+        )
 
 
 def list_user_tokens(user_id: str, db_path: str | None = None) -> list[AuthToken]:

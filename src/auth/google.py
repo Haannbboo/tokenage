@@ -164,9 +164,17 @@ def pop_cli_code(code: str) -> dict[str, Any] | None:
     return _pop_entry(CLI_CODE_NAMESPACE, code)
 
 
-def store_login_code(code: str) -> None:
+def store_login_code(code: str, token_epoch: int = 0) -> None:
+    """Store a one-time login link, tagged with the owner's token epoch.
+
+    The epoch makes a later revoke kill the link (checked in auth_local_login).
+    """
     _store_entry(
-        LOGIN_CODE_NAMESPACE, code, {}, CLI_CODE_TTL_SECONDS, MAX_PENDING_STATES
+        LOGIN_CODE_NAMESPACE,
+        code,
+        {"token_epoch": token_epoch},
+        CLI_CODE_TTL_SECONDS,
+        MAX_PENDING_STATES,
     )
 
 

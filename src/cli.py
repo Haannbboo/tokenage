@@ -75,16 +75,20 @@ def run_token_command(argv: list[str]) -> int:
 
 
 def run_login_link_command() -> int:
+    from src.auth import get_local_owner
     from src.auth.google import store_login_code
     from src.auth.routes import auth_provider
     from src.config.app import CONFIG
     from src.config.server_config import resolve_server_urls
+    from src.database import init_db
 
     if auth_provider() != "local":
         print("login-link only applies to auth.provider: local", file=sys.stderr)
         return 2
+    init_db()
     code = secrets.token_urlsafe(24)
-    store_login_code(code)
+    # Tag the link with the owner's epoch: `token revoke` kills it.
+    store_login_code(code, get_local_owner().token_epoch)
     api_url = resolve_server_urls(CONFIG)["api_url"]
     print(f"{api_url}/auth/local/login?code={code}")
     print("Single use; expires in 5 minutes.", file=sys.stderr)

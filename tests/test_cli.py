@@ -569,3 +569,30 @@ def test_token_revoke_help(cli_module, capsys):
     help_text = capsys.readouterr().out
     assert "--email" in help_text
     assert "owner@localhost" in help_text
+
+
+def test_token_revoke_invalidates_a_pending_login_link(
+    cli_module, api_module, fresh_db, capsys
+):
+    """A link issued before the revoke must not mint a fresh owner session."""
+    from fastapi.testclient import TestClient
+
+    assert cli_module.main(["login-link"]) == 0
+    code = capsys.readouterr().out.strip().split("code=", 1)[1]
+
+    assert cli_module.main(["token", "revoke", "--email", "owner@localhost"]) == 0
+    capsys.readouterr()
+
+    client = TestClient(api_module.app)
+    response = client.get(f"/auth/local/login?code={code}", follow_redirects=False)
+    assert response.status_code == 400
+
+    # A link issued after the revoke still works.
+    assert cli_module.main(["login-link"]) == 0
+    fresh = capsys.readouterr().out.strip().split("code=", 1)[1]
+    assert (
+        client.get(
+            f"/auth/local/login?code={fresh}", follow_redirects=False
+        ).status_code
+        == 302
+    )

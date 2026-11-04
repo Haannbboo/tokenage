@@ -209,7 +209,12 @@ def test_login_link_second_login_keeps_the_first_session(
         sessions.append(remote)
     assert _me_email(sessions[0]) == OWNER
     assert _me_email(sessions[1]) == OWNER
-    assert sessions[0].post("/auth/logout").status_code == 204
+    assert (
+        sessions[0]
+        .post("/auth/logout", headers={"origin": "http://tracker.example"})
+        .status_code
+        == 204
+    )
     assert _me_email(sessions[0]) is None
     assert _me_email(sessions[1]) == OWNER
 
@@ -347,3 +352,123 @@ def test_api_is_rate_limited_per_user_but_loopback_owner_is_exempt(
     _set_provider(monkeypatch, "local")
     owner = TestClient(api_module.app)  # direct loopback: no token, never limited
     assert all(owner.get("/usage").status_code == 200 for _ in range(5))
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        None,
+        "null",
+        "https://sibling.example",
+        "http://tracker.example:5173",
+        "https://tracker.example",
+        "http://tracker.example.evil",
+    ],
+)
+def test_cookie_unsafe_requests_require_same_origin(
+    api_module, fresh_db, method, source
+):
+    from src.auth.tokens import mint_token
+
+    token, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
+    client = _remote(api_module)
+    client.cookies.set(SESSION_COOKIE, token)
+    headers = {} if source is None else {"origin": source}
+    response = client.request(method, "/auth/logout", headers=headers)
+    assert response.status_code == 403
+    # Safe requests remain usable even with a foreign Origin.
+    assert _me_email(client, headers=headers) == "a@example.com"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"origin": "http://tracker.example"},
+        {"origin": "http://TRACKER.example:80"},
+        {"referer": "http://tracker.example/settings"},
+    ],
+)
+def test_cookie_matching_origin_or_referer_accepted(api_module, fresh_db, headers):
+    from src.auth.tokens import mint_token
+
+    token, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
+    client = _remote(api_module)
+    client.cookies.set(SESSION_COOKIE, token)
+    assert client.post("/auth/logout", headers=headers).status_code == 204
+
+
+def test_cookie_origin_takes_precedence_over_referer(api_module, fresh_db):
+    from src.auth.tokens import mint_token
+
+    token, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
+    client = _remote(api_module)
+    client.cookies.set(SESSION_COOKIE, token)
+    assert (
+        client.post(
+            "/auth/logout",
+            headers={"origin": "null", "referer": "http://tracker.example/"},
+        ).status_code
+        == 403
+    )
+
+
+def test_public_cookie_origin_uses_config_not_forwarded_headers(
+    api_module, fresh_db, monkeypatch
+):
+    from src.auth.tokens import mint_token
+    from src.config.app import CONFIG
+
+    monkeypatch.setitem(CONFIG, "server", {"base_url": "https://usage.example"})
+    token, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
+    client = _remote(api_module)
+    client.cookies.set(SESSION_COOKIE, token)
+    spoofed = {
+        "x-forwarded-proto": "http",
+        "x-forwarded-host": "foreign.example",
+        "origin": "http://foreign.example",
+    }
+    assert client.post("/auth/logout", headers=spoofed).status_code == 403
+    assert (
+        client.post(
+            "/auth/logout",
+            headers={"origin": "https://usage.example", "x-forwarded-proto": "http"},
+        ).status_code
+        == 204
+    )
+
+
+def test_direct_local_cookie_origin_uses_request_url(api_module, fresh_db, monkeypatch):
+    from src.auth.tokens import mint_token
+    from src.config.app import CONFIG
+
+    monkeypatch.setitem(CONFIG, "server", {"base_url": "https://usage.example"})
+    token, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
+    client = TestClient(api_module.app, base_url="http://localhost:5173")
+    client.cookies.set(SESSION_COOKIE, token)
+    assert (
+        client.post(
+            "/auth/logout", headers={"origin": "http://localhost:5174"}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/auth/logout", headers={"origin": "http://localhost:5173"}
+        ).status_code
+        == 204
+    )
+
+
+def test_bearer_write_does_not_require_origin(api_module, fresh_db):
+    from src.auth.tokens import mint_token
+
+    token, _ = mint_token("a@example.com", kind="cli", db_path=fresh_db.db_path)
+    client = _remote(api_module)
+    client.cookies.set(SESSION_COOKIE, "irrelevant")
+    assert (
+        client.post(
+            "/auth/logout", headers={"authorization": f"Bearer {token}"}
+        ).status_code
+        == 204
+    )

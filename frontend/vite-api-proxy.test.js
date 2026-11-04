@@ -156,3 +156,40 @@ test('apiProxyMiddleware relays a 302 with Location and Set-Cookie instead of fo
     await new Promise(resolve => backend.close(resolve))
   }
 })
+
+test('apiProxyMiddleware translates only same-origin browser proofs for cookie writes', async () => {
+  const backend = createServer((req, res) => {
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ origin: req.headers.origin, referer: req.headers.referer }))
+  })
+  await new Promise(resolve => backend.listen(0, '127.0.0.1', resolve))
+  const middleware = createApiProxyMiddleware({
+    env: { TOKENAGE_API_URL: `http://127.0.0.1:${backend.address().port}` },
+  })
+  const frontend = createServer((req, res) => middleware(req, res, () => res.end()))
+  await new Promise(resolve => frontend.listen(0, '127.0.0.1', resolve))
+  const origin = `http://127.0.0.1:${frontend.address().port}`
+  try {
+    const response = await fetch(`${origin}/auth/logout`, {
+      method: 'POST', headers: { origin, cookie: 'tokenage_session=test' },
+    })
+    const backendOrigin = `http://127.0.0.1:${backend.address().port}`
+    assert.deepEqual(await response.json(), { origin: backendOrigin })
+    for (const headers of [
+      { origin: 'http://foreign.example' },
+      { origin: `${origin}0` },
+      { origin: 'null', referer: `${origin}/settings` },
+      {},
+    ]) {
+      const rejected = await fetch(`${origin}/auth/logout`, { method: 'POST', headers })
+      assert.deepEqual(await rejected.json(), headers)
+    }
+    const fallback = await fetch(`${origin}/auth/logout`, {
+      method: 'POST', headers: { referer: `${origin}/settings` },
+    })
+    assert.deepEqual(await fallback.json(), { referer: backendOrigin })
+  } finally {
+    await new Promise(resolve => frontend.close(resolve))
+    await new Promise(resolve => backend.close(resolve))
+  }
+})

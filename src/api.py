@@ -184,6 +184,10 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         # mounted OTLP collector shares.
         try:
             resolved = await asyncio.to_thread(_resolve_request_user, request)
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code, content={"detail": exc.detail}
+            )
         except TRANSIENT_DB_ERRORS as exc:
             # Middleware runs outside FastAPI's route exception handlers.
             return store_unavailable_response(request, exc)

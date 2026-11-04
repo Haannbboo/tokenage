@@ -87,6 +87,7 @@ def _start_params(device="myhost"):
 def _web_login(api_module, monkeypatch, client, email="a@example.com"):
     """Run the mocked web flow and leave the session cookie on `client`."""
     _mock_google_flow(api_module, monkeypatch, email=email)
+    client.headers["origin"] = str(client.base_url).rstrip("/")
     response = client.get("/auth/google/login", follow_redirects=False)
     assert response.status_code == 302
     state = parse_qs(urlparse(response.headers["location"]).query)["state"][0]

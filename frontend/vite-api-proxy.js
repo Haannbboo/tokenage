@@ -61,7 +61,7 @@ async function readRequestBody(req) {
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
-function buildForwardHeaders(headers, remoteAddress) {
+function buildForwardHeaders(headers, remoteAddress, targetUrl) {
   const forwarded = new Headers()
   for (const [key, value] of Object.entries(headers)) {
     if (value === undefined) continue
@@ -75,6 +75,21 @@ function buildForwardHeaders(headers, remoteAddress) {
     }
 
     forwarded.set(key, value)
+  }
+  // Node fetch replaces Host with the backend host. Translate a browser's
+  // same-origin proof only after checking it against Vite's own HTTP origin;
+  // foreign or missing proofs reach the API unchanged and fail its check.
+  const sourceHeader = forwarded.has('origin') ? 'origin' : 'referer'
+  const source = forwarded.get(sourceHeader)
+  if (source && headers.host) {
+    try {
+      const viteOrigin = new URL(`http://${headers.host}`).origin
+      if (new URL(source).origin === viteOrigin) {
+        forwarded.set(sourceHeader, new URL(targetUrl).origin)
+      }
+    } catch {
+      // Malformed sources remain untrusted.
+    }
   }
   // The API treats a direct loopback request as the local owner. This proxy
   // is itself loopback, so mark requests from other machines (vite --host) as
@@ -93,11 +108,12 @@ export function createApiProxyMiddleware({ env, trackerConfigPath } = {}) {
     }
 
     try {
+      const targetUrl = resolveProxyRequestUrl(req.url, { env, trackerConfigPath })
       const response = await fetch(
-        resolveProxyRequestUrl(req.url, { env, trackerConfigPath }),
+        targetUrl,
         {
           method: req.method,
-          headers: buildForwardHeaders(req.headers, req.socket?.remoteAddress),
+          headers: buildForwardHeaders(req.headers, req.socket?.remoteAddress, targetUrl),
           body:
             req.method === 'GET' || req.method === 'HEAD'
               ? undefined

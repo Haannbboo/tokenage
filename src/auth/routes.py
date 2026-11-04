@@ -105,6 +105,45 @@ def _bearer_token(request: Request) -> str | None:
     return token if scheme.lower() == "bearer" and token else None
 
 
+def _origin(url: str) -> tuple[str, str, int] | None:
+    """Normalize an HTTP origin, including its effective port."""
+    try:
+        parsed = urlparse(url)
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            return None
+        return (
+            parsed.scheme,
+            parsed.hostname.lower(),
+            parsed.port
+            if parsed.port is not None
+            else (443 if parsed.scheme == "https" else 80),
+        )
+    except ValueError:
+        return None
+
+
+def _require_cookie_origin(request: Request) -> None:
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return
+    # The configured public URL survives TLS termination and multiple nodes.
+    # Direct local access uses the browser-facing URL even when a public URL
+    # is configured.
+    expected = str(request.url)
+    if CONFIG.get("server", {}).get("base_url") and not is_direct_loopback(request):
+        expected = resolve_server_urls(CONFIG)["api_url"]
+    source = request.headers.get("origin")
+    if source is None:
+        source = request.headers.get("referer", "")
+    actual = _origin(source)
+    if actual is None or actual != _origin(expected):
+        raise HTTPException(status_code=403, detail="same-origin request required")
+
+
 def _resolve_request_user(
     request: Request,
 ) -> tuple[User, AuthToken | None] | None:
@@ -120,6 +159,8 @@ def _resolve_request_user(
     if token:
         resolved = resolve_token(token)
         if resolved is not None and resolved[1].kind != "ingest":
+            if bearer is None:
+                _require_cookie_origin(request)
             user, auth_token = resolved
             request.state.user = user
             request.state.auth_token = auth_token
@@ -674,10 +715,8 @@ def auth_cli_start_approve(
 ):
     """Approve the CLI login from the confirm page (requires a resolved user).
 
-    The SameSite=Lax cookie is withheld on cross-site POSTs, and the loopback
-    owner rule refuses a cross-site Origin (see is_direct_loopback), so this is
-    unreachable from another site — no separate CSRF token (same argument as
-    POST /auth/logout).
+    Cookie authentication requires a matching Origin or Referer; the loopback
+    owner rule also refuses a cross-site Origin (see is_direct_loopback).
     """
     challenge, device = _validate_cli_start_params(code_challenge, device_name)
     resolved = _resolve_request_user(request)

@@ -238,6 +238,32 @@ def migrate_database(db_path: str | None = None) -> list[str]:
         applied.append("usage_hourly.backfill")
         insp = inspect(engine)
 
+    # Old Codex tool_token_count was total usage, not tool tokens. Neither
+    # Codex ingest path now writes tool_tokens, so remaining non-NULL values
+    # gate this one-off repair without a separate migration ledger. The proxy
+    # never populated it either; no endpoint restriction is needed.
+    with engine.begin() as connection:
+        if connection.execute(
+            text(
+                "SELECT 1 FROM usage WHERE client_source = 'codex' "
+                "AND tool_tokens IS NOT NULL LIMIT 1"
+            )
+        ).first():
+            connection.execute(
+                text(
+                    "UPDATE usage SET tool_tokens = NULL "
+                    "WHERE client_source = 'codex' AND tool_tokens IS NOT NULL"
+                )
+            )
+            # Hourly counters use zero for missing tokens, just like ingest.
+            connection.execute(
+                text(
+                    "UPDATE usage_hourly SET tool_tokens = 0 "
+                    "WHERE client_source = 'codex' AND tool_tokens <> 0"
+                )
+            )
+            applied.append("usage.codex_tool_tokens")
+
     existing = {
         table: {index["name"] for index in indexes}
         for (_, table), indexes in insp.get_multi_indexes().items()

@@ -4935,6 +4935,112 @@ def test_migrate_database_replaces_usage_daily_with_hourly_backfill(fresh_db):
     assert hourly_rows() == expected
 
 
+@pytest.mark.parametrize("fail_hourly", [False, True])
+def test_migrate_database_clears_codex_tool_tokens(fresh_db, fail_hourly):
+    from sqlalchemy import event
+
+    db = fresh_db.database_module
+    engine = db.get_engine(fresh_db.db_path)
+    migrate = fresh_db.schema_migrations_module.migrate_database
+    for i, (source, endpoint, tokens) in enumerate(
+        [
+            ("codex", "otlp", 15),
+            ("codex", "/v1/responses", 15),
+            ("codex", "otlp", None),
+            ("claude-code", "otlp", 7),
+            ("opencode", "/v1/chat/completions", 9),
+            (None, "otlp", 4),
+        ]
+    ):
+        ingest_write(
+            db.log_usage,
+            db.Usage(
+                user_id=f"u{i % 2}",
+                device_id="test-device",
+                ts=TS_2026_04_17_10 + i * 3_600_000_000,
+                provider="openai",
+                model="m1",
+                client_source=source,
+                endpoint=endpoint,
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+                tool_tokens=tokens,
+                input_cost_usd=0.001,
+                output_cost_usd=0.002,
+                total_cost_usd=0.003,
+            ),
+            db_path=fresh_db.db_path,
+        )
+
+    def rows():
+        with engine.connect() as connection:
+            return {
+                table: [
+                    dict(row._mapping)
+                    for row in connection.execute(
+                        db.text(f"SELECT * FROM {table} ORDER BY id")
+                    )
+                ]
+                for table in ("usage", "usage_hourly")
+            }
+
+    before = rows()
+    expected = {
+        table: [
+            {
+                **row,
+                "tool_tokens": (None if table == "usage" else 0)
+                if row["client_source"] == "codex"
+                else row["tool_tokens"],
+            }
+            for row in records
+        ]
+        for table, records in before.items()
+    }
+
+    def reject_hourly(conn, cursor, statement, parameters, context, executemany):
+        if statement.startswith("UPDATE usage_hourly SET tool_tokens"):
+            raise RuntimeError("hourly repair failed")
+
+    if fail_hourly:
+        event.listen(engine, "before_cursor_execute", reject_hourly)
+        try:
+            with pytest.raises(RuntimeError, match="hourly repair failed"):
+                migrate(fresh_db.db_path)
+        finally:
+            event.remove(engine, "before_cursor_execute", reject_hourly)
+        assert rows() == before  # Raw and hourly corrections are atomic.
+
+    assert "usage.codex_tool_tokens" in migrate(fresh_db.db_path)
+    assert rows() == expected  # All other agents and columns stay identical.
+    assert migrate(fresh_db.db_path) == []
+    assert rows() == expected
+
+
+def test_migrate_database_skips_codex_repair_without_legacy_rows(fresh_db):
+    from sqlalchemy import event
+
+    db = fresh_db.database_module
+    engine = db.get_engine(fresh_db.db_path)
+    statements = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        assert (
+            fresh_db.schema_migrations_module.migrate_database(fresh_db.db_path) == []
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert any(
+        "SELECT 1 FROM usage WHERE client_source = 'codex'" in s for s in statements
+    )
+    assert not any(s.startswith("UPDATE usage") for s in statements)
+
+
 def test_migrate_database_adds_user_picture_idempotently(fresh_db):
     from sqlalchemy import inspect, text
 

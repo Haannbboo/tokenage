@@ -537,3 +537,33 @@ def test_server_dispatch_consumes_no_banner_without_changing_other_arguments(tmp
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout == expected
+
+
+def test_token_revoke_revokes_only_the_named_users_tokens(cli_module, capsys):
+    from src.auth.tokens import mint_token, resolve_token
+    from src.database import init_db
+
+    init_db()
+    revoked = [
+        mint_token("a@example.com", kind=kind)[0] for kind in ("cli", "web", "ingest")
+    ]
+    retained = [
+        mint_token("b@example.com", kind=kind)[0] for kind in ("cli", "web", "ingest")
+    ]
+    assert cli_module.main(["token", "revoke", "--email", " A@Example.COM "]) == 0
+    assert "Revoked 3 tokens for a@example.com." in capsys.readouterr().out
+    assert all(resolve_token(token) is None for token in revoked)
+    assert all(resolve_token(token) is not None for token in retained)
+    assert cli_module.main(["token", "revoke", "--email", "a@example.com"]) == 0
+    assert "Revoked 0 tokens" in capsys.readouterr().out
+    assert cli_module.main(["token", "revoke", "--email", "missing@example.com"]) == 0
+    assert cli_module.main(["token", "revoke", "--email", " "]) == 2
+
+
+def test_token_revoke_help(cli_module, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli_module.main(["token", "revoke", "--help"])
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--email" in help_text
+    assert "owner@localhost" in help_text

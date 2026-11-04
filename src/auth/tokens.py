@@ -17,6 +17,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from ..config.app import CONFIG
 from ..database.engine import get_engine
 from ..database.models import AuthToken, Device, User
 
@@ -145,6 +146,18 @@ def _web_session_expired(token: AuthToken, now: int) -> bool:
     return token.kind == "web" and last_active <= now - WEB_IDLE_TIMEOUT_MICROS
 
 
+def google_email_allowed(email: str) -> bool:
+    """Apply the Google email policy to both sign-in and existing credentials."""
+    email = email.strip().lower()
+    allowlist = CONFIG.get("auth", {}).get("allowlist") or []
+    normalized = {str(entry).strip().lower() for entry in allowlist if entry}
+    return (
+        bool(email)
+        and email != LOCAL_OWNER_EMAIL
+        and (not normalized or email in normalized)
+    )
+
+
 def resolve_token(
     token: str, db_path: str | None = None
 ) -> tuple[User, AuthToken] | None:
@@ -170,6 +183,9 @@ def resolve_token(
             if row is None:
                 return None
             auth_token, user, device_id, device_revoked_at, device_user_id = row
+            if CONFIG.get("auth", {}).get("provider", "local") == "google":
+                if not google_email_allowed(user.email):
+                    return None
             if auth_token.revoked_at is not None:
                 return None
             # An ingest token not bound to a device is a pre-device-binding leftover.
@@ -281,6 +297,25 @@ def revoke_token(token_id: str, user_id: str, db_path: str | None = None) -> boo
         changed = result.rowcount > 0  # type: ignore[attr-defined]
         session.commit()
     return changed
+
+
+def revoke_user_tokens(email: str, db_path: str | None = None) -> int:
+    """Revoke all token kinds for one email without creating a missing user."""
+    email = email.strip().lower()
+    if not email:
+        raise ValueError("email must not be empty")
+    with Session(get_engine(db_path)) as session:
+        _set_auth_statement_timeout(session)
+        result = session.execute(
+            sa_update(AuthToken)
+            .where(
+                AuthToken.user_id.in_(select(User.id).where(User.email == email)),
+                AuthToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=_now_micros())
+        )
+        session.commit()
+        return result.rowcount  # type: ignore[attr-defined]
 
 
 def list_user_tokens(user_id: str, db_path: str | None = None) -> list[AuthToken]:

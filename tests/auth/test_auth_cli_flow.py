@@ -1015,3 +1015,23 @@ def test_cli_approvals_are_budgeted_per_user(api_module, monkeypatch, fresh_db):
     assert (
         other.post("/auth/cli/start", data={"code_challenge": "a" * 43})
     ).status_code == 200
+
+
+def test_google_cli_codes_spend_the_approve_budget(api_module, monkeypatch, fresh_db):
+    """The Google flow must not hand out codes past the per-user budget."""
+    _enable_auth(monkeypatch)
+    _mock_google_flow(api_module, monkeypatch)
+    client = TestClient(api_module.app)
+    for _ in range(10):
+        _, challenge = _pkce_pair()
+        assert _google_cli_code(client, challenge)
+    _, challenge = _pkce_pair()
+    start = client.get(
+        "/auth/cli/start", params={"code_challenge": challenge}, follow_redirects=False
+    )
+    state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+    limited = client.get(
+        f"/auth/google/callback?code=the-code&state={state}", follow_redirects=False
+    )
+    assert limited.status_code == 429
+    assert 1 <= int(limited.headers["retry-after"]) <= 60

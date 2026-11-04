@@ -312,7 +312,7 @@ def test_signin_state_single_use_and_expiry_across_processes(
         results = [child.receive() for child in children[1:]]
         for name, expected in (
             ("cli", {"challenge": "test"}),
-            ("login", {}),
+            ("login", {"token_epoch": 0}),
         ):
             assert sum(result[name][0] == expected for result in results) == 1
             assert (

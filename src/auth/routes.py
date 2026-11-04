@@ -330,7 +330,11 @@ def auth_local_login(request: Request, code: str = ""):
     if auth_provider() != "local":
         raise HTTPException(status_code=404, detail="not found")
     check_signin_rate_limit(request)
-    if auth_google.pop_login_code(code) is None:
+    entry = auth_google.pop_login_code(code)
+    if entry is None:
+        raise HTTPException(status_code=400, detail="invalid or expired link")
+    # A revoke bumps the owner's epoch: a link issued before it is dead.
+    if int(entry.get("token_epoch") or 0) != get_local_owner().token_epoch:
         raise HTTPException(status_code=400, detail="invalid or expired link")
     plaintext_token, _ = mint_token(
         LOCAL_OWNER_EMAIL, kind="web", device_name=_browser_label(request)
@@ -430,6 +434,9 @@ async def auth_google_callback(request: Request):
         # CLI paste-back flow: no web session is minted — the code page
         # renders the one-time code and the CLI redeems it at exchange.
         user = get_or_create_user(email)
+        # Same per-user budget as POST /auth/cli/start: one account must not
+        # fill the pending-code namespace through the Google flow.
+        await asyncio.to_thread(check_cli_approve_rate_limit, user.id)
         update_user_name(user.id, str(claims.get("name") or "").strip() or None)
         update_user_picture(user.id, picture)
         device = _sanitize_device_name(str(cli_flow.get("device_name") or ""))

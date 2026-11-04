@@ -1210,6 +1210,7 @@ def test_signed_in_cli_approval_spends_no_signin_budget(
     token, _ = mint_token("a@example.com", kind="web")
     client = TestClient(api_module.app, client=("203.0.113.1", 1))
     client.cookies.set(SESSION_COOKIE, token)
+    client.headers["origin"] = str(client.base_url).rstrip("/")
     for _ in range(3):
         assert (
             client.get("/auth/cli/start", params={"code_challenge": "a" * 43})

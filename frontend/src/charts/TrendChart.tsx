@@ -519,21 +519,29 @@ export function TrendChart({
              </svg>
 
             <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
+              position: 'relative',
+              height: '15px',
               marginTop: '20px',
               borderTop: '1px solid var(--chart-footer-border)',
               paddingTop: '10px',
-              paddingLeft: `${(paddingX / 1000) * 100}%`,
-              paddingRight: `${(paddingX / 1000) * 100}%`
+              boxSizing: 'content-box',
             }}>
               {trendLabelIndices(filled.length, plotWidth * (1 - 2 * paddingX / 1000)).map(i => {
                 const d = filled[i];
                 const label = d.period.includes(':')
                   ? d.period.split(' ')[1]
                   : d.period.split('-').slice(1).join('/');
+                // Centred under its bucket, kept inside the panel at the edges.
+                const centre = (paddingX + (i + 0.5) / filled.length * chartWidth) / 10;
                 return (
-                  <div key={d.period} style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                  <div key={d.period} style={{
+                    position: 'absolute',
+                    left: `clamp(16px, ${centre}%, calc(100% - 16px))`,
+                    transform: 'translateX(-50%)',
+                    whiteSpace: 'nowrap',
+                    fontSize: '10px',
+                    color: 'var(--text-muted)',
+                  }}>
                     {label}
                   </div>
                 );

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
+import { t } from '../i18n'
 
 export function CopyButton({
   text,
@@ -43,7 +44,7 @@ export function CopyButton({
 
 export function copyTextToClipboard(text: string, onCopy?: (msg: string) => void) {
   void navigator.clipboard.writeText(text).then(() => {
-    onCopy?.('✓ Copied to clipboard')
+    onCopy?.(`✓ ${t('Copied to clipboard')}`)
   })
 }
 
@@ -66,7 +67,7 @@ export function ClickToCopy({ text, children, onCopy }: { text: string, children
         e.preventDefault();
         handleCopy(e);
       }}
-      title="Click to copy"
+      title={t('Click or press Enter to copy')}
     >
       {children}
     </span>

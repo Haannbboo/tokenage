@@ -237,6 +237,8 @@ export const zh: Record<string, string> = {
   // Empty state / onboarding (P0-6)
   'Detected Agents': '已检测到的Agent',
   'Copied!': '已复制！',
+  'Click or press Enter to copy': '点击或按 Enter 复制',
+  'Copied to clipboard': '已复制到剪贴板',
   'Source:': '来源：',
   'Latency:': '延迟：',
   'Reset': '重置',

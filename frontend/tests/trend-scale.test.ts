@@ -67,15 +67,24 @@ describe('trend x-axis labels', () => {
     const phone = trendLabelIndices(24, 300)
     expect(phone[0]).toBe(0)
     expect(phone[phone.length - 1]).toBe(23)
-    expect(phone.length * 44).toBeLessThanOrEqual(300 + 44)
+    expect(phone.length).toBeLessThanOrEqual(Math.floor(300 / 44))
     const wide = trendLabelIndices(24, 1200)
-    expect(wide.length).toBeLessThanOrEqual(13)
+    expect(wide.length).toBeLessThanOrEqual(12)
     expect(wide.length).toBeGreaterThan(phone.length)
     expect(trendLabelIndices(7, 1200)).toEqual([0, 1, 2, 3, 4, 5, 6])
     expect(trendLabelIndices(1, 300)).toEqual([0])
     expect(trendLabelIndices(0, 300)).toEqual([])
-    // No two shown labels closer than half a step.
-    const gaps = phone.slice(1).map((n, i) => n - phone[i])
-    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(Math.ceil(24 / Math.floor(300 / 44)) / 2)
+    for (let count = 1; count <= 60; count++) {
+      for (const width of [100, 300, 500, 1200]) {
+        const shown = trendLabelIndices(count, width)
+        expect(shown.length).toBeLessThanOrEqual(Math.min(12, Math.max(2, Math.floor(width / 44)), count))
+        expect(shown[shown.length - 1]).toBe(count - 1)
+      }
+    }
+    // No two shown labels closer than a step, which is at least one label wide.
+    for (const [shown, width] of [[phone, 300], [wide, 1200]] as const) {
+      const gaps = shown.slice(1).map((n, i) => n - shown[i])
+      expect(Math.min(...gaps)).toBeGreaterThanOrEqual(Math.ceil(24 / Math.min(12, Math.floor(width / 44))))
+    }
   })
 })

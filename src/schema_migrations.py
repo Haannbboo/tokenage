@@ -181,13 +181,15 @@ def _clear_codex_tool_tokens(engine) -> list[str]:
 
     Ingest drops Codex tool_tokens, so a data_migrations row marks it done.
     ponytail: one transaction, not chunks; prod has ~16k Codex rows. A lock
-    wait over 2s (or SQLite busy) skips the repair until the next migrate.
+    wait over 2s, a statement timeout (or SQLite busy) skips the repair
+    until the next migrate. Reports the repair only when rows changed.
     """
     with engine.connect() as connection:
         if connection.execute(
             text("SELECT 1 FROM data_migrations WHERE name = 'codex_tool_tokens'")
         ).first():
             return []
+    updated = 0
     try:
         with engine.begin() as connection:
             if engine.dialect.name == "postgresql":
@@ -201,25 +203,31 @@ def _clear_codex_tool_tokens(engine) -> list[str]:
                 {"now": time.time_ns() // 1000},
             ).rowcount:
                 return []
-            connection.execute(
+            updated += connection.execute(
                 text(
                     "UPDATE usage SET tool_tokens = NULL "
                     "WHERE client_source = 'codex' AND tool_tokens IS NOT NULL"
                 )
-            )
+            ).rowcount
             # Hourly counters use zero for missing tokens, just like ingest.
-            connection.execute(
+            updated += connection.execute(
                 text(
                     "UPDATE usage_hourly SET tool_tokens = 0 "
                     "WHERE client_source = 'codex' AND tool_tokens <> 0"
                 )
-            )
+            ).rowcount
     except OperationalError as exc:
         code = getattr(exc.orig, "pgcode", None) or getattr(exc.orig, "sqlstate", None)
-        # Lock timeout, deadlock or SQLite busy: nothing committed, retry later.
-        if code not in ("55P03", "40P01") and "database is locked" not in str(exc.orig):
+        # Lock timeout, deadlock, statement timeout or SQLite busy: nothing
+        # committed, retry later.
+        if code not in ("55P03", "40P01", "57014") and "database is locked" not in str(
+            exc.orig
+        ):
             raise
         log.warning("Codex tool-token repair skipped, retried next migrate: %s", exc)
+        return []
+    if not updated:
+        # Marker is set, but there was nothing to repair: report no change.
         return []
     return ["usage.codex_tool_tokens", "usage_hourly.codex_tool_tokens"]
 

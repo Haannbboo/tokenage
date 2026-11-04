@@ -5061,10 +5061,10 @@ def test_migrate_database_codex_repair_runs_once(fresh_db):
     db = fresh_db.database_module
     engine = db.get_engine(fresh_db.db_path)
     migrate = fresh_db.schema_migrations_module.migrate_database
-    assert migrate(fresh_db.db_path) == [
-        "usage.codex_tool_tokens",
-        "usage_hourly.codex_tool_tokens",
-    ]
+    # Nothing to repair on an empty database: the marker is set, but no
+    # change is reported.
+    assert migrate(fresh_db.db_path) == []
+    assert _codex_tool_tokens(fresh_db)[2] == [("codex_tool_tokens",)]
     # Ingest drops these now; a direct write proves the marker skips the repair.
     usage_id = _seed_codex_usage(fresh_db, 15)
     statements = []
@@ -5117,6 +5117,36 @@ def test_migrate_database_codex_repair_skips_when_locked(fresh_db):
             if engine.dialect.name == "sqlite":
                 event.remove(engine, "before_cursor_execute", busy)
         blocker.rollback()
+    # Nothing committed, marker unset: the next migrate retries.
+    assert _codex_tool_tokens(fresh_db)[0] == [(15,)]
+    assert _codex_tool_tokens(fresh_db)[2] == []
+    assert "usage.codex_tool_tokens" in migrate(fresh_db.db_path)
+    assert _codex_tool_tokens(fresh_db)[:2] == [[(None,)], [(0,)]]
+
+
+def test_migrate_database_codex_repair_skips_on_statement_timeout(fresh_db):
+    from sqlalchemy import event
+
+    db = fresh_db.database_module
+    engine = db.get_engine(fresh_db.db_path)
+    migrate = fresh_db.schema_migrations_module.migrate_database
+    _seed_codex_usage(fresh_db, 15)
+    # Postgres raises 57014 when a statement runs past statement_timeout.
+    timeout_error = type(
+        "StatementTimeout",
+        (engine.dialect.loaded_dbapi.OperationalError,),
+        {"pgcode": "57014"},
+    )
+
+    def timeout(conn, cursor, statement, parameters, context, executemany):
+        if statement.startswith("UPDATE usage SET tool_tokens"):
+            raise timeout_error("canceling statement due to statement timeout")
+
+    event.listen(engine, "before_cursor_execute", timeout)
+    try:
+        assert "usage.codex_tool_tokens" not in migrate(fresh_db.db_path)
+    finally:
+        event.remove(engine, "before_cursor_execute", timeout)
     # Nothing committed, marker unset: the next migrate retries.
     assert _codex_tool_tokens(fresh_db)[0] == [(15,)]
     assert _codex_tool_tokens(fresh_db)[2] == []

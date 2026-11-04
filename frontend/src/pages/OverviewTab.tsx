@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useCountUp } from '../useCountUp'
 import { TrendChart } from '../charts/TrendChart'
-import { ReadState } from '../components/ReadState'
+import { ReadState, type ReadError } from '../components/ReadState'
 import { TopUsageChart } from '../charts/TopUsageChart'
 import { ToolCallsChart } from '../charts/ToolCallsChart'
 import { DailyHeatmap } from '../charts/DailyHeatmap'
@@ -35,7 +35,7 @@ type OverviewTabProps = {
   dashboardError: string | null
   dailyError: boolean
   dailyPending: boolean
-  heatmapError: boolean
+  heatmapError: ReadError
   /** `heatmapData` still belongs to another filter. */
   heatmapPending: boolean
   onRetry: () => void
@@ -498,7 +498,7 @@ export function OverviewTab({
         <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {heatmapError || heatmapPending ? (
               <div className="widget" style={{ flex: 1 }}>
-                <ReadState error={heatmapError ? t('Failed to load activity') : null} onRetry={onRetry} />
+                <ReadState error={heatmapError === 'failed' ? t('Failed to load activity') : null} onRetry={onRetry} />
               </div>
             ) : <>
               <DailyHeatmap mode="activity" data={heatmapData} />

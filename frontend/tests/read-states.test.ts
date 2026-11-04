@@ -127,6 +127,52 @@ it('Overview: only a failed summary replaces it; heatmap and count fail on their
   expect(screen.queryByText('Failed to fetch dashboard data')).toBeNull()
 })
 
+it('Top Sources: a refresh keeps the rows, marked as refreshing until its own read settles', async () => {
+  const replies: Record<string, Reply> = { '/usage/summary': SUMMARY, '/usage/by-source': [{ client_source: 'cli', total_tokens: 9, total_cost_usd: 1, requests: 2 }] }
+  stubApi(replies)
+  open('/dashboard')
+  const panel = () => screen.getByText('Top Sources').closest('.widget') as HTMLElement
+  await waitFor(() => expect(screen.getByText('Top Models')).toBeTruthy())
+  await act(async () => { fireEvent.click(within(screen.getByText('Top Models').closest('.widget') as HTMLElement).getByRole('button', { name: 'Sources' })) })
+  await waitFor(() => expect(panel().classList.contains('is-refreshing')).toBe(false))
+  expect(within(panel()).queryByRole('status')).toBeNull()
+
+  replies['/usage/by-source'] = 'pending'
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Refresh' })) })
+  expect(within(panel()).queryByRole('status')).toBeNull()
+  expect(panel().classList.contains('is-refreshing')).toBe(true)
+})
+
+it('Heatmap: a retry of the same view keeps the error and its focused Retry until the read settles', async () => {
+  stubApi({ '/usage/summary': SUMMARY })
+  const inner = globalThis.fetch
+  let heatmap: 'ok' | 'fail' | 'pending' = 'ok'
+  let heatmapReads = 0
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    if (!(String(input).includes('/usage/daily?') && String(input).includes('until='))) return inner(input)
+    heatmapReads++
+    if (heatmap === 'pending') return new Promise<Response>(() => {})
+    if (heatmap === 'ok') return { ok: true, status: 200, json: async () => [] } as Response
+    return { ok: false, status: 500, json: async () => ({}) } as Response
+  }))
+  open('/dashboard')
+  // Loaded once, so a later failure is a failed refresh of the same view.
+  await waitFor(() => expect(heatmapReads).toBe(1))
+  await waitFor(() => expect(screen.getByText('Estimated Cost')).toBeTruthy())
+  heatmap = 'fail'
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Refresh' })) })
+  const alert = await screen.findByText('Failed to load activity')
+  const widget = alert.closest('.widget') as HTMLElement
+  const retry = within(widget).getByRole('button', { name: 'Retry' })
+  retry.focus()
+  heatmap = 'pending'
+  await act(async () => { fireEvent.click(retry) })
+  expect(retry.isConnected).toBe(true)
+  expect(document.activeElement).toBe(retry)
+  expect(retry.getAttribute('aria-disabled')).toBe('true')
+  expect(within(widget).getByRole('status')).toBeTruthy()
+})
+
 it('Overview: Refresh keeps Tool Calls rows; a new range keeps the layout but hides the old KPIs until its summary lands', async () => {
   const replies: Record<string, Reply> = { '/usage/summary': SUMMARY, '/usage/by-tool': [{ tool_name: 'bash', count: 7 }] }
   stubApi(replies)
@@ -138,6 +184,9 @@ it('Overview: Refresh keeps Tool Calls rows; a new range keeps the layout but hi
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Refresh' })) })
   expect(within(panel()).getByText('bash')).toBeTruthy()
   expect(within(panel()).queryByRole('status')).toBeNull()
+  // The chart's own read is still in flight: the kept rows say so, whatever the page's refresh state.
+  expect(panel().classList.contains('is-refreshing')).toBe(true)
+  expect(panel().getAttribute('aria-busy')).toBe('true')
 
   replies['/usage/summary'] = 'pending'
   const costTile = () => screen.getByText('Estimated Cost', { selector: '.stat-label' }).parentElement as HTMLElement

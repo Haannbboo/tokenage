@@ -71,6 +71,9 @@ export function TopUsageChart({
   const [deviceRows, setDeviceRows] = useState<DeviceDailyRow[] | null>(null)
   // Shared by the source and device reads: a dimension change clears it.
   const { error: readError, setError: setReadError, attempt, retry } = useReadRetry()
+  // The source or device read in flight, apart from the page's: retained rows
+  // show as refreshing until it settles.
+  const [loading, setLoading] = useState(false)
   // A refresh of the same view keeps the rows (dimmed by the page); another view clears them.
   const view = filterParams.view ?? filterParams
   const sourceViewRef = useRef<unknown>(view)
@@ -82,6 +85,7 @@ export function TopUsageChart({
     if (dimension !== 'source') return
     if (sourceViewRef.current !== view) { sourceViewRef.current = view; setSourceSummary(null); setReadError(false) }
     const controller = new AbortController()
+    setLoading(true)
     async function fetchSourceSummary() {
       try {
         const url = new URL('/usage/by-source', window.location.origin)
@@ -97,16 +101,19 @@ export function TopUsageChart({
         if (!controller.signal.aborted) { setSourceSummary(rows); setReadError(false) }
       } catch {
         if (!controller.signal.aborted) setReadError('failed')
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
     fetchSourceSummary()
-    return () => controller.abort()
+    return () => { controller.abort(); setLoading(false) }
   }, [dimension, filterParams, attempt, view, setReadError])
 
   useEffect(() => {
     if (dimension !== 'device') return
     if (deviceViewRef.current !== view) { deviceViewRef.current = view; setDeviceRows(null); setReadError(false) }
     const controller = new AbortController()
+    setLoading(true)
     async function fetchDeviceRows() {
       try {
         const url = new URL('/usage/daily-by-dimension', window.location.origin)
@@ -124,10 +131,12 @@ export function TopUsageChart({
         if (!controller.signal.aborted) { setDeviceRows(rows); setReadError(false) }
       } catch {
         if (!controller.signal.aborted) setReadError('failed')
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
     fetchDeviceRows()
-    return () => controller.abort()
+    return () => { controller.abort(); setLoading(false) }
   }, [dimension, filterParams, tzOffset, attempt, view, setReadError])
 
   const items: BarItem[] = useMemo(() => {
@@ -278,6 +287,7 @@ export function TopUsageChart({
       items={items}
       mono={dimension === 'model'}
       metric={metric}
+      refreshing={loading && !readError && (dimension === 'source' ? sourceSummary !== null : dimension === 'device' && deviceRows !== null)}
       status={readError || (summaryPending && (dimension === 'model' || dimension === 'provider')) || (dimension === 'source' && sourceSummary === null) || (dimension === 'device' && deviceRows === null)
         ? <ReadState error={readError === 'failed' ? t('Failed to fetch dashboard data') : null} onRetry={retry} />
         : undefined}

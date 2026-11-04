@@ -5,6 +5,7 @@ import { getSinceDate, rangeGranularity } from '../dateRange.ts'
 import { getTimezoneOffset, resolveTimezone, providerColor, netThroughput } from '../utils'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
+import type { ReadError } from '../components/ReadState'
 
 type DashboardDataOptions = {
   dateRange?: DateRangeOption
@@ -33,7 +34,10 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
   // reads fail on their own panels. The count only feeds onboarding.
   const [dashboardError, setDashboardError] = useState<string | null>(null)
   const [dailyError, setDailyError] = useState(false)
-  const [heatmapError, setHeatmapError] = useState(false)
+  // A same-filter re-read keeps the failure (as 'retrying'), so the heatmap's
+  // error and its focused Retry stay mounted until the read settles.
+  const [heatmapError, setHeatmapError] = useState<ReadError>(false)
+  const heatmapRequestedRef = useRef<string | null>(null)
   // The view the daily totals belong to: until it is the current one, the
   // trend panel and the sparklines wait, as the summary does.
   const [dailyView, setDailyView] = useState<string | null>(null)
@@ -85,7 +89,9 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
       setError(null)
       setDashboardError(null)
       setDailyError(false)
-      setHeatmapError(false)
+      const heatmapViewChanged = heatmapRequestedRef.current !== heatmapView
+      heatmapRequestedRef.current = heatmapView
+      setHeatmapError(e => (heatmapViewChanged ? false : e && 'retrying'))
       setDashboardInitialLoading(isInitialDashboardLoad)
       setDashboardRefreshing(!isInitialDashboardLoad)
       try {
@@ -134,9 +140,10 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
           panel<DailyUsage[]>(includeHeatmap, heatmapUrl, data => {
             setHeatmapData(data)
             setHeatmapViewLoaded(heatmapView)
+            setHeatmapError(false)
           }, err => {
             console.error('Failed to load activity:', err)
-            setHeatmapError(true)
+            setHeatmapError('failed')
           }),
           panel<{ total: number }>(includeCount, totalCountUrl, data => setTotalTrackedEvents(data.total)),
         ])

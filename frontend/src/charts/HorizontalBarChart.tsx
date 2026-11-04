@@ -142,6 +142,7 @@ export function HorizontalBarChart({
   mono = false,
   toolBadges = false,
   status,
+  refreshing = false,
   children,
 }: {
   title: string
@@ -151,6 +152,8 @@ export function HorizontalBarChart({
   metric: Metric
   /** Shown instead of the list while the items load or after they fail. */
   status?: React.ReactNode
+  /** The shown rows are being re-read (a refresh of the same view). */
+  refreshing?: boolean
   children?: React.ReactNode
 }) {
   // The row shown as active: hovered, focused or tapped. Tracked by row key
@@ -200,7 +203,7 @@ export function HorizontalBarChart({
   }, [active])
 
   return (
-    <div className="widget top-list">
+    <div className={`widget top-list refresh-sheen${refreshing ? ' is-refreshing' : ''}`} aria-busy={refreshing || undefined}>
       <div className="widget-header">
         <span>{title}</span>
         {additive && total > 0 && status == null && <span className="widget-meta">{t('Total')} {format(total)}</span>}

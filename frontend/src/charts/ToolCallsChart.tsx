@@ -36,11 +36,14 @@ export function ToolCallsChart({
   const view = filterParams.view ?? filterParams
   const viewRef = useRef<unknown>(view)
   const { error, setError, attempt, retry } = useReadRetry()
+  // Its own read, apart from the page's: the rows stay, marked as refreshing, until it settles.
+  const [loading, setLoading] = useState(false)
   const [metric, setMetric] = useState<ToolMetric>('count')
 
   useEffect(() => {
     if (viewRef.current !== view) { viewRef.current = view; setRows(null); setError(false) }
     const controller = new AbortController()
+    setLoading(true)
     async function fetchToolCalls() {
       try {
         const url = new URL('/usage/by-tool', window.location.origin)
@@ -56,10 +59,12 @@ export function ToolCallsChart({
         if (!controller.signal.aborted) { setRows(data); setError(false) }
       } catch {
         if (!controller.signal.aborted) setError('failed')
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
     fetchToolCalls()
-    return () => controller.abort()
+    return () => { controller.abort(); setLoading(false) }
   }, [filterParams, attempt, view, setError])
 
   const items: BarItem[] = (rows ?? []).map(row => ({
@@ -78,6 +83,7 @@ export function ToolCallsChart({
       items={items}
       toolBadges
       metric={metric}
+      refreshing={loading && rows !== null && !error}
       status={error || rows === null ? <ReadState error={error === 'failed' ? t('Failed to load tool calls') : null} onRetry={retry} /> : undefined}
     >
       <div className="top-list-controls">

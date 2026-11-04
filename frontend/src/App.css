@@ -68,16 +68,6 @@
   user-select: none;
 }
 
-.sidebar-monogram {
-  display: none;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-  font: 600 12px/22px var(--font-mono);
-  text-align: center;
-}
-
 .sidebar-collapse { margin-left: auto; }
 
 .account { position: relative; margin-bottom: 12px; }
@@ -263,7 +253,7 @@
 
 /* Collapsed icon rail */
 .is-collapsed .sidebar { width: 52px; }
-.is-collapsed .sidebar-logo pre,
+.is-collapsed .sidebar-logo,
 .is-collapsed .section-label,
 .is-collapsed .sidebar-label,
 .is-collapsed .sidebar .pill,
@@ -271,7 +261,6 @@
 .is-collapsed .account-chevron,
 .is-collapsed .sidebar-version { display: none; }
 .is-collapsed .sidebar-brand { flex-direction: column; height: auto; gap: 6px; padding: 0; }
-.is-collapsed .sidebar-monogram { display: block; }
 .is-collapsed .sidebar-collapse { margin-left: 0; transform: scaleX(-1); }
 .is-collapsed .account-trigger { justify-content: center; padding: 0; border-color: transparent; background: none; }
 .is-collapsed .account-trigger:hover { background: var(--surface-hover); }

@@ -202,7 +202,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="sidebar-brand">
           <Link to="/dashboard" onClick={closeNavigation} className="sidebar-logo" aria-label="tokenage">
             <pre aria-hidden="true">{ASCII_ART}</pre>
-            <span className="sidebar-monogram" aria-hidden="true">T</span>
           </Link>
           {!phone && (
             <button

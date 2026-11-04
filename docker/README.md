@@ -133,6 +133,13 @@ set the public HTTPS origin in `server.base_url` instead. Cookie-authenticated
 writes (logout, revoke, pricing edits) need `server.base_url` or a proxy that
 preserves Host; otherwise they return 403.
 
+Sign-in starts allow ten requests per minute per client IP in each API worker.
+The API uses Uvicorn's client address; forwarded addresses are accepted only from
+peers explicitly trusted through the server's `FORWARDED_ALLOW_IPS` setting.
+If the reverse proxy is not trusted there, its callers share its IP budget.
+When enabling this setting, restrict it to the direct proxy's addresses and keep
+the API inaccessible to untrusted peers; never use `*` on an exposed API.
+
 For an existing Postgres:
 
 - `localhost` means this container. Use `host.docker.internal` for the host

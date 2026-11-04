@@ -28,6 +28,7 @@ MAX_PENDING_STATES = 512
 # One-time CLI and browser login codes share the same store and TTL.
 CLI_CODE_NAMESPACE = "cli-codes"
 CLI_CODE_TTL_SECONDS = 300
+MAX_PENDING_CLI_CODES = 4096
 LOGIN_CODE_NAMESPACE = "login-codes"
 
 # Google endpoints are pinned (no discovery-document fetch at runtime); the
@@ -120,7 +121,7 @@ def pop_oauth_state(state: str) -> dict[str, Any] | None:
 
 def store_cli_code(code: str, data: dict[str, Any]) -> None:
     _store_entry(
-        CLI_CODE_NAMESPACE, code, data, CLI_CODE_TTL_SECONDS, MAX_PENDING_STATES
+        CLI_CODE_NAMESPACE, code, data, CLI_CODE_TTL_SECONDS, MAX_PENDING_CLI_CODES
     )
 
 

@@ -777,7 +777,7 @@ def test_cli_code_store_rejects_expired(api_module, isolated_home):
 
 def test_cli_code_store_caps_pending_entries(api_module, isolated_home, monkeypatch):
     auth_google = _routes_module().auth_google
-    monkeypatch.setattr(auth_google, "MAX_PENDING_STATES", 3)
+    monkeypatch.setattr(auth_google, "MAX_PENDING_CLI_CODES", 3)
     for i in range(4):
         auth_google.store_cli_code(f"c{i}", {"user_id": "u"})
 
@@ -833,3 +833,17 @@ def test_unauthenticated_chunked_body_is_capped_before_routing(
     half = len(body) // 2
     headers = {"content-type": content_type}
     assert asgi_post(api_module.app, path, [body[:half], body[half:]], headers) == 413
+
+
+def test_pending_cli_code_survives_one_ips_approval_flood(api_module, monkeypatch):
+    from src.auth import signin
+    from src.auth.tokens import get_local_owner
+
+    auth_google = _routes_module().auth_google
+    owner = get_local_owner()
+    auth_google.store_cli_code("existing", {"user_id": owner.id})
+    client = TestClient(api_module.app)
+    for i in range(signin.SIGNIN_PER_MINUTE + 1):
+        response = client.post("/auth/cli/start", data={"code_challenge": "a" * 43})
+        assert response.status_code == (200 if i < signin.SIGNIN_PER_MINUTE else 429)
+    assert auth_google.pop_cli_code("existing") == {"user_id": owner.id}

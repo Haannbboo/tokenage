@@ -893,3 +893,125 @@ def test_exchange_applies_current_email_policy(api_module, monkeypatch, fresh_db
         "OWNERCODE", {"user_id": get_local_owner().id, "code_challenge": challenge}
     )
     assert _exchange(client, "OWNERCODE", verifier).status_code == 403
+
+
+def _google_cli_code(client, challenge):
+    """Run the Google CLI flow without a web session: the code has no approver."""
+    start = client.get(
+        "/auth/cli/start", params={"code_challenge": challenge}, follow_redirects=False
+    )
+    state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+    callback = client.get(
+        f"/auth/google/callback?code=the-code&state={state}", follow_redirects=False
+    )
+    assert callback.status_code == 200
+    return _code_from_page(callback.text)
+
+
+def test_user_revoke_refuses_codes_without_an_approver(
+    api_module, monkeypatch, fresh_db
+):
+    from src.auth.tokens import revoke_user_tokens
+
+    _enable_auth(monkeypatch)
+    _mock_google_flow(api_module, monkeypatch)
+    client = TestClient(api_module.app)
+    verifier, challenge = _pkce_pair()
+    code = _google_cli_code(client, challenge)
+
+    revoke_user_tokens("a@example.com")
+    tokens_before = len(_token_rows(fresh_db))
+    assert _exchange(client, code, verifier).status_code == 400
+    assert len(_token_rows(fresh_db)) == tokens_before
+    # A fresh sign-in after the revoke works.
+    verifier, challenge = _pkce_pair()
+    fresh = _exchange(client, _google_cli_code(client, challenge), verifier)
+    assert fresh.status_code == 200
+
+
+def test_owner_revoke_refuses_pending_loopback_approval(api_module, fresh_db):
+    from src.auth.tokens import revoke_user_tokens
+
+    client = TestClient(api_module.app)
+    verifier, challenge = _pkce_pair()
+    pending = client.post("/auth/cli/start", data={"code_challenge": challenge})
+    assert pending.status_code == 200
+
+    revoke_user_tokens("owner@localhost")
+    assert _exchange(client, _code_from_page(pending.text), verifier).status_code == 400
+    assert _approve_and_exchange(client, "laptop").status_code == 200
+
+
+def test_code_approved_before_device_revoke_cannot_reactivate_it(api_module, fresh_db):
+    from src.auth.tokens import get_local_owner, list_user_devices
+
+    client = TestClient(api_module.app)  # loopback owner: no approver token
+    key = "k" * 64
+    device_id = _approve_and_exchange(client, "laptop", installation_key=key).json()[
+        "device_id"
+    ]
+    verifier, challenge = _pkce_pair()
+    stale = client.post("/auth/cli/start", data={"code_challenge": challenge})
+    assert client.post(f"/auth/devices/{device_id}/revoke").status_code == 204
+
+    response = _exchange(
+        client, _code_from_page(stale.text), verifier, installation_key=key
+    )
+    assert response.status_code == 400
+    assert list_user_devices(get_local_owner().id) == []
+    # A fresh approval still brings the machine back.
+    again = _approve_and_exchange(client, "laptop", installation_key=key)
+    assert again.json()["device_id"] == device_id
+
+
+def test_revoke_during_exchange_waits_and_revokes_what_it_minted(
+    api_module, monkeypatch, fresh_db
+):
+    import threading
+
+    from src.auth import tokens
+
+    _enable_auth(monkeypatch)
+    client = TestClient(api_module.app)
+    _web_login(api_module, monkeypatch, client)
+    verifier, challenge = _pkce_pair()
+    approved = client.post("/auth/cli/start", data={"code_challenge": challenge})
+    revoker = threading.Thread(
+        target=tokens.revoke_user_tokens, args=("a@example.com",)
+    )
+    blocked = []
+    original = tokens.email_policy_allows
+
+    def checks_passed_then_revoke(email):
+        # Inside the mint transaction, after the epoch and approver checks.
+        if revoker.ident is None:
+            revoker.start()
+            revoker.join(0.3)
+            blocked.append(revoker.is_alive())
+        return original(email)
+
+    monkeypatch.setattr(tokens, "email_policy_allows", checks_passed_then_revoke)
+    response = _exchange(client, _code_from_page(approved.text), verifier)
+    revoker.join(10)
+
+    assert blocked == [True]  # the revoke waited for the user lock
+    assert response.status_code == 200
+    assert tokens.resolve_token(response.json()["cli_token"]) is None
+    assert tokens.resolve_token(response.json()["ingest_token"]) is None
+
+
+def test_cli_approvals_are_budgeted_per_user(api_module, monkeypatch, fresh_db):
+    _enable_auth(monkeypatch)
+    client = TestClient(api_module.app)
+    _web_login(api_module, monkeypatch, client)
+    for _ in range(10):
+        approved = client.post("/auth/cli/start", data={"code_challenge": "a" * 43})
+        assert approved.status_code == 200
+    limited = client.post("/auth/cli/start", data={"code_challenge": "a" * 43})
+    assert limited.status_code == 429
+    assert 1 <= int(limited.headers["retry-after"]) <= 60
+    other = TestClient(api_module.app)
+    _web_login(api_module, monkeypatch, other, email="b@example.com")
+    assert (
+        other.post("/auth/cli/start", data={"code_challenge": "a" * 43})
+    ).status_code == 200

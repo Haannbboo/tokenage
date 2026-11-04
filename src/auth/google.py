@@ -32,8 +32,10 @@ MAX_PENDING_STATES = 512
 # One-time CLI and browser login codes share the same store and TTL.
 CLI_CODE_NAMESPACE = "cli-codes"
 CLI_CODE_TTL_SECONDS = 300
-# Codes are minted only by signed-in approvals and completed Google sign-ins.
-MAX_PENDING_CLI_CODES = 50_000
+# Codes are minted only by signed-in approvals (rate_limits.cli_approve_per_minute
+# per user) and completed Google sign-ins. Keep the cap small: the SQLite store
+# counts the namespace inside its write lock on every insert.
+MAX_PENDING_CLI_CODES = 4096
 LOGIN_CODE_NAMESPACE = "login-codes"
 
 # Google endpoints are pinned (no discovery-document fetch at runtime); the

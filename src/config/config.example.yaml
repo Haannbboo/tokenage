@@ -93,6 +93,7 @@ db: {}
 #   signin_per_minute: 0      # per client IP (IPv6 /64) on sign-in starts; 0 = off.
 #                             # Enable only once the API sees real client IPs
 #                             # (FORWARDED_ALLOW_IPS), else the proxy is one client.
+#   cli_approve_per_minute: 10  # per user: CLI login approvals; 0 = off
 
 # Event queue + shared state (leases, rate limits, sign-in codes).
 # Unset → SQLite file on this machine ($TOKENAGE_HOME/state.db).

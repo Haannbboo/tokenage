@@ -1,4 +1,4 @@
-"""Optional per-client budget for anonymous sign-in starts."""
+"""Budgets for sign-in starts (per client IP) and CLI approvals (per user)."""
 
 import ipaddress
 
@@ -23,11 +23,23 @@ def _client_key(request: Request) -> str:
     return str(address)
 
 
-def check_signin_rate_limit(request: Request) -> None:
-    """429 once this client exceeds `rate_limits.signin_per_minute` (0 = off)."""
-    if CONFIG["rate_limits"].get("signin_per_minute", 0) <= 0:
+def _check(key: str, limit_name: str) -> None:
+    if CONFIG["rate_limits"].get(limit_name, 0) <= 0:
         return
     # Lazy: src.ratelimit imports src.auth.
     from src.ratelimit import check_rate_limit
 
-    check_rate_limit(f"signin:{_client_key(request)}", "signin_per_minute")
+    check_rate_limit(key, limit_name)
+
+
+def check_signin_rate_limit(request: Request) -> None:
+    """429 once this client exceeds `rate_limits.signin_per_minute` (0 = off)."""
+    _check(f"signin:{_client_key(request)}", "signin_per_minute")
+
+
+def check_cli_approve_rate_limit(user_id: str) -> None:
+    """429 once this account exceeds `rate_limits.cli_approve_per_minute`.
+
+    Keyed by user, not IP, so it holds behind any proxy; it bounds the pending
+    CLI codes one account can create (0 = off)."""
+    _check(f"cli-approve:{user_id}", "cli_approve_per_minute")

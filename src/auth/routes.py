@@ -17,11 +17,11 @@ from src.utils import client_commit, client_version
 
 from ..database import AuthToken, User
 from . import google as auth_google
-from .signin import check_signin_rate_limit
+from .signin import check_cli_approve_rate_limit, check_signin_rate_limit
 from .tokens import (
     LOCAL_OWNER_EMAIL,
+    MintRefused,
     auth_provider,
-    email_policy_allows,
     get_local_owner,
     get_or_create_user,
     get_user_by_id,
@@ -33,7 +33,6 @@ from .tokens import (
     resolve_token,
     revoke_device,
     revoke_token,
-    token_is_active,
     update_user_name,
     update_user_picture,
 )
@@ -351,7 +350,8 @@ def auth_local_login(request: Request, code: str = ""):
 async def auth_google_login(request: Request):
     """Start the Google authorization-code flow (public when auth enabled)."""
     _require_google()
-    check_signin_rate_limit(request)
+    # Shared-store call: keep it off the event loop (as the auth gate does).
+    await asyncio.to_thread(check_signin_rate_limit, request)
     if auth_google.google_credentials() is None:
         raise HTTPException(status_code=503, detail="google oauth not configured")
     state = secrets.token_urlsafe(24)
@@ -437,8 +437,8 @@ async def auth_google_callback(request: Request):
             _mint_cli_code, user, device, str(cli_flow.get("code_challenge") or "")
         )
         code_response = HTMLResponse(_code_page(code, device), headers=_NO_STORE)
-        # Single-use: the state was popped above; clear the login-CSRF cookie
-        # like the web path does.
+        # Not a _frontend_redirect, so clear the state cookie here: this
+        # browser cannot replay the callback.
         code_response.delete_cookie(OAUTH_STATE_COOKIE_NAME)
         return code_response
     plaintext_token, user = mint_token(
@@ -447,7 +447,6 @@ async def auth_google_callback(request: Request):
     update_user_name(user.id, str(claims.get("name") or "").strip() or None)
     update_user_picture(user.id, picture)
     response = _frontend_redirect(origin)
-    response.delete_cookie(OAUTH_STATE_COOKIE_NAME)
     response.set_cookie(
         SESSION_COOKIE_NAME,
         plaintext_token,
@@ -610,8 +609,10 @@ def _mint_cli_code(
             "user_id": user.id,
             "device_name": device_name,
             "code_challenge": code_challenge,
-            # Revoking the approving session also kills its unredeemed codes.
+            # Revoking the approving session, the device or the user kills the
+            # unredeemed code (checked in mint_device_tokens).
             "approver_token_id": approver.id if approver is not None else None,
+            "token_epoch": user.token_epoch,
         },
     )
     return code
@@ -680,7 +681,7 @@ async def auth_cli_start(
             status_code=401,
             detail="login required: run `tokenage server login-link` on the server",
         )
-    check_signin_rate_limit(request)
+    await asyncio.to_thread(check_signin_rate_limit, request)
     if auth_google.google_credentials() is None:
         raise HTTPException(status_code=503, detail="google oauth not configured")
     state = secrets.token_urlsafe(24)
@@ -726,6 +727,7 @@ def auth_cli_start_approve(
     resolved = _resolve_request_user(request)
     if resolved is None:
         raise HTTPException(status_code=401, detail="login required")
+    check_cli_approve_rate_limit(resolved[0].id)
     code = _mint_cli_code(resolved[0], device, challenge, resolved[1])
     return HTMLResponse(_code_page(code, device), headers=_NO_STORE)
 
@@ -759,20 +761,24 @@ def auth_cli_exchange(body: CliExchangeRequest):
     if not secrets.compare_digest(derived, challenge):
         raise HTTPException(status_code=400, detail="invalid code")
     user = get_user_by_id(str(entry.get("user_id") or ""))
-    approver_id = entry.get("approver_token_id")
-    if user is None or (approver_id and not token_is_active(str(approver_id), user.id)):
+    if user is None:
         raise HTTPException(status_code=400, detail="invalid code")
-    if not email_policy_allows(user.email):
-        raise HTTPException(status_code=403, detail="account not allowed")
+    approver_id = entry.get("approver_token_id")
     device_name = _sanitize_device_name(str(entry.get("device_name") or ""))
-    cli_token, ingest_token, device = mint_device_tokens(
-        user.id,
-        body.installation_key,
-        device_name,
-        client_version=body.client_version,
-        client_commit=body.client_commit,
-        keep_ingest_token=body.ingest_token,
-    )
+    try:
+        cli_token, ingest_token, device = mint_device_tokens(
+            user.id,
+            body.installation_key,
+            device_name,
+            client_version=body.client_version,
+            client_commit=body.client_commit,
+            keep_ingest_token=body.ingest_token,
+            # Codes minted before the epoch existed count as epoch 0.
+            token_epoch=int(entry.get("token_epoch") or 0),
+            approver_token_id=str(approver_id) if approver_id else None,
+        )
+    except MintRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
     urls = resolve_server_urls(CONFIG)
     return {
         "user": {"id": user.id, "email": user.email, "name": user.name},

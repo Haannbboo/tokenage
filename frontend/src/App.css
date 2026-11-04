@@ -51,6 +51,7 @@
   height: 32px;
   padding: 0 4px 0 8px;
   margin-bottom: 8px;
+  transition: padding var(--sidebar-motion), gap var(--sidebar-motion);
 }
 
 .sidebar-logo {
@@ -280,6 +281,9 @@
 .is-collapsed .sidebar-version { opacity: 0; visibility: hidden; }
 /* Padding moved by a pixel or two centres each icon in the 52px rail. */
 .is-collapsed .sidebar-collapse { transform: scaleX(-1); }
+/* With the logo at zero width, its gap and the uneven padding would push the
+   28px button right of the rail's axis: even them out so it lands centred. */
+.is-collapsed .sidebar-brand { padding: 0 4px; gap: 0; }
 .is-collapsed .account-trigger { padding: 0 7px; border-color: transparent; background: none; }
 .is-collapsed .account-trigger:hover { background: var(--surface-hover); }
 .is-collapsed .account-menu { left: calc(100% + 8px); right: auto; top: 0; width: 220px; }

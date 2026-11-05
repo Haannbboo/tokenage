@@ -35,7 +35,7 @@ def test_push_prunes_ghcr_inside_the_publish_job():
     assert "continue-on-error" not in steps[push]
     assert not any("always()" in s.get("if", "") for s in steps)
     assert "Validate retention count" not in names
-    assert prune["with"]["owner"] == "haannbboo"
+    assert prune["with"]["owner"] == "${{ github.repository_owner }}"
     assert prune["with"]["package"] == "tokenage"
     assert prune["with"]["keep-n-tagged"] == 20
 
@@ -54,6 +54,6 @@ def test_schedule_and_dispatch_prune_without_publishing():
     assert cleanup["steps"][0]["name"] == "Validate retention count"
     prune = cleanup["steps"][-1]
     assert prune["uses"].startswith(CLEANUP)
-    assert prune["with"]["owner"] == "haannbboo"
+    assert prune["with"]["owner"] == "${{ github.repository_owner }}"
     assert prune["with"]["package"] == "tokenage"
     assert prune["with"]["keep-n-tagged"] == "${{ inputs.keep_versions || 20 }}"

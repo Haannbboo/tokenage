@@ -86,7 +86,7 @@ jobs:
       # https://github.com/dataaxiom/ghcr-cleanup-action#cleanup-algorithm
       - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1
         with:
-          owner: haannbboo
+          owner: ${{ github.repository_owner }}
           package: tokenage
           keep-n-tagged: 20
           delete-untagged: "true"
@@ -114,7 +114,7 @@ jobs:
       # https://github.com/dataaxiom/ghcr-cleanup-action#cleanup-algorithm
       - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1
         with:
-          owner: haannbboo
+          owner: ${{ github.repository_owner }}
           package: tokenage
           keep-n-tagged: ${{ inputs.keep_versions || 20 }}
           delete-untagged: "true"

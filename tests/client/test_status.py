@@ -60,7 +60,7 @@ def test_status_reports_a_signed_in_client(
             {
                 "server_url": "https://app.example.com",
                 "email": "you@example.com",
-                "device_name": "hanbo-macbook",
+                "device_name": "work-laptop",
                 "cli_token": "tokenage_cli_x",
                 "otlp_logs_endpoint": "https://app.example.com/v1/logs",
             }
@@ -69,7 +69,7 @@ def test_status_reports_a_signed_in_client(
     assert status.run_status(as_json=False) == 0
     out = capsys.readouterr().out
     assert "signed in as you@example.com → https://app.example.com" in out
-    assert "hanbo-macbook" in out  # device is only shown without a server
+    assert "work-laptop" in out  # device is only shown without a server
     assert "not signed in" not in out
 
 

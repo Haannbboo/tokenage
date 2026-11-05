@@ -214,7 +214,7 @@ def test_device_filter_and_unknown_bucket(fresh_db):
 def test_request_log_rows_return_device_name(fresh_db):
     db = fresh_db.database_module
     path = fresh_db.db_path
-    _token, user, device_id = _device_token(fresh_db, name="unraid-vm")
+    _token, user, device_id = _device_token(fresh_db, name="build-server")
     ingest_write(db.log_usage, _usage(db, user.id, device_id, ts=TS), db_path=path)
     from src.database import get_engine
 
@@ -224,7 +224,7 @@ def test_request_log_rows_return_device_name(fresh_db):
     rows = db.fetch_recent_usage(user_id=user.id, limit=10, db_path=path)
     by_ts = {r["ts"]: r for r in rows}
     assert by_ts[TS]["device_id"] == device_id
-    assert by_ts[TS]["device_name"] == "unraid-vm"
+    assert by_ts[TS]["device_name"] == "build-server"
     assert by_ts[TS + 1]["device_id"] is None
     assert by_ts[TS + 1]["device_name"] is None
     only = db.fetch_recent_usage(
@@ -267,13 +267,13 @@ def test_migrate_drops_usage_client_ip(fresh_db):
 def test_dimension_device_returns_names(fresh_db):
     db = fresh_db.database_module
     path = fresh_db.db_path
-    _token, user, device_id = _device_token(fresh_db, name="unraid-vm")
+    _token, user, device_id = _device_token(fresh_db, name="build-server")
     ingest_write(db.log_usage, _usage(db, user.id, device_id), db_path=path)
     rows = db.aggregate_daily_by_dimension(
         user_id=user.id, dimension="device", db_path=path
     )
     assert [(r["dimension"], r["dimension_name"]) for r in rows] == [
-        (device_id, "unraid-vm")
+        (device_id, "build-server")
     ]
 
 

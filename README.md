@@ -399,7 +399,7 @@ npm test
 npm run build
 ```
 
-Maintainer-only bootstrap smoke test:
+Optional bootstrap smoke test:
 
 ```bash
 bash src/scripts/dev/smoke-bootstrap-container.sh

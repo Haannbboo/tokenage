@@ -7,8 +7,8 @@ adds only the landing gate below.
 ## Steps
 
 1. **Independent review before commit.** Run fresh reviewers on the *opposite*
-   tool from the one that wrote the change: Orca orchestration workers when
-   available, otherwise the other tool's CLI (`claude -p` / `opencode run`).
+   tool from the one that wrote the change, via its CLI (`claude -p` /
+   `opencode run`).
    Never use subagents of your own model as reviewers. Pick the tier by risk,
    not size, from [review/SKILL.md](review/SKILL.md):
    - **Quick** (docs, comments, tests-only, non-security config): no security
@@ -30,4 +30,3 @@ adds only the landing gate below.
 - Verification: [verify.md](verify.md)
 - PR comments, CI failures, CodeRabbit: [pr-follow-up.md](pr-follow-up.md),
   [respond-to-pr-comments.md](respond-to-pr-comments.md)
-- Ingest benchmark (maintainer PRs, with approval): [benchmark.md](benchmark.md)

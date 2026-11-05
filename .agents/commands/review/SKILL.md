@@ -41,57 +41,27 @@ Choose a tier by risk, not size: a 20-line auth change is Deep.
 | Deep | Auth/tokens/sessions, ingest path, cost/token accounting, schema/migrations, installer/update, CI workflows, new network listeners or anything exposed, privacy-sensitive data | Skeptic + Architect + Minimalist + security |
 
 When unsure between tiers, pick the higher one and say why in the review intent.
-Deep also requires a live functional test (on a deployed test server, e.g. a GCP VM), with results in the
+Deep also requires a live functional test (on a deployed test server), with results in the
 PR body. Deep's reviewer list is extensible; add further reviewers there as needed.
 
 Read `references/reviewer-lenses.md` for lens definitions.
 
 Add one **security** reviewer for Standard and Deep; for Quick, only if the diff
 touches secrets, auth, CI or installer files (docs or comments there; code or config
-changes in those areas are Deep). Use the same tool and path as the
+changes in those areas are Deep). Use the same tool as the
 lens reviewers, prompt `security.md` in this directory plus the scope and intent, report
 `$REVIEW_DIR/security.md`. Its High and Medium findings are must-fix unless the lead
 judgment shows they are false positives.
 
 ## Step 3 — Detect Tool and Spawn Reviewers
 
-Both paths below write reports to one directory inside the worktree. Create it first;
+Reviewers write reports to one directory inside the worktree. Create it first;
 a path outside the worktree makes opencode stop on an "Access external directory" prompt:
 
 ```sh
 REVIEW_DIR=$(mktemp -d "$PWD/.adversarial-review.XXXXXX")
 export REVIEW_DIR
 ```
-
-**Preferred: Orca orchestration.** If the `orchestration` skill is available and
-`orca status --json` reports a running runtime, start reviewers as supervised Orca
-workers. `worker-start --agent` launches the same opposite-tool CLI (`claude` or
-`opencode`) under Orca supervision; it is a supervised way to run that CLI, not a
-different reviewer. Load the skill and its version-matched guide first
-(`orca skills get orchestration`), and resolve the executable as that skill says.
-Then:
-
-```text
-orca orchestration run-create --objective "Adversarial review of <branch>" --json
-orca orchestration worker-start --spec "<reviewer prompt>" --task-title "Review: skeptic" --worktree current --agent opencode --json
-orca orchestration check --wait --types "worker_done,escalation,question" --timeout-ms 900000 --json
-```
-
-- Use the opposite tool as `--agent` (`opencode` when you are Claude Code, `claude`
-  when you are opencode). One worker per lens, all started before waiting.
-- Each reviewer prompt (Step 3 template) must say review-only (no edits, staging or
-  commits), name a report file `$REVIEW_DIR/<lens>.md`, and end with `worker_done`
-  carrying `--report-path` to it.
-- Process every delivery, acknowledge it, and `worker-release` each settled reviewer.
-  A `worker_done` with `--outcome failed`, an escalation, or a missing or empty
-  report counts as a failed reviewer in Step 4.
-- Permission mode follows the user's Orca setting for new agent tabs; there is no flag.
-  If a wait times out with no messages, check the worker terminals for a
-  pending permission prompt before assuming the reviewer is still working.
-
-Fall back to the CLI flow below only when Orca is unavailable.
-
-**Fallback: CLI processes.**
 
 Retain every background process handle:
 
@@ -146,10 +116,10 @@ Build each reviewer's prompt using the template in `references/reviewer-prompt.m
 
 ## Step 4 — Verify and Synthesize Verdict
 
-Before reading reviewer output, confirm that every reviewer settled (Orca `worker_done` for each Dispatch, or the CLI wait loop completed), log which path and agent were used, and confirm the output files exist:
+Before reading reviewer output, confirm that the CLI wait loop completed, log which reviewer agent was used, and confirm the output files exist:
 
 ```sh
-echo "review_path=orca reviewer_agent=opencode"  # the path (orca|cli) and agent actually used
+echo "reviewer_agent=opencode"  # the agent actually used
 ls "$REVIEW_DIR"/*.md
 ```
 

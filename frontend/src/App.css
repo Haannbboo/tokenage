@@ -1727,7 +1727,8 @@ img[src^="/models/"] { filter: saturate(0.7); }
 .session-project-table { overflow-x: auto; }
 .session-project-table .table { min-width: 320px; }
 .session-project-table td:first-child { max-width: 280px; overflow-wrap: anywhere; }
-.session-project-table td:first-child button { text-align: left; }
-.session-project-table .selected { background: var(--surface-hover); }
+.session-project-row { cursor: pointer; }
+.session-project-row:hover, .session-project-row.selected { background: var(--surface-hover); }
+.session-project-row:focus-visible { outline: 2px solid var(--color-green); outline-offset: -2px; }
 .session-project-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 600px) { .session-project-heading { align-items: flex-start; flex-direction: column; } .session-projects { padding: 12px; } }

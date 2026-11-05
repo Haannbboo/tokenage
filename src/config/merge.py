@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-# Only these top-level sections are safe to backfill from config.example.yaml
+# Only these top-level sections are safe to backfill from src/config/config.example.yaml
 # without introducing example provider stanzas into an existing user config.
 SYNCABLE_TOP_LEVEL_KEYS = ("models", "server", "db", "pricing")
 

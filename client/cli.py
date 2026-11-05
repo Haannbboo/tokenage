@@ -22,20 +22,30 @@ PROG = "tokenage"
 
 SUBCOMMANDS = ("login", "logout", "setup", "status", "update", "check-server", "client")
 
-EPILOG = """\
-commands:
-  login [--server URL]      sign in to a server and wire detected agents
-  logout [--keep-agents]    remove this machine's credentials
-  setup [--disable]         point detected agents at a collector
-  status [--json]           report this client: sign-in, agents, wiring
-  update [--check]          update the client
-  client <command>          manage this device's background client service
-                            (start, stop, restart, status, run)
-  server <command>          start, stop, restart, bootstrap, status, update, token
-                            (requires the server component)
+USAGE = """\
+tokenage <command> [options]
+       tokenage [tracking options] [--] <program> [args...]"""
 
-anything else is run with usage tracking, e.g. `tokenage codex exec "hi"`
-tracking options go before the command; use -- when they do:
+COMMANDS = """\
+commands:
+  login [--server URL]      sign in to a server and configure detected agents
+  logout [--keep-agents]    remove this machine's credentials
+  setup [--disable]         configure detected agents to report usage
+  status [--json]           show this client's sign-in and agent configuration
+  update [--check]          update the client
+  client <command>          manage the background client service
+                            (start, stop, restart, status, run)
+  server <command>          manage the server component
+                            (requires the server component)
+                            (bootstrap, start, stop, restart, status, update,
+                            token, login-link)
+
+run `tokenage <command> --help` for a command's options
+"""
+
+EPILOG = """\
+anything else is run as a program with usage tracking:
+  tokenage codex exec "hi"
   tokenage --json -- codex exec "hi"
 """
 
@@ -57,49 +67,54 @@ def _add_banner_flag(parser: argparse.ArgumentParser) -> None:
 def _build_wrapper_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description="Run a command with usage tracking.",
+        usage=USAGE,
+        description=COMMANDS,
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--version", action="version", version=f"{PROG} {client_version()}"
     )
-    parser.add_argument(
+    _add_banner_flag(parser)
+    tracking = parser.add_argument_group(
+        "run a command with tracking",
+        "options go before the program; use -- to separate them",
+    )
+    tracking.add_argument(
         "--json", action="store_true", help="write the usage summary as compact JSON"
     )
-    parser.add_argument(
+    tracking.add_argument(
         "--usage-only",
         action="store_true",
         help="write only the usage summary to stdout and suppress child output",
     )
-    parser.add_argument(
+    tracking.add_argument(
         "--summary-dest",
         choices=("stdout", "stderr", "file"),
         default="stderr",
         help="where the usage summary is written",
     )
-    parser.add_argument(
+    tracking.add_argument(
         "--summary-file", help="path to write the summary when --summary-dest=file"
     )
-    parser.add_argument(
+    tracking.add_argument(
         "--wait-ms",
         type=int,
         default=3000,
         help="max milliseconds to wait for tracked usage after the command exits",
     )
-    parser.add_argument(
+    tracking.add_argument(
         "--poll-ms",
         type=int,
         default=250,
         help="poll interval in milliseconds while waiting for the summary",
     )
-    parser.add_argument(
+    tracking.add_argument(
         "--no-summary",
         action="store_true",
         help="run tracking but skip printing the usage summary",
     )
-    _add_banner_flag(parser)
-    parser.add_argument("command", nargs=argparse.REMAINDER)
+    parser.add_argument("command", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     return parser
 
 
@@ -107,7 +122,7 @@ def _build_subcommand(name: str) -> argparse.ArgumentParser:
     if name == "login":
         parser = argparse.ArgumentParser(
             prog=f"{PROG} login",
-            description="Sign in to a server and wire detected agents.",
+            description="Sign in to a server and configure detected agents.",
         )
         parser.add_argument("--server", help="server base URL")
         parser.add_argument("--device-name", help="device label for tokens")
@@ -133,7 +148,7 @@ def _build_subcommand(name: str) -> argparse.ArgumentParser:
     if name == "setup":
         parser = argparse.ArgumentParser(
             prog=f"{PROG} setup",
-            description="Point detected agents at a collector.",
+            description="Configure detected agents to report usage.",
         )
         parser.add_argument(
             "--disable",
@@ -145,7 +160,7 @@ def _build_subcommand(name: str) -> argparse.ArgumentParser:
     if name == "status":
         parser = argparse.ArgumentParser(
             prog=f"{PROG} status",
-            description="Report this client: sign-in, agents and wiring.",
+            description="Show this client's sign-in and agent configuration.",
         )
         parser.add_argument(
             "--json", action="store_true", help="print one compact JSON line"
@@ -168,24 +183,27 @@ def _build_subcommand(name: str) -> argparse.ArgumentParser:
     if name == "client":
         parser = argparse.ArgumentParser(
             prog=f"{PROG} client",
-            description="Manage this device's background client service.",
+            description="Manage the background client service.",
         )
         subparsers = parser.add_subparsers(dest="action", required=True)
-        subparsers.add_parser("start", help="start the service in the background")
-        subparsers.add_parser("stop", help="stop the background service")
-        client_restart = subparsers.add_parser(
-            "restart", help="stop then start the service"
-        )
+        for action, text in (
+            ("start", "install and start the service"),
+            ("stop", "stop the service"),
+            ("restart", "stop, then start the service"),
+            ("status", "show whether the service is running"),
+            ("run", "run the service in the foreground"),
+        ):
+            subparsers.add_parser(
+                action, help=text, description=f"{text.capitalize()}."
+            )
+        client_restart = subparsers.choices["restart"]
         client_restart.add_argument(
             "--if-running", action="store_true", help=argparse.SUPPRESS
         )
-        client_status = subparsers.add_parser(
-            "status", help="report whether the service runs"
-        )
+        client_status = subparsers.choices["status"]
         client_status.add_argument(
             "--json", action="store_true", help="print one compact JSON line"
         )
-        subparsers.add_parser("run", help="run the service in the foreground")
         _add_banner_flag(parser)
         return parser
     # check-server is internal: the installer uses it to refuse an incompatible box.

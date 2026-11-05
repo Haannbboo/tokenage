@@ -28,8 +28,8 @@ graphify-out/
 # Project specific
 todo.md
 docs/*
-!docs/cli-review-fixes-handoff.md
-!docs/client-server-split-handoff.md
+!docs/README_CN.md
+!docs/adr/
 .dev-env.json
 
 # Plugin build outputs
@@ -41,6 +41,10 @@ plugins/shared/src/*.js
 
 # Independent review reports (.agents/commands/review/SKILL.md)
 .adversarial-review.*/
+
+# Operator-owned local config next to the example config
+/src/config/config.yaml
+/src/config/*.local.yaml
 
 # Operator-owned Docker configuration
 /docker/config.yaml

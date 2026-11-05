@@ -20,11 +20,13 @@ PROG = "tokenage server"
 def parse_token_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} token",
-        description="Manage auth tokens (operator-only; talks to the configured DB).",
+        description="Manage auth tokens (operator-only; needs database access).",
     )
     subparsers = parser.add_subparsers(dest="action", required=True)
     create = subparsers.add_parser(
-        "create", help="mint a token for a user, creating the user if needed"
+        "create",
+        help="create a token for a user, creating the user if needed",
+        description="Create a token for a user, creating the user if needed.",
     )
     create.add_argument("--email", required=True, help="user email")
     create.add_argument(

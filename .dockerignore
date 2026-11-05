@@ -2,6 +2,9 @@
 *
 !src/
 !src/**
+# After `!src/**`: the operator's own config must not enter the build context.
+src/config/config.yaml
+src/config/*.local.yaml
 !protocol/
 !protocol/**
 !frontend/
@@ -10,7 +13,6 @@
 !docker/entrypoint.sh
 !install.sh
 !VERSION
-!config.example.yaml
 **/__pycache__/
 **/*.pyc
 frontend/node_modules/

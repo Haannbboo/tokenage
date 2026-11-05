@@ -5,7 +5,6 @@ name: Docker
       - Dockerfile
       - .dockerignore
       - docker/**
-      - config.example.yaml
       - install.sh
       - VERSION
       - src/**

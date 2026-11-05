@@ -114,6 +114,20 @@ def test_tokenage_script_routes_to_client_and_server():
     assert '-m src.cli "$@"' in content
 
 
+def test_server_help_lists_the_valid_service_names():
+    from src.ops import PROGRAMS
+
+    assert f"services: {', '.join(PROGRAMS)}\n" in LAUNCHER.read_text(encoding="utf-8")
+
+
+def test_minting_a_token_is_marked_operator_only():
+    """`token create` hits the database directly; `--help` must say so."""
+    server_cli = (CLIENT.parent / "src" / "cli.py").read_text(encoding="utf-8")
+
+    assert "operator-only" in server_cli
+    assert "mint an operator token" in LAUNCHER.read_text(encoding="utf-8")
+
+
 def test_tokenage_server_routes_bootstrap_to_the_script(tmp_path):
     content = LAUNCHER.read_text(encoding="utf-8")
 

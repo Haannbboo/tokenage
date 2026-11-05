@@ -23,9 +23,9 @@ from src import ops
 def box(tmp_path, monkeypatch):
     """A fake checkout + tokenage home. `box.calls` records external commands."""
     root = tmp_path / "root"
-    (root / "src").mkdir(parents=True)
+    (root / "src" / "config").mkdir(parents=True)
     (root / "src" / "pyproject.toml").write_text("[project]\nname='x'\n")
-    (root / "config.example.yaml").write_text(
+    (root / ops.EXAMPLE_CONFIG).write_text(
         "server:\n  host: 127.0.0.1\n  api_port: 4001\n"
     )
     (root / ".venv").mkdir()
@@ -216,7 +216,7 @@ def test_busy_metrics_port_does_not_suggest_api_override(
     box.stamp()
     config = "server: {api_port: 4001}\nmetrics: {enabled: true, port: 9108}\n"
     if created:
-        (box.root / "config.example.yaml").write_text(config)
+        (box.root / ops.EXAMPLE_CONFIG).write_text(config)
     else:
         box.home.mkdir()
         (box.home / "config.yaml").write_text(config)
@@ -232,7 +232,7 @@ def test_busy_metrics_port_does_not_suggest_api_override(
 
 def test_fresh_config_keeps_api_port_when_only_metrics_is_busy(box, capsys):
     box.stamp()
-    (box.root / "config.example.yaml").write_text(
+    (box.root / ops.EXAMPLE_CONFIG).write_text(
         "server: {api_port: 4001}\nmetrics: {enabled: true, port: 9108}\n"
     )
     box.busy = {9108}
@@ -330,9 +330,7 @@ def test_bootstrap_dashboard_readiness(
     box, monkeypatch, capsys, built, content_types, reachable, expected
 ):
     box.home.mkdir()
-    (box.home / "config.yaml").write_text(
-        (box.root / "config.example.yaml").read_text()
-    )
+    (box.home / "config.yaml").write_text((box.root / ops.EXAMPLE_CONFIG).read_text())
     cli = box.root / "client" / "bin" / "tokenage"
     cli.parent.mkdir(parents=True)
     cli.write_text("")

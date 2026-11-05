@@ -433,7 +433,9 @@ def test_worker_default_and_config_sync(config_module, tmp_path, monkeypatch):
     monkeypatch.setenv("TOKENAGE_CONFIG", str(config_path))
     assert config_module.load_config()["server"]["workers"] == 2
     assert load_server_config().workers == 2
-    example = str(Path(__file__).resolve().parents[1] / "config.example.yaml")
+    from src.ops import EXAMPLE_CONFIG, ROOT
+
+    example = str(ROOT / EXAMPLE_CONFIG)
     import yaml
 
     # The example leaves the key commented: syncing must not add it, since a

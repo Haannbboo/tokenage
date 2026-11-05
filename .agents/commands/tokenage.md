@@ -13,7 +13,7 @@ This project tracks LLM usage via an OTLP collector and a loopback proxy in the 
 
 ## Privacy and trace data
 
-Default posture: collect the minimum useful metadata.
+Default posture: collect the minimum useful metadata (tokens, cost, model, timing, tool names); never prompts, responses or request bodies without an explicit opt-in.
 
 Sensitive by default:
 
@@ -126,6 +126,8 @@ When adding API routes used by frontend:
 ## Bootstrap and service control
 
 Do not casually rewrite bootstrap scripts. They are the user-facing install path.
+
+The same code runs on one machine or split across machines (local, self-hosted, hosted): no `if hosted`/`if local` branches; the client always talks to a server URL.
 
 Architecture:
 

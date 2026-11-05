@@ -1,6 +1,6 @@
 # Docker server
 
-From the repository root, run `cd docker`, copy `../config.example.yaml` to
+From the repository root, run `cd docker`, copy `../src/config/config.example.yaml` to
 `config.yaml`, then choose a setup below. The image
 contains only the server and dashboard; clients install through `install.sh`.
 State persists in the `tokenage-data` volume at `/data`. The image runs as UID

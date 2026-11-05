@@ -169,15 +169,18 @@ run_server() {
     cat >&2 <<EOF
 usage: tokenage server <command>
 
-  bootstrap              install, build the dashboard, start, verify
-  start                  turn the services on
-  stop [program...]      stop all services, or the named ones
-  restart [program...]   reload running services (program: tokenage-api)
-  status [program...]    supervisord table, ports, port check
+Manage the server component.
+
+  bootstrap              install, build the dashboard, start and verify
+  start                  start the services
+  stop [service...]      stop all services, or the named ones
+  restart [service...]   reload running services, or the named ones
+  status [service...]    show service state and ports, or the named ones
+                         services: tokenage-api
   update [--check|--dry-run]
-                         fast-forward the server clone, bootstrap, restart
+                         update the server, then bootstrap and restart
   token create ...       mint an operator token
-  login-link             one-time browser sign-in link (local provider)
+  login-link             print a one-time browser sign-in link (local auth)
 EOF
     return 2
   fi

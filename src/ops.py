@@ -44,6 +44,7 @@ from src.config.server_config import (
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ("api",)  # the OTLP collector is mounted in the API at /otlp
 PROGRAMS = tuple(f"tokenage-{s}" for s in SERVICES)
+EXAMPLE_CONFIG = Path("src/config/config.example.yaml")  # relative to ROOT
 PORT_KEYS = ("api_port",)  # Only API ports may be auto-assigned; metrics is explicit.
 _LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -250,12 +251,10 @@ def migrate(args: list[str] | None = None) -> int:
 
 
 def sync_config(args: list[str] | None = None) -> int:
-    """Merge missing defaults from config.example.yaml into the user config."""
+    """Merge missing defaults from src/config/config.example.yaml into the user config."""
     _no_args("sync-config", args or [])
     path = _config_path()
-    changed = sync_config_file_with_defaults(
-        str(path), str(ROOT / "config.example.yaml")
-    )
+    changed = sync_config_file_with_defaults(str(path), str(ROOT / EXAMPLE_CONFIG))
     note(f"{'Updated' if changed else 'Config already includes'} defaults: {path}")
     return 0
 
@@ -325,7 +324,7 @@ def start(args: list[str] | None = None) -> int:
     created = not os.path.lexists(path)
     if created:
         path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(ROOT / "config.example.yaml", path)
+        shutil.copy(ROOT / EXAMPLE_CONFIG, path)
         ok(f"Config created: {path}")
     else:
         ok(f"Config exists: {path}")
@@ -426,7 +425,7 @@ def stop(args: list[str] | None = None) -> int:
 def _programs(names: list[str]) -> list[str]:
     for name in names:
         if name not in PROGRAMS:
-            raise die(f"Unknown program: {name}", f"Available: {', '.join(PROGRAMS)}")
+            raise die(f"Unknown service: {name}", f"Services: {', '.join(PROGRAMS)}")
     return names
 
 

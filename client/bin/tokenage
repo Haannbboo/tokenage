@@ -173,10 +173,9 @@ Manage the server component.
 
   bootstrap              install, build the dashboard, start and verify
   start                  start the services
-  stop [service...]      stop all services, or the named ones
-  restart [service...]   reload running services, or the named ones
-  status [service...]    show service state and ports, or the named ones
-                         services: tokenage-api
+  stop                   stop the server
+  restart                reload the running server
+  status                 show server state and ports
   update [--check|--dry-run]
                          update the server, then bootstrap and restart
   token create ...       mint an operator token
@@ -186,7 +185,15 @@ EOF
   fi
   case "$sub" in
     bootstrap) shift; run_server_script bootstrap "$@" ;;
-    start|stop|restart|status|update|token|login-link) shift; run_server_python "$sub" "$@" ;;
+    stop|restart|status)
+      shift
+      if [[ $# -ne 0 ]]; then
+        printf 'tokenage server %s takes no arguments\n' "$sub" >&2
+        return 2
+      fi
+      run_server_python "$sub"
+      ;;
+    start|update|token|login-link) shift; run_server_python "$sub" "$@" ;;
     *)
       printf 'tokenage: unknown server command: %s\n' "$sub" >&2
       return 2

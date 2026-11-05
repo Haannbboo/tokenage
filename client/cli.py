@@ -180,21 +180,31 @@ def _build_subcommand(name: str) -> argparse.ArgumentParser:
         _add_banner_flag(parser)
         return parser
     if name == "client":
-        parser = argparse.ArgumentParser(
-            prog=f"{PROG} client",
-            description="Manage the background client service.",
-        )
-        subparsers = parser.add_subparsers(dest="action", required=True)
-        for action, text in (
+        commands = (
             ("start", "install and start the service"),
             ("stop", "stop the service"),
             ("restart", "stop, then start the service"),
             ("status", "show whether the service is running"),
             ("run", "run the service in the foreground"),
-        ):
-            subparsers.add_parser(
-                action, help=text, description=f"{text.capitalize()}."
+        )
+        parser = argparse.ArgumentParser(
+            prog=f"{PROG} client",
+            usage=f"{PROG} client <command>",
+            description="Manage the background client service.\n\n"
+            + "\n".join(f"  {action:<22} {text}" for action, text in commands),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        subparsers = parser.add_subparsers(
+            dest="action", required=True, help=argparse.SUPPRESS
+        )
+        for action, text in commands:
+            child = subparsers.add_parser(
+                action,
+                usage=f"{PROG} client {action}"
+                + (" [--json]" if action == "status" else ""),
+                description=f"{text.capitalize()}.",
             )
+            _add_banner_flag(child)
         client_restart = subparsers.choices["restart"]
         client_restart.add_argument(
             "--if-running", action="store_true", help=argparse.SUPPRESS

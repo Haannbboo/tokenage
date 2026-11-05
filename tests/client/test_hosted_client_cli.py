@@ -85,6 +85,40 @@ def client_home(tmp_path, monkeypatch):
 # -------------------------------------------------------------- cli.py surface
 
 
+@pytest.mark.parametrize("help_flag", ["-h", "--help"])
+@pytest.mark.parametrize("action", [None, "start", "stop", "restart", "status", "run"])
+def test_client_help_uses_plain_command_usage(action, help_flag, capsys):
+    argv = ["client", "--no-banner"]
+    if action:
+        argv += [action, "--no-banner"]
+    with pytest.raises(SystemExit) as exc:
+        cli.main([*argv, help_flag])
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    usage = (
+        f"usage: tokenage client {action}"
+        if action
+        else "usage: tokenage client <command>"
+    )
+    assert output.splitlines()[0] == usage + (" [--json]" if action == "status" else "")
+    assert "positional arguments:" not in output
+    assert "{start," not in output
+    assert "[-h]" not in output
+    assert "--no-banner" in output
+    if not action:
+        assert "  start                  install and start the service" in output
+        assert "  run                    run the service in the foreground" in output
+
+
+def test_top_level_help_describes_optional_server_once(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--help"])
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "server <command>          manage the server, if installed" in output
+    assert "requires the server component" not in output
+
+
 def test_check_server_checks_protocol_without_writing(monkeypatch, capsys):
     fake = FakeHttpx()
     _install_fake_httpx(monkeypatch, fake)

@@ -83,6 +83,11 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] == "login-link":
         return run_login_link_command()
     if args and args[0] in ops.COMMANDS:
+        if args[0] in ("stop", "restart", "status"):
+            if len(args) > 1:
+                print(f"{PROG} {args[0]} takes no arguments", file=sys.stderr)
+                return 2
+            return ops.COMMANDS[args[0]]()
         return ops.COMMANDS[args[0]](args[1:])
     commands = " | ".join(["login-link", *ops.COMMANDS])
     print(f"usage: {PROG} token create --email <email> | {commands}", file=sys.stderr)

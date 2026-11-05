@@ -137,7 +137,25 @@ async def lifespan(app: FastAPI):
         yield
 
 
-app = FastAPI(title="tokenage-api", lifespan=lifespan)
+class _Api(FastAPI):
+    """FastAPI app that documents the ingest request body.
+
+    The ingest route reads the body itself (to cap it), so FastAPI can't infer
+    the request body: UsageReport is published in the OpenAPI components.
+    """
+
+    def openapi(self) -> dict:
+        schema = super().openapi()
+        schemas = schema.setdefault("components", {}).setdefault("schemas", {})
+        model = UsageReport.model_json_schema(
+            ref_template="#/components/schemas/{model}"
+        )
+        schemas.update(model.pop("$defs", {}))
+        schemas["UsageReport"] = model
+        return schema
+
+
+app = _Api(title="tokenage-api", lifespan=lifespan)
 app.exception_handler(IngestQueueFull)(queue_full_response)
 for error in TRANSIENT_DB_ERRORS:
     app.exception_handler(error)(store_unavailable_response)
@@ -746,7 +764,20 @@ def post_device_status(
     return Response(status_code=204)
 
 
-@app.post("/ingest/v1/usage", status_code=204)
+@app.post(
+    "/ingest/v1/usage",
+    status_code=204,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/UsageReport"}
+                }
+            },
+        }
+    },
+)
 async def ingest_usage(request: Request):
     """Record one client-proxy usage report. Ingest tokens only: no cookie,
     bearer or loopback-owner fallback. The server prices; the client sends

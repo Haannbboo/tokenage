@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from tests.conftest import drain
+from tests.conftest import asgi_post, drain
 
 SESSION_COOKIE = "tokenage_session"
 
@@ -803,3 +803,31 @@ def test_unauthenticated_body_is_capped_before_routing(
         path, content=body, headers={"content-type": content_type}
     )
     assert response.status_code == 413
+
+
+# A valid multipart body: the parser reads it in chunks, so the cap is only
+# reached once the second chunk arrives.
+_MULTIPART_BODY = (
+    b'--x\r\nContent-Disposition: form-data; name="code_challenge"\r\n\r\n'
+    + b"x" * 100
+    + b"\r\n--x--\r\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("path", "content_type", "body"),
+    [
+        ("/auth/cli/exchange", "application/json", b"x" * 129),
+        ("/auth/cli/start", "multipart/form-data; boundary=x", _MULTIPART_BODY),
+    ],
+)
+def test_unauthenticated_chunked_body_is_capped_before_routing(
+    api_module, monkeypatch, path, content_type, body
+):
+    """Two ASGI messages, each under the cap: the byte count is cumulative."""
+    from src.config.app import CONFIG
+
+    monkeypatch.setitem(CONFIG, "otlp", {"max_body_bytes": 128})
+    half = len(body) // 2
+    headers = {"content-type": content_type}
+    assert asgi_post(api_module.app, path, [body[:half], body[half:]], headers) == 413

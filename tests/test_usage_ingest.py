@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tests.conftest import drain
+from tests.conftest import asgi_post, drain
 
 
 def _report(**overrides) -> dict:
@@ -207,6 +207,39 @@ def test_oversized_body_rejected_before_validation(
         "/ingest/v1/usage", content=body, headers=headers
     )
     assert response.status_code == 413
+
+
+def test_oversized_chunked_body_rejected_before_validation(
+    api_module, fresh_db, monkeypatch
+):
+    """Two ASGI messages, each under the cap: the byte count is cumulative."""
+    from protocol.usage_report import UsageReport
+    from src.config.app import CONFIG
+
+    monkeypatch.setitem(CONFIG, "otlp", {"max_body_bytes": 128})
+    token, _ = _token(fresh_db)
+
+    def unvalidated(*args, **kwargs):
+        pytest.fail("oversized body reached validation")
+
+    monkeypatch.setattr(UsageReport, "model_validate", unvalidated)
+    headers = {"x-tokenage-token": token}
+    assert (
+        asgi_post(api_module.app, "/ingest/v1/usage", [b"x" * 64, b"x" * 65], headers)
+        == 413
+    )
+
+
+def test_ingest_usage_openapi_documents_the_request_body(api_module):
+    from protocol.usage_report import UsageReport
+
+    schema = api_module.app.openapi()
+    request_body = schema["paths"]["/ingest/v1/usage"]["post"]["requestBody"]
+    assert request_body["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/UsageReport"
+    }
+    model = schema["components"]["schemas"]["UsageReport"]
+    assert set(model["properties"]) == set(UsageReport.model_fields)
 
 
 @pytest.mark.parametrize(

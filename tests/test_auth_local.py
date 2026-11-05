@@ -399,6 +399,32 @@ def test_cookie_matching_origin_or_referer_accepted(api_module, fresh_db, header
     assert client.post("/auth/logout", headers=headers).status_code == 204
 
 
+def test_cookie_matching_origin_writes_and_deletes_a_pricing_override(
+    api_module, fresh_db
+):
+    """Cookie auth plus a matching Origin: the write routes are allowed."""
+    from src.auth.tokens import mint_token
+
+    token, _ = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
+    client = _remote(api_module)
+    client.cookies.set(SESSION_COOKIE, token)
+    headers = {"origin": "http://tracker.example"}
+
+    saved = client.put(
+        "/pricing/overrides/vendor/x",
+        json={"input": 1, "output": 2},
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    assert [row["model"] for row in client.get("/pricing/overrides").json()] == [
+        "vendor/x"
+    ]
+
+    deleted = client.delete("/pricing/overrides/vendor/x", headers=headers)
+    assert deleted.status_code == 204
+    assert client.get("/pricing/overrides").json() == []
+
+
 def test_cookie_origin_takes_precedence_over_referer(api_module, fresh_db):
     from src.auth.tokens import mint_token
 

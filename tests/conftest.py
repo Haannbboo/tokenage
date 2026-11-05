@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import os
 import sqlite3
@@ -380,6 +381,45 @@ def drain() -> int:
     while count := consumer.drain():
         total += count
     return total
+
+
+def asgi_post(app, path, chunks, headers=None) -> int:
+    """POST `chunks` as separate ASGI messages, with no content-length.
+
+    TestClient joins the body into one message, so a body cap that reset its
+    byte count per message would still pass. Returns the response status.
+    """
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (name.lower().encode(), value.encode())
+            for name, value in (headers or {}).items()
+        ],
+        "client": ("127.0.0.1", 50000),
+        "server": ("localhost", 80),
+    }
+    messages = [
+        {"type": "http.request", "body": chunk, "more_body": index < len(chunks) - 1}
+        for index, chunk in enumerate(chunks)
+    ]
+    sent: list[dict] = []
+
+    async def receive():
+        return messages.pop(0) if messages else {"type": "http.disconnect"}
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    return next(m["status"] for m in sent if m["type"] == "http.response.start")
 
 
 def ingest_write(function, *args, db_path=None, **kwargs):

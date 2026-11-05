@@ -26,7 +26,10 @@ def parse_token_args(argv: list[str]) -> argparse.Namespace:
     create = subparsers.add_parser(
         "create",
         help="create a token for a user, creating the user if needed",
-        description="Create a token for a user, creating the user if needed.",
+        description=(
+            "Create a token for a user, creating the user if needed "
+            "(operator-only; needs database access)."
+        ),
     )
     create.add_argument("--email", required=True, help="user email")
     create.add_argument(

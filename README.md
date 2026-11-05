@@ -280,6 +280,8 @@ for same-host and container scrapers.
 | `TOKENAGE_CONFIG` | Server config file path (default `$TOKENAGE_HOME/config.yaml`). |
 | `TOKENAGE_DB_URL` | Database URL, overriding `db.url`. |
 | `TOKENAGE_QUEUE_URL` | Queue URL, overriding `queue.url`. |
+| `TOKENAGE_API_PORT` | API listen port, overriding `server.api_port`. |
+| `TOKENAGE_API_HOST` | API bind host, overriding `server.host`. |
 | `TOKENAGE_ROOT` | Run this checkout instead of the installed client and server clone. |
 | `TOKENAGE_BIN_DIR` | Where the launcher is installed (default `~/.local/bin`). |
 | `TOKENAGE_SERVER` | Server URL for `tokenage login` without `--server`, and for `install.sh --client`. |

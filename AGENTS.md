@@ -54,10 +54,12 @@ In a new worktree, symlink the main clone's `.venv`. Run the branch with
 ephemeral copy of the DB and free ports, with auto-reload; the main server is
 untouched.
 
-`TOKENAGE_ROOT="$PWD" tokenage server restart|bootstrap` instead reloads or
-rebuilds your own local install from this checkout and runs this checkout's
-migrations against the configured DB. Never use it against a server that
-serves real traffic.
+`TOKENAGE_ROOT="$PWD" tokenage server restart` runs this checkout's migrations
+against the configured DB and reloads running services, but they keep running
+the install that last ran `start` (it does not switch code).
+`TOKENAGE_ROOT="$PWD" tokenage server bootstrap` rebuilds the dashboard,
+repoints the services at this checkout and runs its migrations. Never use
+either against a server that serves real traffic.
 
 ## Git and PR rules
 

@@ -16,6 +16,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 LAUNCHER = Path(__file__).resolve().parents[1] / "client" / "bin" / "tokenage"
 CLIENT = Path(__file__).resolve().parents[1] / "client"
 
@@ -120,11 +122,12 @@ def test_server_help_lists_the_valid_service_names():
     assert f"services: {', '.join(PROGRAMS)}\n" in LAUNCHER.read_text(encoding="utf-8")
 
 
-def test_minting_a_token_is_marked_operator_only():
+def test_minting_a_token_is_marked_operator_only(cli_module, capsys):
     """`token create` hits the database directly; `--help` must say so."""
-    server_cli = (CLIENT.parent / "src" / "cli.py").read_text(encoding="utf-8")
+    with pytest.raises(SystemExit):
+        cli_module.parse_token_args(["create", "--help"])
 
-    assert "operator-only" in server_cli
+    assert "operator-only" in capsys.readouterr().out
     assert "mint an operator token" in LAUNCHER.read_text(encoding="utf-8")
 
 

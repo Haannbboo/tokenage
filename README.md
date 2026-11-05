@@ -265,7 +265,7 @@ db:
 Optional Prometheus metrics use a separate, unauthenticated listener. Set
 `metrics.enabled: true` and `metrics.port` in the server config; the host defaults
 to loopback. Never publish or proxy this port. After enabling, disabling, or
-changing the metrics bind, do a full restart: `tokenage server stop tokenage-api`
+changing the metrics bind, do a full restart: `tokenage server stop`
 then `tokenage server start` (brief outage). `tokenage server restart` refuses
 SIGHUP when the running bind differs or is unknown. For a private interface,
 set `metrics.allowed_hosts` to the node IP or MagicDNS name used by the scraper.

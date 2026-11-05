@@ -122,7 +122,7 @@ def test_start_refuses_running_api_with_changed_or_unknown_binds(box, capsys, st
 
     assert ops.start() == 1
     output = capsys.readouterr().out
-    assert "stop tokenage-api then tokenage server start" in output
+    assert "stop then tokenage server start" in output
     assert "tokenage-api: running" not in output
     assert not ctl(box, "start", "tokenage-api")
     assert not ctl(box, "signal", "HUP", "tokenage-api")
@@ -575,7 +575,7 @@ def test_restart_refuses_changed_or_unknown_bind(box, capsys, stamp):
         ops.restart()
     assert not ctl(box, "signal", "HUP", "tokenage-api")
     assert "migrate" not in box.calls
-    assert "stop tokenage-api then tokenage server start" in capsys.readouterr().out
+    assert "stop then tokenage server start" in capsys.readouterr().out
 
 
 def test_restart_accepts_matching_api_and_metrics_binds(box):

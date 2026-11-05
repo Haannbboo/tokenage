@@ -388,9 +388,7 @@ def start(args: list[str] | None = None) -> int:
             and not _api_binds_match(config)
         ):
             bad("API bind changed or running bind is unknown.")
-            note(
-                "Run tokenage server stop tokenage-api then tokenage server start (brief outage)."
-            )
+            note("Run tokenage server stop then tokenage server start (brief outage).")
             return 1
         if state in ("RUNNING", "STARTING"):
             ok(f"{prog}: {state.lower()}")
@@ -443,7 +441,7 @@ def restart(args: list[str] | None = None) -> int:
     ):
         raise die(
             "API bind changed or running bind is unknown; refusing SIGHUP.",
-            "Run tokenage server stop tokenage-api then tokenage server start (brief outage).",
+            "Run tokenage server stop then tokenage server start (brief outage).",
         )
 
     step("Applying schema migrations")

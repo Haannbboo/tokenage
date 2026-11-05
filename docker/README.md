@@ -206,7 +206,7 @@ central tailnet scraper. Host ports are ignored.
 The listener uses the same Gunicorn workers as the API, with per-run multiprocess
 counters under `TOKENAGE_HOME`. Keep Gunicorn's default `preload_app=false`.
 After enabling, disabling, or changing the metrics bind address/port, fully restart
-the container (with a brief outage); on a VM run `tokenage server stop tokenage-api`
+the container (with a brief outage); on a VM run `tokenage server stop`
 then `tokenage server start`.
 An ordinary `tokenage server restart` sends SIGHUP and preserves counters when
 the binds are unchanged. It refuses when the running bind differs or is unknown,

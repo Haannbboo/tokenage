@@ -72,11 +72,12 @@ from .ingest_queue import (
 )
 from .metrics import MetricsMiddleware
 from .metrics import configure as configure_metrics
+from .otlp import _read_capped_json
 from .otlp import app as otlp_app
 from .pricing.costs import resolve_cost_match
 from .pricing.models import ResolvedCost
 from .pricing.snapshots import enrich_rows
-from .ratelimit import rate_limit_hit, resolve_ingest_request
+from .ratelimit import rate_limit_hit, resolve_ingest_request_async
 from .utils import normalize_model_name
 
 logger = logging.getLogger(__name__)
@@ -136,7 +137,25 @@ async def lifespan(app: FastAPI):
         yield
 
 
-app = FastAPI(title="tokenage-api", lifespan=lifespan)
+class _Api(FastAPI):
+    """FastAPI app that documents the ingest request body.
+
+    The ingest route reads the body itself (to cap it), so FastAPI can't infer
+    the request body: UsageReport is published in the OpenAPI components.
+    """
+
+    def openapi(self) -> dict:
+        schema = super().openapi()
+        schemas = schema.setdefault("components", {}).setdefault("schemas", {})
+        model = UsageReport.model_json_schema(
+            ref_template="#/components/schemas/{model}"
+        )
+        schemas.update(model.pop("$defs", {}))
+        schemas["UsageReport"] = model
+        return schema
+
+
+app = _Api(title="tokenage-api", lifespan=lifespan)
 app.exception_handler(IngestQueueFull)(queue_full_response)
 for error in TRANSIENT_DB_ERRORS:
     app.exception_handler(error)(store_unavailable_response)
@@ -183,6 +202,10 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         # mounted OTLP collector shares.
         try:
             resolved = await asyncio.to_thread(_resolve_request_user, request)
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code, content={"detail": exc.detail}
+            )
         except TRANSIENT_DB_ERRORS as exc:
             # Middleware runs outside FastAPI's route exception handlers.
             return store_unavailable_response(request, exc)
@@ -217,6 +240,57 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
                     },
                 )
         return await call_next(request)
+
+
+class BodySizeLimitMiddleware:
+    """413 any request body over otlp.max_body_bytes, chunked included, before
+    routing: public routes (/auth/cli/*) parse bodies with no credential."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        max_body = CONFIG.get("otlp", {}).get("max_body_bytes", 2_000_000)
+        too_large_response = JSONResponse(
+            status_code=413, content={"detail": "request body too large"}
+        )
+        declared = dict(scope["headers"]).get(b"content-length", b"")
+        if declared.isdigit() and int(declared) > max_body:
+            await too_large_response(scope, receive, send)
+            return
+        received = 0
+        too_large = False
+        started = False
+
+        async def capped_receive():
+            nonlocal received, too_large
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > max_body:
+                    # Raising here would surface as an ExceptionGroup through
+                    # BaseHTTPMiddleware; a disconnect stops the reader cleanly.
+                    too_large = True
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def guarded_send(message):
+            nonlocal started
+            if too_large:
+                return  # the 413 below replaces whatever the app answers
+            started = True
+            await send(message)
+
+        try:
+            await self.app(scope, capped_receive, guarded_send)
+        except Exception:
+            if not too_large:
+                raise
+        if too_large and not started:
+            await too_large_response(scope, receive, send)
 
 
 def _is_usage_read_path(path: str) -> bool:
@@ -690,12 +764,30 @@ def post_device_status(
     return Response(status_code=204)
 
 
-@app.post("/ingest/v1/usage", status_code=204)
-def ingest_usage(request: Request, report: UsageReport):
+@app.post(
+    "/ingest/v1/usage",
+    status_code=204,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/UsageReport"}
+                }
+            },
+        }
+    },
+)
+async def ingest_usage(request: Request):
     """Record one client-proxy usage report. Ingest tokens only: no cookie,
     bearer or loopback-owner fallback. The server prices; the client sends
     metadata only."""
-    user_id, device_id = resolve_ingest_request(request)
+    user_id, device_id = await resolve_ingest_request_async(request)
+    try:
+        report = UsageReport.model_validate(await _read_capped_json(request))
+    except (ValueError, RecursionError):
+        # JSON, UTF-8 and pydantic errors are ValueErrors; deep nesting recurses.
+        raise HTTPException(status_code=422, detail="invalid usage report") from None
     fields = report.model_dump(exclude={"tool_calls", "base_url"})
     if fields["ts"] is None:
         fields["ts"] = time.time_ns() // 1000
@@ -705,7 +797,9 @@ def ingest_usage(request: Request, report: UsageReport):
         base_url_source="proxy_config",
         tool_calls=[(tc.tool_use_id, tc.tool_name) for tc in report.tool_calls],
     )
-    publish(user_id, [{"kind": "usage", "device_id": device_id, "fields": fields}])
+    await asyncio.to_thread(
+        publish, user_id, [{"kind": "usage", "device_id": device_id, "fields": fields}]
+    )
     return Response(status_code=204)
 
 
@@ -1202,6 +1296,7 @@ if _SPA_SERVED:
 # Registered last so the auth gate runs first (outermost): it must see the
 # original request path, before the SPA catch-all rewrites it.
 app.add_middleware(AuthGateMiddleware)
+app.add_middleware(BodySizeLimitMiddleware)
 
 # Keep this outermost: metrics sockets never enter auth, APIs or the SPA.
 configure_metrics(CONFIG["metrics"]["enabled"])

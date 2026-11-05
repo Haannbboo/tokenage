@@ -3,12 +3,13 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createServer } from 'node:http'
+import { createServer, request } from 'node:http'
 
 import {
   resolveProxyRequestUrl,
   shouldProxyApiRequest,
   createApiProxyMiddleware,
+  isLocalHost,
 } from './vite-api-proxy.js'
 
 test('shouldProxyApiRequest matches config, usage and session routes', () => {
@@ -151,6 +152,103 @@ test('apiProxyMiddleware relays a 302 with Location and Set-Cookie instead of fo
       'session=abc123; Path=/; HttpOnly',
       'other=xyz; Path=/',
     ])
+  } finally {
+    await new Promise(resolve => frontend.close(resolve))
+    await new Promise(resolve => backend.close(resolve))
+  }
+})
+
+test('apiProxyMiddleware translates only same-origin browser proofs for cookie writes', async () => {
+  const backend = createServer((req, res) => {
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ origin: req.headers.origin, referer: req.headers.referer }))
+  })
+  await new Promise(resolve => backend.listen(0, '127.0.0.1', resolve))
+  const middleware = createApiProxyMiddleware({
+    env: { TOKENAGE_API_URL: `http://127.0.0.1:${backend.address().port}` },
+  })
+  const frontend = createServer((req, res) => middleware(req, res, () => res.end()))
+  await new Promise(resolve => frontend.listen(0, '127.0.0.1', resolve))
+  const origin = `http://127.0.0.1:${frontend.address().port}`
+  try {
+    const response = await fetch(`${origin}/auth/logout`, {
+      method: 'POST', headers: { origin, cookie: 'tokenage_session=test' },
+    })
+    const backendOrigin = `http://127.0.0.1:${backend.address().port}`
+    assert.deepEqual(await response.json(), { origin: backendOrigin })
+    for (const headers of [
+      { origin: 'http://foreign.example' },
+      { origin: `${origin}0` },
+      { origin: 'null', referer: `${origin}/settings` },
+      {},
+    ]) {
+      const rejected = await fetch(`${origin}/auth/logout`, { method: 'POST', headers })
+      assert.deepEqual(await rejected.json(), headers)
+    }
+    // Referer is never rewritten, and a safe method's Origin is left alone:
+    // the API reads either one to send Google sign-in back to Vite dev.
+    for (const method of ['POST', 'GET']) {
+      const headers = { referer: `${origin}/settings` }
+      const kept = await fetch(`${origin}/auth/logout`, { method, headers })
+      assert.deepEqual(await kept.json(), headers)
+    }
+    const login = await fetch(`${origin}/auth/google/login`, { headers: { origin } })
+    assert.deepEqual(await login.json(), { origin })
+  } finally {
+    await new Promise(resolve => frontend.close(resolve))
+    await new Promise(resolve => backend.close(resolve))
+  }
+})
+
+test('isLocalHost follows Vite default allowedHosts', () => {
+  for (const host of ['localhost:5173', 'app.localhost', '127.0.0.1:5173', '[::1]:5173', '192.168.1.5']) {
+    assert.equal(isLocalHost(host), true, host)
+  }
+  for (const host of [undefined, '', 'rebind.attacker.example:5173', 'localhost.evil', 'evil@127.0.0.1']) {
+    assert.equal(isLocalHost(host), false, host)
+  }
+})
+
+test('apiProxyMiddleware leaves a DNS-rebound Host to Vite instead of proxying it', async () => {
+  let proxied = 0
+  const backend = createServer((req, res) => {
+    proxied += 1
+    res.end()
+  })
+  await new Promise(resolve => backend.listen(0, '127.0.0.1', resolve))
+  const middleware = createApiProxyMiddleware({
+    env: { TOKENAGE_API_URL: `http://127.0.0.1:${backend.address().port}` },
+  })
+  const frontend = createServer((req, res) =>
+    middleware(req, res, () => {
+      res.statusCode = 403 // Vite's own host check answers next()
+      res.end()
+    }),
+  )
+  await new Promise(resolve => frontend.listen(0, '127.0.0.1', resolve))
+  const rebound = `rebind.attacker.example:${frontend.address().port}`
+  const send = (method, path) =>
+    new Promise((resolve, reject) => {
+      const req = request(
+        {
+          host: '127.0.0.1',
+          port: frontend.address().port,
+          method,
+          path,
+          headers: { host: rebound, origin: `http://${rebound}` },
+        },
+        res => {
+          res.resume()
+          res.on('end', () => resolve(res.statusCode))
+        },
+      )
+      req.on('error', reject)
+      req.end()
+    })
+  try {
+    assert.equal(await send('POST', '/auth/cli/start'), 403)
+    assert.equal(await send('GET', '/auth/me'), 403)
+    assert.equal(proxied, 0)
   } finally {
     await new Promise(resolve => frontend.close(resolve))
     await new Promise(resolve => backend.close(resolve))

@@ -91,6 +91,7 @@ def _mock_authorize_url(api_module, monkeypatch):
 def _start_login(api_module, monkeypatch, client):
     """Run the login leg and return the state token from the authorize URL."""
     _mock_authorize_url(api_module, monkeypatch)
+    client.headers["origin"] = str(client.base_url).rstrip("/")
     response = client.get("/auth/google/login", follow_redirects=False)
     assert response.status_code == 302
     location = response.headers["location"]

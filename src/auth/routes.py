@@ -105,6 +105,54 @@ def _bearer_token(request: Request) -> str | None:
     return token if scheme.lower() == "bearer" and token else None
 
 
+def _origin(url: str) -> tuple[str, str, int] | None:
+    """Normalize an HTTP origin, including its effective port."""
+    try:
+        parsed = urlparse(url)
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            return None
+        return (
+            parsed.scheme,
+            parsed.hostname.lower(),
+            parsed.port
+            if parsed.port is not None
+            else (443 if parsed.scheme == "https" else 80),
+        )
+    except ValueError:
+        return None
+
+
+def _require_cookie_origin(request: Request) -> None:
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return
+    source = request.headers.get("origin")
+    if source is None:
+        source = request.headers.get("referer", "")
+    actual = _origin(source)
+    if actual is not None:
+        # The configured public URL, or the Host the browser addressed. A
+        # cross-site page can't set Host. The Host branch also compares the
+        # scheme: TLS often terminates before this app sees the request, so an
+        # https deployment only accepts an https origin (loopback is a secure
+        # context, so browsers keep the Secure cookie there).
+        if CONFIG.get("server", {}).get("base_url") and actual == _origin(
+            resolve_server_urls(CONFIG)["api_url"]
+        ):
+            return
+        if actual == _origin(f"{actual[0]}://{request.headers.get('host', '')}") and (
+            actual[0] == "https"
+            or actual[1] in _LOOPBACK_HOSTNAMES
+            or not _cookie_is_secure()
+        ):
+            return
+    raise HTTPException(status_code=403, detail="same-origin request required")
+
+
 def _resolve_request_user(
     request: Request,
 ) -> tuple[User, AuthToken | None] | None:
@@ -120,6 +168,8 @@ def _resolve_request_user(
     if token:
         resolved = resolve_token(token)
         if resolved is not None and resolved[1].kind != "ingest":
+            if bearer is None:
+                _require_cookie_origin(request)
             user, auth_token = resolved
             request.state.user = user
             request.state.auth_token = auth_token
@@ -674,10 +724,8 @@ def auth_cli_start_approve(
 ):
     """Approve the CLI login from the confirm page (requires a resolved user).
 
-    The SameSite=Lax cookie is withheld on cross-site POSTs, and the loopback
-    owner rule refuses a cross-site Origin (see is_direct_loopback), so this is
-    unreachable from another site — no separate CSRF token (same argument as
-    POST /auth/logout).
+    Cookie authentication requires a matching Origin or Referer; the loopback
+    owner rule also refuses a cross-site Origin (see is_direct_loopback).
     """
     challenge, device = _validate_cli_start_params(code_challenge, device_name)
     resolved = _resolve_request_user(request)

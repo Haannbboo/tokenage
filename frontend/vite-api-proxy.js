@@ -1,3 +1,5 @@
+import { isIP } from 'node:net'
+
 import { resolveApiUrl } from './vite-api-url.js'
 
 // SPA pages that share their path with an API route (mirrors
@@ -60,8 +62,25 @@ async function readRequestBody(req) {
 }
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
-function buildForwardHeaders(headers, remoteAddress) {
+// Vite's default allowedHosts rule. This middleware runs before Vite's own
+// host check, so a DNS-rebound name must not reach the API through it.
+export function isLocalHost(host) {
+  if (!host || /[@/\\?#]/.test(host)) return false
+  try {
+    const { hostname } = new URL(`http://${host}`)
+    return (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      isIP(hostname.replace(/^\[(.*)\]$/, '$1')) !== 0
+    )
+  } catch {
+    return false
+  }
+}
+
+function buildForwardHeaders(headers, method, remoteAddress, targetUrl) {
   const forwarded = new Headers()
   for (const [key, value] of Object.entries(headers)) {
     if (value === undefined) continue
@@ -76,6 +95,20 @@ function buildForwardHeaders(headers, remoteAddress) {
 
     forwarded.set(key, value)
   }
+  // Node fetch replaces Host with the backend host. Translate a write's
+  // same-origin Origin only after checking it against Vite's own HTTP origin;
+  // foreign or missing proofs reach the API unchanged and fail its check.
+  // Referer stays as sent: the API reads it to return OAuth to Vite dev.
+  const source = forwarded.get('origin')
+  if (source && !SAFE_METHODS.has(method)) {
+    try {
+      if (new URL(source).origin === new URL(`http://${headers.host}`).origin) {
+        forwarded.set('origin', new URL(targetUrl).origin)
+      }
+    } catch {
+      // Malformed sources remain untrusted.
+    }
+  }
   // The API treats a direct loopback request as the local owner. This proxy
   // is itself loopback, so mark requests from other machines (vite --host) as
   // forwarded or they would be signed in as the owner.
@@ -87,17 +120,27 @@ function buildForwardHeaders(headers, remoteAddress) {
 
 export function createApiProxyMiddleware({ env, trackerConfigPath } = {}) {
   return async function apiProxyMiddleware(req, res, next) {
-    if (!req.url || !shouldProxyApiRequest(req.url, { method: req.method, headers: req.headers })) {
+    if (
+      !req.url ||
+      !shouldProxyApiRequest(req.url, { method: req.method, headers: req.headers }) ||
+      !isLocalHost(req.headers.host)
+    ) {
       next()
       return
     }
 
     try {
+      const targetUrl = resolveProxyRequestUrl(req.url, { env, trackerConfigPath })
       const response = await fetch(
-        resolveProxyRequestUrl(req.url, { env, trackerConfigPath }),
+        targetUrl,
         {
           method: req.method,
-          headers: buildForwardHeaders(req.headers, req.socket?.remoteAddress),
+          headers: buildForwardHeaders(
+            req.headers,
+            req.method,
+            req.socket?.remoteAddress,
+            targetUrl,
+          ),
           body:
             req.method === 'GET' || req.method === 'HEAD'
               ? undefined

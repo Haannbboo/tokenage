@@ -332,6 +332,7 @@ def test_cost_recalculation_requires_row_ownership(
     client = TestClient(api_module.app)
     if auth_mode == "cookie":
         client.cookies.set("tokenage_session", tokens["cookie"])
+        client.headers["Origin"] = str(client.base_url).rstrip("/")
     else:
         client.headers["Authorization"] = f"Bearer {tokens.get(auth_mode, tokens['a'])}"
     owner = "b" if auth_mode == "b" else "a"

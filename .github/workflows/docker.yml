@@ -13,6 +13,16 @@ name: Docker
       - .github/workflows/docker.yml
   push:
     branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker/**
+      - install.sh
+      - VERSION
+      - src/**
+      - protocol/**
+      - frontend/**
+      - .github/workflows/docker.yml
   schedule:
     - cron: "23 4 * * 0"
   workflow_dispatch:
@@ -44,7 +54,8 @@ jobs:
           cache-to: type=gha,mode=max
       - run: ./docker/smoke.sh
   publish:
-    if: github.event_name == 'push'
+    # Guard: only the upstream repo may publish to the upstream GHCR namespace.
+    if: "github.event_name == 'push' && github.repository == 'Haannbboo/tokenage'"
     permissions:
       contents: read
       packages: write
@@ -93,7 +104,8 @@ jobs:
           validate: "true"
   cleanup:
     # Weekly fallback and manual runs: nothing publishes on these events.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Guard: only the upstream repo may prune the upstream GHCR namespace.
+    if: "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.repository == 'Haannbboo/tokenage'"
     permissions:
       packages: write
     concurrency:

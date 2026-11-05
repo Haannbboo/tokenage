@@ -6,6 +6,7 @@ WORKFLOW_PATH = (
     Path(__file__).resolve().parents[1] / ".github" / "workflows" / "docker.yml"
 )
 CLEANUP = "dataaxiom/ghcr-cleanup-action"
+UPSTREAM = "github.repository == 'Haannbboo/tokenage'"
 
 
 def load_workflow() -> dict:
@@ -16,10 +17,32 @@ def test_top_level_permissions_are_empty():
     assert load_workflow()["permissions"] == {}
 
 
+def test_push_uses_the_same_path_filter_as_pull_request():
+    on = load_workflow()["on"]
+
+    assert on["push"]["branches"] == ["main"]
+    # A docs-only merge to main must not rebuild and re-push the image.
+    assert on["push"]["paths"] == on["pull_request"]["paths"]
+    assert on["push"]["paths"]
+
+
+def test_only_the_upstream_repo_may_write_to_ghcr():
+    jobs = load_workflow()["jobs"]
+    ghcr_writers = {
+        name: job
+        for name, job in jobs.items()
+        if job.get("permissions", {}).get("packages") == "write"
+    }
+
+    assert set(ghcr_writers) == {"publish", "cleanup"}
+    for name, job in ghcr_writers.items():
+        assert UPSTREAM in job["if"], name
+
+
 def test_push_prunes_ghcr_inside_the_publish_job():
     publish = load_workflow()["jobs"]["publish"]
 
-    assert publish["if"] == "github.event_name == 'push'"
+    assert publish["if"] == ("github.event_name == 'push' && " + UPSTREAM)
     assert publish["permissions"]["packages"] == "write"
     steps = publish["steps"]
     names = [s.get("name") or s.get("uses", "") for s in steps]
@@ -45,7 +68,8 @@ def test_schedule_and_dispatch_prune_without_publishing():
     cleanup = jobs["cleanup"]
 
     assert cleanup["if"] == (
-        "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
+        "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
+        " && " + UPSTREAM
     )
     # Never queued behind or alongside a publish on push.
     assert "needs" not in cleanup

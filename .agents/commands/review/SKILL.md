@@ -5,7 +5,7 @@ lenses grounded in project standards. The deliverable is a synthesized verdict �
 changes.
 
 **Hard constraint:** Reviewers MUST run via the opposite tool's CLI (`claude -p` or
-`opencode -p`). Do NOT use subagents, the Agent tool, or any internal delegation mechanism as
+`opencode run`). Do NOT use subagents, the Agent tool, or any internal delegation mechanism as
 reviewers — those run on *your own* model, which defeats the purpose.
 
 ## Step 1 — Load Context
@@ -117,7 +117,7 @@ Start each reviewer this way and retain its PID. Use the corresponding `opencode
 **If you are claude code** — spawn opencode reviewers via `opencode` CLI:
 
 ```sh
-timeout "$REVIEW_TIMEOUT_SECONDS" opencode -p "prompt" \
+timeout "$REVIEW_TIMEOUT_SECONDS" opencode run "prompt" \
   > "$REVIEW_DIR/skeptic.md" 2> "$REVIEW_DIR/skeptic.stderr" &
 review_pids+=("$!")
 ```

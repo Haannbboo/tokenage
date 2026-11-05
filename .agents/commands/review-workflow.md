@@ -8,7 +8,7 @@ adds only the landing gate below.
 
 1. **Independent review before commit.** Run fresh reviewers on the *opposite*
    tool from the one that wrote the change: Orca orchestration workers when
-   available, otherwise the other tool's CLI (`claude -p` / `opencode -p`).
+   available, otherwise the other tool's CLI (`claude -p` / `opencode run`).
    Never use subagents of your own model as reviewers. Pick the tier by risk,
    not size, from [review/SKILL.md](review/SKILL.md):
    - **Quick** (docs, comments, tests-only, non-security config): no security

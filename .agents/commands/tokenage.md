@@ -136,11 +136,11 @@ install.sh (root; --client / --server / both) → bootstrap.sh → python -m src
                                              → client snapshot + venv                                  (client)
 ```
 
-Quick backend restart:
+Backend restart:
 
-```bash
-~/.venv/bin/supervisorctl -c ~/.tokenage/supervisord.conf restart tokenage-api
-```
+`tokenage server restart` reloads YOUR OWN install (it runs migrations first).
+To run a branch, use `src/scripts/dev/dev-start.sh` (isolated server, own DB copy).
+Never point either at a server that serves real traffic.
 
 ## Documentation policy
 

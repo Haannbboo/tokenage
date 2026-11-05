@@ -43,7 +43,7 @@ it('refreshing a paged list returns to page one without duplicating rows', async
   await waitFor(() => expect(result.current.sessions.map(s => s.session_id)).toEqual(page(0).map(s => s.session_id)))
 })
 
-it('sends project filters including unassigned while keeping all project options visible', async () => {
+it('sends project filters including unassigned in both table and distribution requests', async () => {
   const urls: URL[] = []
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {
     const url = new URL(input, window.location.origin)
@@ -52,9 +52,9 @@ it('sends project filters including unassigned while keeping all project options
   }))
   const { rerender } = renderHook(({ project }: { project: string | null }) => useSessionsData({ activeSource: null, dateRange: 'all', bucket: null, project }), { initialProps: { project: 'orchard' as string | null } })
   await waitFor(() => expect(urls.some(u => u.pathname === '/sessions' && u.searchParams.get('project') === 'orchard')).toBe(true))
-  expect(urls.find(u => u.pathname === '/sessions/distribution')?.searchParams.has('project')).toBe(false)
+  expect(urls.find(u => u.pathname === '/sessions/distribution')?.searchParams.get('project')).toBe('orchard')
   rerender({ project: '' })
-  await waitFor(() => expect(urls.some(u => u.pathname === '/sessions' && u.searchParams.has('project') && u.searchParams.get('project') === '')).toBe(true))
+  await waitFor(() => expect(urls.some(u => u.pathname === '/sessions/distribution' && u.searchParams.has('project') && u.searchParams.get('project') === '')).toBe(true))
 })
 
 it('changing project after load more returns to page one with only the new project', async () => {

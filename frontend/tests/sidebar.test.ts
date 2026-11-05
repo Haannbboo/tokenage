@@ -15,6 +15,7 @@ function stubApi(provider = 'google', webSessions: { current: boolean }[] | 'err
       : path === '/auth/devices' ? { devices: [], web_sessions: webSessions }
       : path === '/version' ? { name: 'tokenage', version: '9.9.9' }
       : path === '/sessions' ? { sessions: [], total: 0 }
+      : path === '/sessions/projects' ? { projects: [], over_time: [] }
       : path === '/sessions/distribution' ? { over_time: [], by_agent: [], by_duration: [], by_cost: [] }
       : []
     return { ok: true, status: 200, json: async () => data } as Response
@@ -59,13 +60,15 @@ it('/sessions is its own page and the active sidebar item', async () => {
   expect(screen.queryByRole('button', { name: 'Sessions' })).toBeNull()
 })
 
-it('shows Projects as disabled, out of the tab order', async () => {
+it('opens Projects between Sessions and Request Logs', async () => {
   await open('/dashboard')
-  const projects = screen.getByRole('link', { name: 'Projects · Soon' })
-  expect(projects.getAttribute('aria-disabled')).toBe('true')
-  expect(projects.hasAttribute('href')).toBe(false)
-  expect(projects.tabIndex).toBe(-1)
-  expect(projects.textContent).toContain('Soon')
+  const projects = screen.getByRole('link', { name: 'Projects' })
+  expect(projects.getAttribute('href')).toBe('/projects')
+  const links = [...document.querySelectorAll('.sidebar-list:first-child a')].map(link => link.textContent)
+  expect(links).toEqual(['Dashboard', 'Sessions', 'Projects', 'Request Logs'])
+  fireEvent.click(projects)
+  expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('Projects')
+  expect(projects.getAttribute('aria-current')).toBe('page')
 })
 
 it('collapses to the icon rail and remembers it', async () => {
@@ -205,4 +208,15 @@ it('exposes settings sections as pressed buttons', async () => {
   expect(pricing.getAttribute('aria-pressed')).toBe('true')
   expect(services.getAttribute('aria-pressed')).toBe('false')
   expect(screen.queryByRole('tablist')).toBeNull()
+})
+
+it('gives Projects its own 30-day default without changing the Sessions date range', async () => {
+  await open('/sessions')
+  expect((screen.getByLabelText('Date Range') as HTMLSelectElement).value).toBe('24h')
+  fireEvent.click(screen.getByRole('link', { name: 'Projects' }))
+  expect((screen.getByLabelText('Date Range') as HTMLSelectElement).value).toBe('30d')
+  fireEvent.change(screen.getByLabelText('Date Range'), { target: { value: '7d' } })
+  expect((screen.getByLabelText('Date Range') as HTMLSelectElement).value).toBe('7d')
+  fireEvent.click(screen.getByRole('link', { name: 'Sessions' }))
+  expect((screen.getByLabelText('Date Range') as HTMLSelectElement).value).toBe('24h')
 })

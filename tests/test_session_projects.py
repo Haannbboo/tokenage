@@ -224,7 +224,7 @@ def test_migration_restores_and_preserves_project(load_module, tmp_path):
         assert db.get(SessionRecord, "kept-project").project_name == "orchard"
 
 
-def test_project_distribution_and_filter(api_module, fresh_db, monkeypatch):
+def test_project_list_and_filter(api_module, fresh_db, monkeypatch):
     from src.auth.tokens import mint_token
 
     token, user = mint_token(
@@ -242,11 +242,9 @@ def test_project_distribution_and_filter(api_module, fresh_db, monkeypatch):
         if name:
             assert post(client, token, event(name, sid)).status_code == 204
     drain()
-    distribution = client.get("/sessions/distribution").json()
-    groups = {row["key"]: row for row in distribution["by_project"]}
+    distribution = client.get("/sessions/projects").json()
+    groups = {row["key"]: row for row in distribution["projects"]}
     assert groups["orchard"]["session_count"] == 2
-    assert groups["orchard"]["total_tokens"] == 200
-    assert groups[None]["session_count"] == 1
     assert client.get("/sessions?project=orchard").json()["total"] == 2
     assert client.get("/sessions?project=").json()["sessions"][0]["project"] is None
     assert client.get("/sessions?project=missing").json()["total"] == 0

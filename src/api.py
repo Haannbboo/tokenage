@@ -39,6 +39,7 @@ from .database import (
     aggregate_daily_by_dimension,
     aggregate_session_context,
     aggregate_session_distribution,
+    aggregate_session_projects,
     aggregate_usage_by_period,
     count_sessions,
     count_usage,
@@ -55,6 +56,7 @@ from .database import (
     load_model_price_overrides,
     recalculate_usage_cost,
     reprice_estimated_rows,
+    session_project_detail,
     summarize_sessions,
     summarize_tool_calls,
     summarize_usage_by_model,
@@ -716,22 +718,58 @@ def get_sessions_summary(filters: SessionFilters = Depends(_session_query_filter
     return summarize_sessions(filters=filters)
 
 
+def _validate_session_bucketing(granularity: str, tz_offset: str) -> None:
+    if granularity not in {"day", "hour", "15m"}:
+        raise HTTPException(status_code=400, detail="Invalid granularity")
+    if not re.fullmatch(r"[+-](?:0[0-9]|1[0-4]):[0-5][0-9]", tz_offset):
+        raise HTTPException(status_code=400, detail="Invalid tz_offset")
+
+
 @app.get("/sessions/distribution")
 def get_sessions_distribution(
     filters: SessionFilters = Depends(_session_query_filters),
     granularity: str = "day",
     tz_offset: str = "+00:00",
 ):
-    if granularity not in {"day", "hour", "15m"}:
-        raise HTTPException(status_code=400, detail="Invalid granularity")
-    if not re.fullmatch(r"[+-](?:0[0-9]|1[0-4]):[0-5][0-9]", tz_offset):
-        raise HTTPException(status_code=400, detail="Invalid tz_offset")
+    _validate_session_bucketing(granularity, tz_offset)
     try:
         return aggregate_session_distribution(
             filters=filters, granularity=granularity, tz_offset=tz_offset
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.get("/sessions/projects")
+def get_session_projects(
+    filters: SessionFilters = Depends(_session_query_filters),
+    granularity: str = "day",
+    tz_offset: str = "+00:00",
+):
+    _validate_session_bucketing(granularity, tz_offset)
+    try:
+        return aggregate_session_projects(
+            filters=filters, granularity=granularity, tz_offset=tz_offset
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.get("/sessions/projects/detail")
+def get_session_project_detail(
+    name: str = Query(..., min_length=1, max_length=100),
+    filters: SessionFilters = Depends(_session_query_filters),
+    granularity: str = "day",
+    tz_offset: str = "+00:00",
+):
+    _validate_session_bucketing(granularity, tz_offset)
+    try:
+        result = session_project_detail(name=name, filters=filters)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return result
 
 
 def _device_status_entry(device: Device) -> dict:

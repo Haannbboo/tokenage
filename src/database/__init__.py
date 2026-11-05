@@ -34,11 +34,13 @@ from .sessions import (
     SessionFilters,
     aggregate_session_context,
     aggregate_session_distribution,
+    aggregate_session_projects,
     count_sessions,
     fetch_session_selector_rows,
     fetch_sessions,
     get_session_record,
     rebuild_sessions_from_usage,
+    session_project_detail,
     summarize_sessions,
     upsert_session_from_usage,
 )
@@ -72,6 +74,8 @@ def record_usage(*args, **kwargs):
 
 __all__ = [
     "SessionFilters",
+    "aggregate_session_projects",
+    "session_project_detail",
     "AuthToken",
     "Base",
     "BaseUrl",

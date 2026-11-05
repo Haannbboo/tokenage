@@ -35,8 +35,7 @@ commands:
   update [--check]          update the client
   client <command>          manage the background client service
                             (start, stop, restart, status, run)
-  server <command>          manage the server component
-                            (requires the server component)
+  server <command>          manage the server, if installed
                             (bootstrap, start, stop, restart, status, update,
                             token, login-link)
 

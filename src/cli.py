@@ -20,11 +20,16 @@ PROG = "tokenage server"
 def parse_token_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} token",
-        description="Manage auth tokens (operator-only; talks to the configured DB).",
+        description="Manage auth tokens (operator-only; needs database access).",
     )
     subparsers = parser.add_subparsers(dest="action", required=True)
     create = subparsers.add_parser(
-        "create", help="mint a token for a user, creating the user if needed"
+        "create",
+        help="create a token for a user, creating the user if needed",
+        description=(
+            "Create a token for a user, creating the user if needed "
+            "(operator-only; needs database access)."
+        ),
     )
     create.add_argument("--email", required=True, help="user email")
     create.add_argument(
@@ -78,6 +83,11 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] == "login-link":
         return run_login_link_command()
     if args and args[0] in ops.COMMANDS:
+        if args[0] in ("stop", "restart", "status"):
+            if len(args) > 1:
+                print(f"{PROG} {args[0]} takes no arguments", file=sys.stderr)
+                return 2
+            return ops.COMMANDS[args[0]]()
         return ops.COMMANDS[args[0]](args[1:])
     commands = " | ".join(["login-link", *ops.COMMANDS])
     print(f"usage: {PROG} token create --email <email> | {commands}", file=sys.stderr)

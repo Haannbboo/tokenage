@@ -156,6 +156,24 @@ run_server_python() {
   exec "${root}/.venv/bin/python" -P -m src.cli "$@"
 }
 
+print_server_help() {
+  cat <<EOF
+usage: tokenage server <command>
+
+Manage the server component.
+
+  bootstrap              install, build the dashboard, start and verify
+  start                  start the services
+  stop                   stop the server
+  restart                reload the running server
+  status                 show server state and ports
+  update [--check|--dry-run]
+                         update the server, then bootstrap and restart
+  token create ...       mint an operator token
+  login-link             print a one-time browser sign-in link (local auth)
+EOF
+}
+
 run_server() {
   local arg
   local -a server_args=()
@@ -165,25 +183,30 @@ run_server() {
   # ${var[@]+"${var[@]}"}: an empty array must not trip set -u on bash 3.2.
   set -- ${server_args[@]+"${server_args[@]}"}
   local sub="${1:-}"
-  if [[ -z "$sub" || "$sub" == "-h" || "$sub" == "--help" ]]; then
-    cat >&2 <<EOF
-usage: tokenage server <command>
-
-  bootstrap              install, build the dashboard, start, verify
-  start                  turn the services on
-  stop [program...]      stop all services, or the named ones
-  restart [program...]   reload running services (program: tokenage-api)
-  status [program...]    supervisord table, ports, port check
-  update [--check|--dry-run]
-                         fast-forward the server clone, bootstrap, restart
-  token create ...       mint an operator token
-  login-link             one-time browser sign-in link (local provider)
-EOF
+  if [[ -z "$sub" ]]; then
+    print_server_help >&2
     return 2
   fi
   case "$sub" in
+    -h|--help) print_server_help; return 0 ;;
+    bootstrap|start|stop|restart|status|update|login-link)
+      if [[ $# -eq 2 && ( "$2" == "-h" || "$2" == "--help" ) ]]; then
+        print_server_help
+        return 0
+      fi
+      ;;
+  esac
+  case "$sub" in
     bootstrap) shift; run_server_script bootstrap "$@" ;;
-    start|stop|restart|status|update|token|login-link) shift; run_server_python "$sub" "$@" ;;
+    stop|restart|status)
+      shift
+      if [[ $# -ne 0 ]]; then
+        printf 'tokenage server %s takes no arguments\n' "$sub" >&2
+        return 2
+      fi
+      run_server_python "$sub"
+      ;;
+    start|update|token|login-link) shift; run_server_python "$sub" "$@" ;;
     *)
       printf 'tokenage: unknown server command: %s\n' "$sub" >&2
       return 2

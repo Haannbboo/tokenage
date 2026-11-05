@@ -12,7 +12,7 @@ COPY src/pyproject.toml src/pyproject.toml
 RUN uv pip install --system --no-cache -r src/pyproject.toml
 COPY src/ src/
 COPY protocol/ protocol/
-COPY install.sh VERSION config.example.yaml ./
+COPY install.sh VERSION ./
 COPY --from=dashboard /build/frontend/dist/ frontend/dist/
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN groupadd --gid 10001 tokenage && useradd --uid 10001 --gid tokenage --create-home tokenage \

@@ -120,7 +120,7 @@ def test_auth_me_google(api_module, fresh_db, monkeypatch):
     monkeypatch.setitem(
         src.config.app.CONFIG, "auth", {"provider": "google", "allowlist": []}
     )
-    token, _ = _mint(fresh_db, device_name="unraid-vm")
+    token, _ = _mint(fresh_db, device_name="build-server")
     client = TestClient(api_module.app)
 
     # Unresolved is a 200 with no user, never the loopback owner under google.
@@ -142,7 +142,7 @@ def test_auth_me_google(api_module, fresh_db, monkeypatch):
     body = response.json()
     assert body["provider"] == "google"
     assert body["user"]["email"] == "a@example.com"
-    assert body["token"] == {"kind": "cli", "device_name": "unraid-vm"}
+    assert body["token"] == {"kind": "cli", "device_name": "build-server"}
 
     engine = fresh_db.database_module.get_engine(fresh_db.db_path)
     with engine.begin() as conn:

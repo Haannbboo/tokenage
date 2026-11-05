@@ -16,6 +16,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 LAUNCHER = Path(__file__).resolve().parents[1] / "client" / "bin" / "tokenage"
 CLIENT = Path(__file__).resolve().parents[1] / "client"
 
@@ -114,15 +116,79 @@ def test_tokenage_script_routes_to_client_and_server():
     assert '-m src.cli "$@"' in content
 
 
+@pytest.mark.parametrize("help_flag", ["-h", "--help"])
+@pytest.mark.parametrize(
+    "command",
+    [None, "stop", "restart", "status", "start", "bootstrap", "update", "login-link"],
+)
+def test_server_help_prints_to_stdout_and_exits_zero(tmp_path, command, help_flag):
+    args = ["server"]
+    if command is not None:
+        args.append(command)
+    result = _run_launcher(tmp_path, *args, help_flag)
+
+    assert result.returncode == 0
+    assert "usage: tokenage server <command>" in result.stdout
+    assert "[service...]" not in result.stdout
+    assert "services:" not in result.stdout
+    assert result.stderr == ""
+
+
+def test_server_restart_rejects_stray_arguments(tmp_path):
+    result = _run_launcher(tmp_path, "server", "restart", "foo")
+
+    assert result.returncode == 2
+    assert "restart takes no arguments" in result.stderr
+    assert result.stdout == ""
+
+
+def test_server_rejects_unknown_subcommand_even_with_help(tmp_path):
+    result = _run_launcher(tmp_path, "server", "unknown", "--help")
+
+    assert result.returncode == 2
+    assert "unknown server command: unknown" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("command", ["stop", "restart", "status"])
+@pytest.mark.parametrize("service", ["foo", "tokenage-api"])
+def test_server_service_commands_reject_arguments(
+    cli_module, monkeypatch, capsys, tmp_path, command, service
+):
+    def unexpected_call(*args):
+        pytest.fail("invalid arguments must not reach service control")
+
+    monkeypatch.setitem(cli_module.ops.COMMANDS, command, unexpected_call)
+    assert cli_module.main([command, service]) == 2
+    assert f"{command} takes no arguments" in capsys.readouterr().err
+    result = _run_launcher(tmp_path, "server", command, service)
+    assert result.returncode == 2
+    assert f"{command} takes no arguments" in result.stderr
+
+
+@pytest.mark.parametrize("command", ["stop", "restart", "status"])
+def test_server_service_commands_dispatch_without_arguments(
+    cli_module, monkeypatch, command
+):
+    monkeypatch.setitem(cli_module.ops.COMMANDS, command, lambda: 0)
+    assert cli_module.main([command]) == 0
+
+
+def test_minting_a_token_is_marked_operator_only(cli_module, capsys):
+    """`token create` hits the database directly; `--help` must say so."""
+    with pytest.raises(SystemExit):
+        cli_module.parse_token_args(["create", "--help"])
+
+    assert "operator-only" in capsys.readouterr().out
+    assert "mint an operator token" in LAUNCHER.read_text(encoding="utf-8")
+
+
 def test_tokenage_server_routes_bootstrap_to_the_script(tmp_path):
     content = LAUNCHER.read_text(encoding="utf-8")
 
     assert 'exec bash "${root}/src/scripts/${name}.sh" "$@"' in content
     assert 'bootstrap) shift; run_server_script bootstrap "$@"' in content
-    assert (
-        "start|stop|restart|status|update|token|login-link) shift; run_server_python"
-        in content
-    )
+    assert "start|update|token|login-link) shift; run_server_python" in content
 
     result = _run_launcher(tmp_path, "server")
     assert result.returncode == 2
@@ -458,8 +524,8 @@ def test_server_dispatch_consumes_no_banner_without_changing_other_arguments(tmp
     }
     for args, expected in [
         (
-            ["server", "restart", "--no-banner", "--otlp-port", "4202"],
-            json.dumps(["restart", "--otlp-port", "4202"]) + "\n",
+            ["server", "restart", "--no-banner"],
+            json.dumps(["restart"]) + "\n",
         ),
         (
             ["server", "--no-banner", "token", "create", "--email", "ops@example.com"],

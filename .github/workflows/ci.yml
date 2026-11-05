@@ -61,7 +61,7 @@ jobs:
       - name: Create test config
         run: |
           mkdir -p ~/.tokenage
-          cp config.example.yaml ~/.tokenage/config.yaml
+          cp src/config/config.example.yaml ~/.tokenage/config.yaml
 
       - name: Ruff format and lint
         # Same version as .pre-commit-config.yaml; an unpinned ruff changes
@@ -146,7 +146,7 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         run: |
           mkdir -p ~/.tokenage
-          cp config.example.yaml ~/.tokenage/config.yaml
+          cp src/config/config.example.yaml ~/.tokenage/config.yaml
 
       - name: Run backend tests against Postgres
         if: steps.changes.outputs.run == 'true'

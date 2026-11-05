@@ -1,4 +1,4 @@
-[English](README.md) | [中文](README_CN.md)
+[English](README.md) | [中文](docs/README_CN.md)
 
 # tokenage
 
@@ -183,7 +183,7 @@ tokenage --summary-dest file --summary-file /tmp/llm-summary.json -- claude
 tokenage --no-summary -- codex exec "say hello"
 ```
 
-See [docs/cli-reference.md](docs/cli-reference.md) for all flags, the tracking model, exit codes, service commands, API endpoints, and environment variables. Per-command behavior is in [docs/cli-refactor.md](docs/cli-refactor.md).
+Run `tokenage --help` and `tokenage <command> --help` for every command and flag.
 
 ## Dashboard
 
@@ -260,17 +260,34 @@ db:
   url: postgresql+psycopg://user:password@db-host:5432/tokenage?sslmode=require
 ```
 
-`tokenage server start` merges missing defaults from `config.example.yaml` into your user config without overwriting existing values.
+`tokenage server start` merges missing defaults from `src/config/config.example.yaml` into your user config without overwriting existing values.
 
 Optional Prometheus metrics use a separate, unauthenticated listener. Set
 `metrics.enabled: true` and `metrics.port` in the server config; the host defaults
 to loopback. Never publish or proxy this port. After enabling, disabling, or
-changing the metrics bind, do a full restart: `tokenage server stop tokenage-api`
+changing the metrics bind, do a full restart: `tokenage server stop`
 then `tokenage server start` (brief outage). `tokenage server restart` refuses
 SIGHUP when the running bind differs or is unknown. For a private interface,
 set `metrics.allowed_hosts` to the node IP or MagicDNS name used by the scraper.
 See the [metrics setup](docker/README.md#prometheus-metrics)
 for same-host and container scrapers.
+
+### Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `TOKENAGE_HOME` | Tracker home (default `~/.tokenage`). |
+| `TOKENAGE_CONFIG` | Server config file path (default `$TOKENAGE_HOME/config.yaml`). |
+| `TOKENAGE_DB_URL` | Database URL, overriding `db.url`. |
+| `TOKENAGE_QUEUE_URL` | Queue URL, overriding `queue.url`. |
+| `TOKENAGE_API_PORT` | API listen port, overriding `server.api_port`. |
+| `TOKENAGE_API_HOST` | API bind host, overriding `server.host`. |
+| `TOKENAGE_ROOT` | Run this checkout instead of the installed client and server clone. |
+| `TOKENAGE_BIN_DIR` | Where the launcher is installed (default `~/.local/bin`). |
+| `TOKENAGE_SERVER` | Server URL for `tokenage login` without `--server`, and for `install.sh --client`. |
+| `TOKENAGE_BRANCH` | Branch `install.sh` clones for the server (default `main`). |
+| `TOKENAGE_SKIP_LOGIN` | `1` makes `install.sh` run `setup` instead of signing in. |
+| `TOKENAGE_API_URL` | API URL for the Vite dev server (see [Dashboard](#dashboard)). |
 
 ## Point clients at the proxy
 
@@ -384,7 +401,7 @@ npm test
 npm run build
 ```
 
-Maintainer-only bootstrap smoke test:
+Optional bootstrap smoke test:
 
 ```bash
 bash src/scripts/dev/smoke-bootstrap-container.sh

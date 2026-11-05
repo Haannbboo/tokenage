@@ -13,7 +13,7 @@ This project tracks LLM usage via an OTLP collector and a loopback proxy in the 
 
 ## Privacy and trace data
 
-Default posture: collect the minimum useful metadata.
+Default posture: collect the minimum useful metadata (tokens, cost, model, timing, tool names); never prompts, responses or request bodies without an explicit opt-in.
 
 Sensitive by default:
 
@@ -127,6 +127,8 @@ When adding API routes used by frontend:
 
 Do not casually rewrite bootstrap scripts. They are the user-facing install path.
 
+The same code runs on one machine or split across machines (local, self-hosted, hosted): no `if hosted`/`if local` branches; the client always talks to a server URL.
+
 Architecture:
 
 ```txt
@@ -134,11 +136,11 @@ install.sh (root; --client / --server / both) → bootstrap.sh → python -m src
                                              → client snapshot + venv                                  (client)
 ```
 
-Quick backend restart:
+Backend restart:
 
-```bash
-~/.venv/bin/supervisorctl -c ~/.tokenage/supervisord.conf restart tokenage-api
-```
+`tokenage server restart` reloads YOUR OWN install (it runs migrations first).
+To run a branch, use `src/scripts/dev/dev-start.sh` (isolated server, own DB copy).
+Never point either at a server that serves real traffic.
 
 ## Documentation policy
 

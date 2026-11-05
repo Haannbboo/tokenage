@@ -1,4 +1,4 @@
-[English](README.md) | [中文](README_CN.md)
+[English](../README.md) | [中文](README_CN.md)
 
 # tokenage
 
@@ -172,7 +172,7 @@ tokenage --summary-dest file --summary-file /tmp/llm-summary.json -- claude
 tokenage --no-summary -- codex exec "say hello"
 ```
 
-完整 CLI 参考见 [docs/cli-reference.md](docs/cli-reference.md)，包括所有 flags、tracking model、退出码、服务命令、API endpoints 和环境变量。逐命令的行为见 [docs/cli-refactor.md](docs/cli-refactor.md)。
+运行 `tokenage --help` 和 `tokenage <command> --help` 查看所有命令和 flags。
 
 ## Dashboard
 
@@ -192,7 +192,7 @@ Dashboard 提供：
 3. `~/.tokenage/config.yaml` 中的 `server.host` 和 `server.api_port`
 4. `http://localhost:4001`
 
-前端相关说明见 [frontend/README.md](frontend/README.md)。
+前端相关说明见 [frontend/README.md](../frontend/README.md)。
 
 ## 默认本地服务
 
@@ -246,7 +246,7 @@ db:
   url: postgresql+psycopg://user:password@db-host:5432/tokenage?sslmode=require
 ```
 
-`tokenage server start` 会把 `config.example.yaml` 里缺失的默认值合并进用户配置，但不会覆盖已有值。
+`tokenage server start` 会把 `src/config/config.example.yaml` 里缺失的默认值合并进用户配置，但不会覆盖已有值。
 
 ## 把客户端指向 Proxy
 
@@ -384,4 +384,4 @@ bash src/scripts/dev/smoke-bootstrap-container.sh
 
 ## 开源协议
 
-MIT。详见 [LICENSE](LICENSE)。
+MIT。详见 [LICENSE](../LICENSE)。

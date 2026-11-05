@@ -35,7 +35,7 @@ uv run python -m pytest tests/scripts/ -q
 ### Cost/pricing/provider touched
 
 ```bash
-uv run python -m pytest tests/test_costs.py tests/test_pricing.py tests/test_provider_parser.py tests/test_config.py -q
+uv run python -m pytest tests/pricing/test_costs.py tests/pricing/test_pricing.py tests/test_provider_parser.py tests/test_config.py -q
 ```
 
 Also include API/recorder coverage if usage recording or endpoints changed:

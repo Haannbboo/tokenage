@@ -492,7 +492,7 @@ export function getProviderIcon(provider: string, theme: Theme = getTheme()) {
   if (p.includes('minimax')) return <img src="/models/minimax-color.svg" alt="" style={style} />
   if (p.includes('xiaomi')) return <img src="/models/xiaomi.svg" alt="" style={style} />
   if (p.includes('openrouter')) return <img src={dark ? '/models/openrouter-dark.svg' : '/models/openrouter.svg'} alt="" style={style} />
-  if (p.includes('opencode')) return <img src="/models/opencode.svg" alt="" style={style} />
+  if (p.includes('opencode')) return <img src={dark ? '/models/opencode-dark.png' : '/models/opencode.svg'} alt="" style={style} />
   if (p.includes('inclusionai') || p.includes('ling')) return <img src="/models/inclusionai.png" alt="" style={style} />
   if (p.includes('poolside')) return <img src="/models/poolside.svg" alt="" style={style} />
   if (p.includes('deepseek')) return <img src="/models/deepseek.svg" alt="" style={style} />
@@ -514,7 +514,7 @@ export function getSourceIcon(source: string, theme: Theme = getTheme()) {
   const dark = theme === 'dark'
   if (s.includes('hermes')) return <img src={dark ? '/models/hermesagent-dark.png' : '/models/hermesagent.svg'} alt="" style={style} />
   if (s.includes('codex')) return <img src="/models/codex-color.svg" alt="" style={style} />
-  if (s.includes('opencode') || s.includes('open-code')) return <img src="/models/opencode.svg" alt="" style={style} />
+  if (s.includes('opencode') || s.includes('open-code')) return <img src={dark ? '/models/opencode-dark.png' : '/models/opencode.svg'} alt="" style={style} />
   if (s.includes('claude')) return <img src="/models/claude-ai-icon.svg" alt="" style={style} />
   if (s.includes('kilo')) return <img src={dark ? '/models/kilocode-dark.png' : '/models/kilocode.png'} alt="" style={style} />
   return null

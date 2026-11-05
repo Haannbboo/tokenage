@@ -504,6 +504,8 @@ def test_relogin_rejects_foreign_or_wrong_kind_ingest_token(
         ({"ingest_token": {"token": "secret-ingest"}}, 422),
         ({"ingest_token": ["secret-ingest"]}, 422),
         ({"client_version": "invalid"}, 422),
+        ({"client_version": "١.٢.٣"}, 422),
+        ({"client_commit": "g" * 40}, 422),
         ({"installation_key": None}, 422),
         ({"code": "x" * 257}, 422),
         ({"code_verifier": None}, 400),
@@ -589,7 +591,7 @@ def test_installed_machine_relogin_rotates_both_tokens_and_revoke_stops_ingest(
         installation_key=installation_key,
         device_id=device_id,
         client_version="0.1.181",
-        client_commit="c" * 40,
+        client_commit="C" * 40,
     )
     assert second.status_code == 200
     second_tokens = second.json()

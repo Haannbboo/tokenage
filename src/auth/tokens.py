@@ -461,13 +461,21 @@ def revoke_device(device_id: str, user_id: str, db_path: str | None = None) -> b
 
 
 def set_device_status(
-    device_id: str, status_json: str, db_path: str | None = None
+    device_id: str,
+    status_json: str,
+    db_path: str | None = None,
+    *,
+    client_version: str | None = None,
+    client_commit: str | None = None,
 ) -> None:
-    """Store the latest status report on the device row."""
+    """Store the latest report and its validated client identity atomically."""
+    values = {"status_json": status_json, "status_reported_at": _now_micros()}
+    if client_version is not None:
+        values["client_version"] = client_version
+    if client_commit is not None:
+        values["client_commit"] = client_commit
     with Session(get_engine(db_path)) as session:
         session.execute(
-            sa_update(Device)
-            .where(Device.id == device_id)
-            .values(status_json=status_json, status_reported_at=_now_micros())
+            sa_update(Device).where(Device.id == device_id).values(**values)
         )
         session.commit()

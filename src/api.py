@@ -21,6 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from protocol import MAX_SUPPORTED_GENERATION, MIN_SUPPORTED_GENERATION
 from protocol.device_status import DeviceStatusReport
 from protocol.usage_report import UsageReport
+from src.client_identity import client_commit, client_version
 from src.config.app import CONFIG, _config_lock
 from src.config.server_config import resolve_server_urls
 
@@ -732,8 +733,10 @@ def _device_status_entry(device: Device) -> dict:
     return {
         "device_id": device.id,
         "device_name": device.device_name,
-        "client_version": (status or {}).get("client_version"),
-        "client_commit": (status or {}).get("client_commit"),
+        "client_version": client_version((status or {}).get("client_version"))
+        or client_version(device.client_version),
+        "client_commit": client_commit((status or {}).get("client_commit"))
+        or client_commit(device.client_commit),
         "reported_at": device.status_reported_at,
         "status": status,
     }
@@ -757,9 +760,15 @@ def post_device_status(
     )
     if device is None:
         raise HTTPException(status_code=400, detail="device token required")
+    # Ignore malformed optional identity metadata at the trust boundary, including
+    # in the stored report, while accepting health reports from older clients.
+    report.client_version = client_version(report.client_version)
+    report.client_commit = client_commit(report.client_commit)
     set_device_status(
         device.id,
         json.dumps(report.model_dump(mode="json"), sort_keys=True),
+        client_version=report.client_version,
+        client_commit=report.client_commit,
     )
     return Response(status_code=204)
 

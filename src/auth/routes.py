@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
+from src.client_identity import client_commit, client_version
 from src.config.app import CONFIG
 from src.config.server_config import resolve_server_urls
 
@@ -749,14 +750,12 @@ def auth_cli_exchange(body: CliExchangeRequest):
         r"[A-Za-z0-9_-]{43,128}", body.installation_key
     ):
         raise HTTPException(status_code=422, detail="invalid installation_key")
-    if body.client_version is not None and not re.fullmatch(
-        r"\d+\.\d+\.\d+", body.client_version
-    ):
+    if body.client_version is not None and client_version(body.client_version) is None:
         raise HTTPException(status_code=422, detail="invalid client_version")
-    if body.client_commit is not None and not re.fullmatch(
-        r"[0-9a-fA-F]{40}", body.client_commit
-    ):
-        raise HTTPException(status_code=422, detail="invalid client_commit")
+    if body.client_commit is not None:
+        body.client_commit = client_commit(body.client_commit)
+        if body.client_commit is None:
+            raise HTTPException(status_code=422, detail="invalid client_commit")
     entry = auth_google.pop_cli_code(_normalize_cli_code(body.code))
     if entry is None:
         raise HTTPException(status_code=400, detail="invalid code")

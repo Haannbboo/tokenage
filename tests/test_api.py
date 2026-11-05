@@ -1218,7 +1218,7 @@ def test_hosted_installer_uses_configured_origin_and_is_public(
     assert response.status_code == 200
     assert "text/x-shellscript" in response.headers["content-type"]
     assert f"TOKENAGE_INSTALL_SERVER={shlex.quote(server_url)}" in response.text
-    assert "TOKENAGE_INSTALL_COMMIT=''" in response.text
+    assert "TOKENAGE_INSTALL_COMMIT=${TOKENAGE_INSTALL_COMMIT:-''}" in response.text
     assert "__TOKENAGE_SERVER_URL__" not in response.text
     assert "__TOKENAGE_INSTALL_COMMIT__" not in response.text
     assert (

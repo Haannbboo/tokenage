@@ -99,6 +99,7 @@ export type DateRangeOption = '24h' | '5h' | '7d' | '30d' | 'all'
 export type PeriodGranularity = 'hour' | '15m' | 'day'
 
 export type SessionSummary = {
+  project?: string | null
   session_id: string
   client_source: string
   model: string
@@ -135,6 +136,7 @@ type SessionDistributionCount = {
 }
 
 export type SessionDistribution = {
+  by_project?: (SessionDistributionCount & { key: string | null; total_tokens: number })[]
   over_time: { session_count: number; key: number; period: string; start: string; end: string }[]
   by_agent: (SessionDistributionCount & { key: string; cost_share: number })[]
   by_duration: (SessionDistributionCount & { key: SessionDurationBucket })[]

@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, case, func, select, text
+from sqlalchemy import and_, case, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -35,6 +35,45 @@ from .usage import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _project_buffer():
+    from ..shared_state import SharedMapping
+
+    return SharedMapping("hooks:session", ttl=86400, cap=100_000)
+
+
+def apply_session_project(
+    session: Session, *, user_id: str, session_id: str, project: str
+) -> None:
+    """First accepted name wins; never create metadata-only session rows."""
+    from protocol.events import sanitize_project
+
+    project = sanitize_project(project)
+    # The UPDATE user_id predicate enforces ownership; do not remove it.
+    owner = session.scalar(
+        select(SessionRecord.user_id).where(SessionRecord.session_id == session_id)
+    )
+    if owner is not None:
+        if owner == user_id:
+            # Atomic even when usage or another hook holds the row lock.
+            session.execute(
+                update(SessionRecord)
+                .where(
+                    SessionRecord.session_id == session_id,
+                    SessionRecord.user_id == user_id,
+                    SessionRecord.project_name.is_(None),
+                )
+                .values(project_name=project)
+            )
+        return
+    buffer = _project_buffer()
+    key = f"{user_id}:{session_id}"
+    buffer.setdefault(key, project)
+
+
+def _take_session_project(user_id: str, session_id: str) -> str | None:
+    return _project_buffer().pop(f"{user_id}:{session_id}", None)
 
 
 def get_session_record(
@@ -199,18 +238,22 @@ def _upsert_session_from_usage(session: Session, usage: Usage) -> None:
             if session.get_bind().dialect.name == "postgresql"
             else sqlite_insert
         )
+        pending_project = _project_buffer().get(f"{usage.user_id}:{usage.session_id}")
         created = session.execute(
             insert_fn(SessionRecord)
             .values(
                 **_session_record_kwargs(
                     usage.session_id, [usage], now=now, missing_ttft_as_zero=True
-                )
+                ),
+                project_name=pending_project,
             )
             .on_conflict_do_nothing(index_elements=["session_id"])
             # rowcount is -1 for this statement on psycopg; RETURNING is exact.
             .returning(SessionRecord.session_id)
         )
         if created.first() is not None:
+            if pending_project is not None:
+                _take_session_project(usage.user_id, usage.session_id)
             return
         existing = get_session_record(
             session, usage.session_id, user_id=usage.user_id, with_for_update=True
@@ -302,6 +345,16 @@ def rebuild_sessions_from_usage(db_path: str | None = None) -> int:
     engine = get_engine(db_path)
 
     with engine.begin() as conn:
+        names = {
+            (row.session_id, row.user_id): row.project_name
+            for row in conn.execute(
+                select(
+                    SessionRecord.session_id,
+                    SessionRecord.user_id,
+                    SessionRecord.project_name,
+                )
+            )
+        }
         conn.execute(text("DELETE FROM sessions"))
 
     with Session(engine) as session:
@@ -339,6 +392,7 @@ def rebuild_sessions_from_usage(db_path: str | None = None) -> int:
     with Session(engine) as session:
         for sid, usages in grouped.items():
             kwargs = _session_record_kwargs(sid, usages, now=now)
+            kwargs["project_name"] = names.get((sid, usages[0].user_id))
             tool_counts = tool_calls_by_session.get(sid)
             if tool_counts:
                 kwargs["tool_calls_json"] = json.dumps(tool_counts)
@@ -440,6 +494,7 @@ class SessionFilters:
     model: str | list[str] | None = None
     duration_bucket: str | None = None
     cost_bucket: str | None = None
+    project: str | None = None
 
     def __post_init__(self):
         for name, buckets in (
@@ -463,6 +518,12 @@ class SessionFilters:
 
 def _session_filters(criteria: SessionFilters) -> list[Any]:
     filters: list[Any] = [SessionRecord.user_id == criteria.user_id]
+    if criteria.project is not None:
+        filters.append(
+            SessionRecord.project_name.is_(None)
+            if criteria.project == ""
+            else SessionRecord.project_name == criteria.project
+        )
     if criteria.client_source:
         filters.append(SessionRecord.client_source == criteria.client_source)
     if criteria.since is not None:
@@ -503,6 +564,7 @@ def _session_record_to_dict(rec: SessionRecord) -> dict[str, Any]:
     ended = rec.ended
     result: dict[str, Any] = {
         "session_id": rec.session_id,
+        "project": rec.project_name,
         "client_source": rec.client_source or "",
         "model": rec.primary_model or "",
         "models": _session_models(rec.models_json),
@@ -678,6 +740,7 @@ def aggregate_session_distribution(
     """
     conditions = _session_filters(filters)
     dimensions = {
+        "by_project": SessionRecord.project_name,
         "by_agent": func.coalesce(SessionRecord.client_source, ""),
         "by_duration": _fixed_bucket_expr(_duration_s_expr(), DURATION_BUCKETS),
         "by_cost": _fixed_bucket_expr(SessionRecord.total_cost_usd, COST_BUCKETS),
@@ -691,6 +754,7 @@ def aggregate_session_distribution(
             query = (
                 select(
                     dimension.label("key"),
+                    func.sum(SessionRecord.total_tokens).label("total_tokens"),
                     func.count().label("session_count"),
                     func.sum(SessionRecord.total_cost_usd).label("total_cost_usd"),
                 )

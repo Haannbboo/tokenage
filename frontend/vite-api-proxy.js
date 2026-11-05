@@ -35,6 +35,9 @@ export function shouldProxyApiRequest(requestUrl, { method, headers } = {}) {
     pathname.startsWith('/poll/') ||
     pathname.startsWith('/local/') ||
     pathname === '/model-effectiveness' ||
+    pathname === '/ingest/v1/events' ||
+    pathname === '/ingest/v1/usage' ||
+    pathname === '/sessions/distribution' ||
     pathname === '/sessions' ||
     pathname.startsWith('/sessions/') ||
     pathname === '/devices/status' ||

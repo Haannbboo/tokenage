@@ -15,6 +15,12 @@ from __future__ import annotations
 import argparse
 import sys
 
+# Dispatch the silent hook before importing the normal CLI and its dependencies.
+if __name__ == "__main__" and sys.argv[1:2] == ["hook"]:
+    from client.hooks import main as hook_main
+
+    raise SystemExit(hook_main(sys.argv[2:]))
+
 from client import auth, setup, status, track, update
 from client.paths import client_version
 
@@ -295,6 +301,11 @@ def _run_subcommand(name: str, argv: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     first = raw[0] if raw else ""
+
+    if first == "hook":
+        from client.hooks import main as hook_main
+
+        return hook_main(raw[1:])
 
     if first in REMOVED:
         print(REMOVED[first], file=sys.stderr)

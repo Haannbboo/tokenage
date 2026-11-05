@@ -42,3 +42,17 @@ it('refreshing a paged list returns to page one without duplicating rows', async
   rerender()
   await waitFor(() => expect(result.current.sessions.map(s => s.session_id)).toEqual(page(0).map(s => s.session_id)))
 })
+
+it('sends project filters including unassigned while keeping all project options visible', async () => {
+  const urls: URL[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const url = new URL(input, window.location.origin)
+    urls.push(url)
+    return { ok: true, json: async () => ({ sessions: [] }) }
+  }))
+  const { rerender } = renderHook(({ project }: { project: string | null }) => useSessionsData({ activeSource: null, dateRange: 'all', bucket: null, project }), { initialProps: { project: 'orchard' as string | null } })
+  await waitFor(() => expect(urls.some(u => u.pathname === '/sessions' && u.searchParams.get('project') === 'orchard')).toBe(true))
+  expect(urls.find(u => u.pathname === '/sessions/distribution')?.searchParams.has('project')).toBe(false)
+  rerender({ project: '' })
+  await waitFor(() => expect(urls.some(u => u.pathname === '/sessions' && u.searchParams.has('project') && u.searchParams.get('project') === '')).toBe(true))
+})

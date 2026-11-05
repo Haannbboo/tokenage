@@ -399,3 +399,47 @@ def test_redis_constructor_failure_logs_only_class(monkeypatch, caplog):
     assert exc.value.__suppress_context__
     assert "shared store unavailable error=ValueError" in caplog.text
     assert "SECRET" not in caplog.text
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+def test_mapping_setdefault_first_wins(store, monkeypatch, deferred):
+    from contextlib import nullcontext
+
+    from src import shared_state as state
+
+    monkeypatch.setattr(state, "get_shared_state", lambda: store)
+    mapping = state.SharedMapping("first-wins", ttl=86400, cap=100_000)
+    with state.defer_updates() if deferred else nullcontext():
+        assert mapping.setdefault("session", "first") == "first"
+        assert mapping.setdefault("session", "second") == "first"
+        assert mapping["session"] == "first"
+    assert other_store(store).get("first-wins", "session") == "first"
+
+
+def test_deferred_setdefault_does_not_overwrite_competing_write(store, monkeypatch):
+    from src import shared_state as state
+
+    monkeypatch.setattr(state, "get_shared_state", lambda: store)
+    mapping = state.SharedMapping("first-wins")
+    with state.defer_updates():
+        mapping.setdefault("session", "deferred")
+        other_store(store).set("first-wins", "session", "committed-first", 60)
+    assert mapping["session"] == "committed-first"
+
+
+def test_concurrent_conditional_store_writes(store):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    barrier = Barrier(2)
+
+    def write(pair):
+        instance, value = pair
+        barrier.wait()
+        return instance.set("nx", "session", value, 60, cap=1, only_if_absent=True)
+
+    with ThreadPoolExecutor(2) as pool:
+        results = list(
+            pool.map(write, [(store, "first"), (other_store(store), "second")])
+        )
+    assert results[0] == results[1] == store.get("nx", "session")

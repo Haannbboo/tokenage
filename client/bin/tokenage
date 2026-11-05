@@ -132,7 +132,9 @@ run_client() {
   local active python
   active="$(active_client_root)" || missing_client
   python="${active}/.venv/bin/python"
-  export TOKENAGE_CLIENT_COMMIT="$(client_commit "$active")"
+  if [[ "${1:-}" != "hook" ]]; then
+    export TOKENAGE_CLIENT_COMMIT="$(client_commit "$active")"
+  fi
   export PYTHONPATH="${active}${PYTHONPATH:+:${PYTHONPATH}}"
   export TOKENAGE_SKIP_BANNER=1
   exec "$python" -P -m client "$@"
@@ -230,6 +232,10 @@ main() {
     -h|--help|help)
       print_banner "$@"
       run_client --help
+      return $?
+      ;;
+    hook)
+      run_client "$@"
       return $?
       ;;
     server)

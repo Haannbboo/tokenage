@@ -29,6 +29,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session
 
 from ..pricing.costs import calculate_costs, compute_input_split, resolve_pricing
+from ..shared_state import StoreUnavailable
 from ..utils import (
     micros_to_secs,
     normalize_model_name,
@@ -232,7 +233,7 @@ def merge_duplicate_usage(
 
             with session.begin_nested():
                 _upsert_session_from_usage(session, existing)
-        except TRANSIENT_DB_ERRORS:
+        except (StoreUnavailable, *TRANSIENT_DB_ERRORS):
             raise
         except Exception:
             import logging
@@ -276,7 +277,7 @@ def log_usage(
     try:
         with session.begin_nested():
             _upsert_session_from_usage(session, usage)
-    except TRANSIENT_DB_ERRORS:
+    except (StoreUnavailable, *TRANSIENT_DB_ERRORS):
         raise
     except Exception as exc:
         logger.warning(

@@ -1,0 +1,19 @@
+{
+  "provenance": "Codex 0.166.0 isolated SessionStart + OTLP capture against a local mock provider; cwd replaced and all other attributes omitted",
+  "hook": {
+    "session_id": "01a1aabf-9ec2-7f01-b9bb-b8756f9d3275",
+    "source": "startup",
+    "hook_event_name": "SessionStart",
+    "cwd": "/example/project"
+  },
+  "log": {
+    "attributes": [
+      {
+        "key": "conversation.id",
+        "value": {
+          "stringValue": "01a1aabf-9ec2-7f01-b9bb-b8756f9d3275"
+        }
+      }
+    ]
+  }
+}

@@ -248,13 +248,19 @@ EXIT_NOT_SIGNED_IN = 3
 
 def run_setup(*, disable: bool) -> int:
     """``tokenage setup`` — wire, or un-wire, the agents found on this machine."""
+    if disable:
+        from client.event_spool import clear_spool
+
     agents = installed_agents()
     if not agents:
+        if disable:
+            clear_spool()
         print("No tracked agents detected; nothing to wire.")
         return 0
     expected = intended_endpoint()
     if disable:
         outcome = disable_agents(expected_endpoint=expected)
+        clear_spool()
         if outcome.removed:
             print("  un-wired  " + ", ".join(outcome.removed))
         elif not outcome.failed:

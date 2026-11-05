@@ -118,6 +118,7 @@ def test_setup_disable_removes_only_our_keys(machine: Path, capsys) -> None:
     assert setup.run_setup(disable=True) == 0
     assert "un-wired" in capsys.readouterr().out
     remaining = json.loads(settings.read_text())
+    assert "hooks" not in remaining
     assert remaining == {"model": "opus", "env": {"MY_OWN": "keep"}}
 
 

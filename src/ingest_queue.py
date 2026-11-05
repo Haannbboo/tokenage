@@ -103,6 +103,18 @@ class Consumer:
                 device_id=payload["device_id"],
                 session=session,
             )
+        elif payload["kind"] == "client_event":
+            from protocol.events import SessionProjectEvent
+
+            from .database.sessions import apply_session_project
+
+            report = SessionProjectEvent.model_validate(payload["event"])
+            apply_session_project(
+                session,
+                user_id=payload["user_id"],
+                session_id=report.session_id,
+                project=report.data.project,
+            )
         else:
             raise ValueError("unknown queue event kind")
 
@@ -171,7 +183,7 @@ class Consumer:
                             try:
                                 with session.begin_nested():
                                     self._process(event, session)
-                            except TRANSIENT_DB_ERRORS:
+                            except (StoreUnavailable, *TRANSIENT_DB_ERRORS):
                                 raise
                             except Exception as exc:
                                 if before_counts is not None:

@@ -21,7 +21,6 @@ OLD_COLUMNS = {
     "evidence_json": "VARCHAR",
     "failure_reason": "VARCHAR",
     "evaluated_at": "VARCHAR",
-    "project": "VARCHAR",
 }
 
 

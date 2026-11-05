@@ -1,3 +1,4 @@
+import { reportProject } from "./project.js"
 import { finiteNumber, statusCodeFromError, errorName } from "./helpers.js"
 import { makePromptState, MAX_TRACKED_MESSAGES } from "./prompt.js"
 import { claim, release } from "./dedupe.js"
@@ -180,6 +181,14 @@ export function createPlugin(clientSource: string) {
 
     return {
       event: async ({ event }: { event: { type: string; properties?: Record<string, any> } }) => {
+        const session = event.properties?.info
+        if (event.type === "session.created" || event.type === "session.updated") {
+          void reportProject(clientSource, session?.id, session?.directory ?? input.directory)
+          return
+        }
+        // Existing/resumed sessions may have no creation event in this process.
+        const sessionID = event.properties?.info?.sessionID ?? event.properties?.part?.sessionID
+        if (sessionID) void reportProject(clientSource, sessionID, event.properties?.info?.directory ?? input.directory)
         if (event.type === "message.part.updated") {
           const part = event.properties?.part
           if (!part) return

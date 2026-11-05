@@ -20,6 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from protocol import MAX_SUPPORTED_GENERATION, MIN_SUPPORTED_GENERATION
 from protocol.device_status import DeviceStatusReport
+from protocol.events import EventBatch
 from protocol.usage_report import UsageReport
 from src.config.app import CONFIG, _config_lock
 from src.config.server_config import resolve_server_urls
@@ -140,18 +141,23 @@ async def lifespan(app: FastAPI):
 class _Api(FastAPI):
     """FastAPI app that documents the ingest request body.
 
-    The ingest route reads the body itself (to cap it), so FastAPI can't infer
-    the request body: UsageReport is published in the OpenAPI components.
+    The ingest routes read the body themselves (to cap it), so FastAPI can't infer
+    the request bodies: UsageReport and EventBatch are published in the OpenAPI
+    components.
     """
 
     def openapi(self) -> dict:
         schema = super().openapi()
         schemas = schema.setdefault("components", {}).setdefault("schemas", {})
-        model = UsageReport.model_json_schema(
-            ref_template="#/components/schemas/{model}"
-        )
-        schemas.update(model.pop("$defs", {}))
-        schemas["UsageReport"] = model
+        for name, report_model in (
+            ("UsageReport", UsageReport),
+            ("EventBatch", EventBatch),
+        ):
+            model = report_model.model_json_schema(
+                ref_template="#/components/schemas/{model}"
+            )
+            schemas.update(model.pop("$defs", {}))
+            schemas[name] = model
         return schema
 
 
@@ -647,10 +653,12 @@ def _session_query_filters(
     device_id: str | None = None,
     provider: str | None = None,
     model: str | None = None,
+    project: str | None = None,
 ) -> SessionFilters:
     try:
         return SessionFilters(
             user_id=_request_user_id(request),
+            project=project,
             client_source=client_source,
             since=since,
             until=until,
@@ -768,6 +776,43 @@ def post_device_status(
         json.dumps(report.model_dump(mode="json"), sort_keys=True),
         client_version=report.client_version,
         client_commit=report.client_commit,
+    )
+    return Response(status_code=204)
+
+
+@app.post(
+    "/ingest/v1/events",
+    status_code=204,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/EventBatch"}
+                }
+            },
+        }
+    },
+)
+async def ingest_events(request: Request):
+    """Record a batch of client events. Ingest tokens only."""
+    user_id, device_id = await resolve_ingest_request_async(request)
+    try:
+        report = EventBatch.model_validate(await _read_capped_json(request))
+    except (ValueError, RecursionError):
+        # Never reflect raw metadata or a hook payload in validation errors.
+        raise HTTPException(status_code=422, detail="invalid ingest report") from None
+    await asyncio.to_thread(
+        publish,
+        user_id,
+        [
+            {
+                "kind": "client_event",
+                "device_id": device_id,
+                "event": event.model_dump(mode="json"),
+            }
+            for event in report.events
+        ],
     )
     return Response(status_code=204)
 

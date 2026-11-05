@@ -254,3 +254,9 @@ test('apiProxyMiddleware leaves a DNS-rebound Host to Vite instead of proxying i
     await new Promise(resolve => backend.close(resolve))
   }
 })
+
+test('project distribution, project filter and typed event ingestion reach the API', () => {
+  for (const path of ['/sessions/distribution', '/sessions?project=orchard', '/sessions?project=', '/ingest/v1/events', '/ingest/v1/usage']) {
+    assert.equal(shouldProxyApiRequest(path), true)
+  }
+})

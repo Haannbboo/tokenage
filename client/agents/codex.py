@@ -18,6 +18,7 @@ from client.agents import (
 from client.agents import (
     write_private as _write_private,
 )
+from client.hooks import update_session_hooks
 
 
 def update_existing_otel_config(
@@ -108,7 +109,7 @@ def _inline_toml(value) -> str:
     if isinstance(value, list):
         return "[" + ", ".join(_inline_toml(item) for item in value) + "]"
     if isinstance(value, (str, bool, int, float)):
-        return json.dumps(value)
+        return json.dumps(value, ensure_ascii=False)
     return value.isoformat()
 
 
@@ -159,6 +160,49 @@ def _write_http_keys(content: str, http: dict) -> str:
     raise ValueError("unsupported Codex HTTP exporter layout; left unchanged")
 
 
+def update_session_hook(content: str, *, remove: bool = False) -> str:
+    """Merge one owned command, preserving all other hook/config values."""
+    parsed = tomllib.loads(content)
+    desired = deepcopy(parsed)
+    if not update_session_hooks(desired, "codex", remove=remove):
+        return content
+    hooks = desired.get("hooks", {})
+    # Rewrite only the hooks table; the parse comparison below guards every
+    # unrelated value. Existing matchers/handlers remain in their original order.
+    cleaned = re.sub(
+        r"(?ms)^\[\[?hooks(?:\.[^\]]*)?\]\]?[^\S\n]*(?:#[^\n]*)?(?:\n|\Z).*?(?=^\[|\Z)",
+        "",
+        content,
+    )
+    # A root inline hooks value can span lines. Parse candidates to find its
+    # exact end rather than treating a closing brace inside a string as syntax.
+    match = re.search(r"(?m)^hooks\s*=", cleaned)
+    if match:
+        tail = cleaned[match.start() :].splitlines(keepends=True)
+        for count in range(1, len(tail) + 1):
+            candidate = "".join(tail[:count])
+            try:
+                value = tomllib.loads(candidate)
+            except tomllib.TOMLDecodeError:
+                continue
+            if set(value) == {"hooks"} and value["hooks"] == parsed.get("hooks"):
+                cleaned = (
+                    cleaned[: match.start()] + cleaned[match.start() + len(candidate) :]
+                )
+                break
+    updated = (
+        cleaned.rstrip()
+        + ("\n\n[hooks]\n" if hooks else "\n")
+        + "".join(
+            f"{json.dumps(event)} = {_inline_toml(groups)}\n"
+            for event, groups in hooks.items()
+        )
+    )
+    if tomllib.loads(updated) != desired:
+        raise ValueError("unsupported hooks layout")
+    return updated
+
+
 def _remove_http_exporter(content: str, exporter) -> str:
     section = re.search(
         r"(?ms)^\[otel\][^\S\n]*(?:#[^\n]*)?(?:\n|\Z)(.*?)(?=^\[|\Z)",
@@ -197,9 +241,6 @@ def _remove_http_exporter(content: str, exporter) -> str:
 
 
 def _disable(config_path: Path, expected_endpoint: str | None) -> int:
-    if not expected_endpoint:
-        print("collector unknown; Codex configuration left unchanged", file=sys.stderr)
-        return SKIPPED
     if not config_path.exists():
         _info(f"No Codex config at {config_path}")
         return SKIPPED
@@ -209,15 +250,32 @@ def _disable(config_path: Path, expected_endpoint: str | None) -> int:
     except tomllib.TOMLDecodeError:
         print("invalid Codex TOML configuration; left unchanged", file=sys.stderr)
         return FAILED
+    try:
+        unhooked = update_session_hook(content, remove=True)
+    except (ValueError, TypeError, AttributeError):
+        _info("Codex SessionStart hook removal skipped: unsupported hooks layout")
+        unhooked = content
+    if unhooked != content:
+        _write_private(config_path, unhooked)
+        content = unhooked
+        parsed = tomllib.loads(content)
+        hook_removed = True
+    else:
+        hook_removed = False
     otel = parsed.get("otel")
     exporter = otel.get("exporter") if isinstance(otel, dict) else None
     http = exporter.get("otlp-http") if isinstance(exporter, dict) else None
     if not isinstance(http, dict) or not http.get("endpoint"):
         _info(f"No tokenage telemetry in {config_path}")
-        return SKIPPED
-    if expected_endpoint and http["endpoint"] != expected_endpoint:
-        print(f"{config_path} points at another collector; left alone", file=sys.stderr)
-        return SKIPPED
+        return DONE if hook_removed else SKIPPED
+    if not expected_endpoint or http["endpoint"] != expected_endpoint:
+        note = (
+            "collector unknown"
+            if not expected_endpoint
+            else "points at another collector; left alone"
+        )
+        print(f"Codex telemetry: {note}", file=sys.stderr)
+        return DONE if hook_removed else SKIPPED
     desired = deepcopy(parsed)
     remaining = desired["otel"]["exporter"]
     remaining.pop("otlp-http")
@@ -256,6 +314,12 @@ def configure(target: str | Path, logs_endpoint: str, token: str | None = None) 
                 file=sys.stderr,
             )
             return FAILED
+        hook_installed = True
+        try:
+            new_content = update_session_hook(new_content)
+        except (ValueError, TypeError, AttributeError):
+            hook_installed = False
+            _info("Codex SessionStart hook skipped: unsupported hooks layout")
         if new_content != content:
             _write_private(config_path, new_content)
             _info(f"Codex OTLP telemetry updated in {config_path}")
@@ -264,6 +328,10 @@ def configure(target: str | Path, logs_endpoint: str, token: str | None = None) 
     except (OSError, UnicodeError):
         print("cannot update Codex configuration; left unchanged", file=sys.stderr)
         return FAILED
+    if hook_installed:
+        _info(
+            "Codex: open /hooks and review/trust the tokenage SessionStart hook once."
+        )
     return DONE
 
 

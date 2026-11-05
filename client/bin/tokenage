@@ -156,17 +156,8 @@ run_server_python() {
   exec "${root}/.venv/bin/python" -P -m src.cli "$@"
 }
 
-run_server() {
-  local arg
-  local -a server_args=()
-  for arg in "$@"; do
-    [[ "$arg" == "--no-banner" ]] || server_args+=("$arg")
-  done
-  # ${var[@]+"${var[@]}"}: an empty array must not trip set -u on bash 3.2.
-  set -- ${server_args[@]+"${server_args[@]}"}
-  local sub="${1:-}"
-  if [[ -z "$sub" || "$sub" == "-h" || "$sub" == "--help" ]]; then
-    cat >&2 <<EOF
+print_server_help() {
+  cat <<EOF
 usage: tokenage server <command>
 
 Manage the server component.
@@ -181,8 +172,30 @@ Manage the server component.
   token create ...       mint an operator token
   login-link             print a one-time browser sign-in link (local auth)
 EOF
+}
+
+run_server() {
+  local arg
+  local -a server_args=()
+  for arg in "$@"; do
+    [[ "$arg" == "--no-banner" ]] || server_args+=("$arg")
+  done
+  # ${var[@]+"${var[@]}"}: an empty array must not trip set -u on bash 3.2.
+  set -- ${server_args[@]+"${server_args[@]}"}
+  local sub="${1:-}"
+  if [[ -z "$sub" ]]; then
+    print_server_help >&2
     return 2
   fi
+  case "$sub" in
+    -h|--help) print_server_help; return 0 ;;
+    bootstrap|start|stop|restart|status|update|login-link)
+      if [[ $# -eq 2 && ( "$2" == "-h" || "$2" == "--help" ) ]]; then
+        print_server_help
+        return 0
+      fi
+      ;;
+  esac
   case "$sub" in
     bootstrap) shift; run_server_script bootstrap "$@" ;;
     stop|restart|status)

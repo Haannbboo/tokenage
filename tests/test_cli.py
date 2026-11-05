@@ -116,15 +116,38 @@ def test_tokenage_script_routes_to_client_and_server():
     assert '-m src.cli "$@"' in content
 
 
-def test_server_help_has_no_service_arguments_and_restart_rejects_them(tmp_path):
-    result = _run_launcher(tmp_path, "server", "--help")
-    assert "usage: tokenage server <command>" in result.stderr
-    assert "[service...]" not in result.stderr
-    assert "services:" not in result.stderr
+@pytest.mark.parametrize("help_flag", ["-h", "--help"])
+@pytest.mark.parametrize(
+    "command",
+    [None, "stop", "restart", "status", "start", "bootstrap", "update", "login-link"],
+)
+def test_server_help_prints_to_stdout_and_exits_zero(tmp_path, command, help_flag):
+    args = ["server"]
+    if command is not None:
+        args.append(command)
+    result = _run_launcher(tmp_path, *args, help_flag)
 
+    assert result.returncode == 0
+    assert "usage: tokenage server <command>" in result.stdout
+    assert "[service...]" not in result.stdout
+    assert "services:" not in result.stdout
+    assert result.stderr == ""
+
+
+def test_server_restart_rejects_stray_arguments(tmp_path):
     result = _run_launcher(tmp_path, "server", "restart", "foo")
+
     assert result.returncode == 2
     assert "restart takes no arguments" in result.stderr
+    assert result.stdout == ""
+
+
+def test_server_rejects_unknown_subcommand_even_with_help(tmp_path):
+    result = _run_launcher(tmp_path, "server", "unknown", "--help")
+
+    assert result.returncode == 2
+    assert "unknown server command: unknown" in result.stderr
+    assert result.stdout == ""
 
 
 @pytest.mark.parametrize("command", ["stop", "restart", "status"])

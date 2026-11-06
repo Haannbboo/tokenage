@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { createElement } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { createElement, type ReactElement } from 'react'
+import { MemoryRouter } from 'react-router-dom'
+import { cleanup, fireEvent, render as renderInRouter, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SessionsTab } from '../src/pages/SessionsTab'
+const render = (ui: ReactElement) => renderInRouter(ui, { wrapper: MemoryRouter })
 const state = vi.hoisted(() => ({ dateRange: 'all', activeSource: null as string | null, distribution: null as any, bucket: null as any, sessions: [{ session_id: 'session-123456789', started: 1000000, ended: 2000000, client_source: 'test', request_count: 1, total_cost_usd: 0 }] }))
 vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn(), dateRange: state.dateRange, activeSource: state.activeSource, timezone: 'UTC' }) }))
 vi.mock('../src/hooks/useSessionsData', () => ({ useSessionsData: (opts: any) => ({ ...(state.bucket = opts.bucket, {}), sessions: state.sessions, distribution: state.distribution, sessionsLoading: false, sessionsError: false, hasMoreSessions: false, sessionSortBy: 'ended', sessionSortOrder: 'desc', handleSessionSort: vi.fn(), setSessionPage: vi.fn() }) }))
@@ -16,11 +18,11 @@ it('copies the ID without toggling, while the row and keyboard toggle', () => {
   const row = copy.closest('tr')!
   fireEvent.click(copy)
   expect(writeText).toHaveBeenCalledWith('session-123456789')
-  expect(row.getAttribute('aria-expanded')).toBe('false')
+  expect(row.getAttribute('aria-pressed')).toBe('false')
   fireEvent.click(row)
   expect(screen.getByText('detail opened')).toBeTruthy()
   fireEvent.keyDown(row, { key: 'Enter' })
-  expect(row.getAttribute('aria-expanded')).toBe('false')
+  expect(row.getAttribute('aria-pressed')).toBe('false')
 })
 
 it('scales activity to listed starts and ends and clips earlier sessions', () => {

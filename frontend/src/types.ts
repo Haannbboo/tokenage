@@ -136,7 +136,6 @@ type SessionDistributionCount = {
 }
 
 export type SessionDistribution = {
-  by_project?: (SessionDistributionCount & { key: string | null; total_tokens: number })[]
   over_time: { session_count: number; key: number; period: string; start: string; end: string }[]
   by_agent: (SessionDistributionCount & { key: string; cost_share: number })[]
   by_duration: (SessionDistributionCount & { key: SessionDurationBucket })[]
@@ -245,4 +244,24 @@ export type DeviceStatus = {
   client_commit: string | null
   reported_at: number
   status: Record<string, any> | null
+}
+
+export type ProjectSummary = {
+  key: string
+  session_count: number
+  total_cost_usd: number
+  request_count: number
+  prompt_tokens: number
+  cached_tokens: number
+  cache_creation_tokens: number
+  last_active: number
+  agents: Record<string, number>
+}
+export type ProjectBucket = { key: number; period: string; start: string; end: string; by_project: Record<string, number> }
+export type ProjectsResponse = { projects: ProjectSummary[]; over_time: ProjectBucket[] }
+export type ProjectDetail = {
+  key: string
+  failed_requests: number
+  latency_sum_ms: number; first_started: number
+  models: Record<string, number>; tools: Record<string, number>; recent_sessions: SessionSummary[]
 }

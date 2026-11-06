@@ -26,6 +26,7 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
   const { refreshTrigger, activeDevice, activeFilter, timezone } = useApp()
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [distribution, setDistribution] = useState<SessionDistribution | null>(null)
+  const [loadedFilter, setLoadedFilter] = useState<string | null>(null)
   const [sessionsLoading, setSessionsLoading] = useState(true)
   const [distributionLoading, setDistributionLoading] = useState(true)
   const [sessionsError, setSessionsError] = useState(false)
@@ -51,12 +52,13 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
   useEffect(() => {
     const controller = new AbortController()
     const params = new URLSearchParams(query)
+    if (project !== null) params.set('project', project)
     params.set('granularity', rangeGranularity(opts.dateRange))
     params.set('tz_offset', getTimezoneOffset(resolveTimezone(timezone)))
     setDistributionLoading(true); setDistributionError(false)
     fetch(`/sessions/distribution?${params}`, { signal: controller.signal }).then(r => { if (!r.ok) throw new Error(); return r.json() }).then(setDistribution).catch(() => { if (!controller.signal.aborted) { setDistribution(null); setDistributionError(true) } }).finally(() => { if (!controller.signal.aborted) setDistributionLoading(false) })
     return () => controller.abort()
-  }, [query, opts.dateRange, timezone, refreshTrigger])
+  }, [query, project, opts.dateRange, timezone, refreshTrigger])
   useEffect(() => {
     const filterKey = `${query}|${bucketKey}|${project}`
     if (previousFilter.current !== filterKey) {
@@ -71,9 +73,10 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
     params.set('limit', '50'); params.set('offset', String((sessionPage - 1) * 50))
     setSessionsLoading(true); setSessionsError(false)
     fetch(`/sessions?${params}`, { signal: controller.signal }).then(r => { if (!r.ok) throw new Error(); return r.json() }).then((data: { sessions: SessionSummary[] }) => {
-      setSessions(prev => sessionPage === 1 ? data.sessions : [...prev, ...data.sessions]); setHasMoreSessions(data.sessions.length === 50)
+      setSessions(prev => sessionPage === 1 ? data.sessions : [...prev, ...data.sessions]); setHasMoreSessions(data.sessions.length === 50); setLoadedFilter(filterKey)
     }).catch(() => { if (!controller.signal.aborted) setSessionsError(true) }).finally(() => { if (!controller.signal.aborted) setSessionsLoading(false) })
     return () => controller.abort()
   }, [query, bucketKey, project, sessionSortBy, sessionSortOrder, sessionPage, refreshTrigger, retry])
-  return { sessions, sessionsLoading, sessionsError, distribution, distributionLoading, distributionError, hasMoreSessions, sessionSortBy, sessionSortOrder, handleSessionSort, setSessionPage, loadMoreSessions }
+  const current = loadedFilter === `${query}|${bucketKey}|${project}`
+  return { sessions: current ? sessions : [], sessionsLoading: sessionsLoading || (!current && !sessionsError), sessionsError, distribution, distributionLoading, distributionError, hasMoreSessions, sessionSortBy, sessionSortOrder, handleSessionSort, setSessionPage, loadMoreSessions }
 }

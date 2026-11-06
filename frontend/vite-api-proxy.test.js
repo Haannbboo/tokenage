@@ -24,6 +24,8 @@ test('shouldProxyApiRequest matches config, usage and session routes', () => {
   assert.equal(shouldProxyApiRequest('/usage/id/tool-calls'), true)
   assert.equal(shouldProxyApiRequest('/sessions/123/context'), true)
   assert.equal(shouldProxyApiRequest('/sessions/summary'), true)
+  assert.equal(shouldProxyApiRequest('/sessions/projects'), true)
+  assert.equal(shouldProxyApiRequest('/sessions/projects/detail?name=orchard'), true)
   assert.equal(shouldProxyApiRequest('/sessions/123/evaluation'), true)
   assert.equal(shouldProxyApiRequest('/sessions/123/evaluation-jobs'), true)
   assert.equal(shouldProxyApiRequest('/model-effectiveness?group_by=model'), true)
@@ -259,4 +261,9 @@ test('project distribution, project filter and typed event ingestion reach the A
   for (const path of ['/sessions/distribution', '/sessions?project=orchard', '/sessions?project=', '/ingest/v1/events', '/ingest/v1/usage']) {
     assert.equal(shouldProxyApiRequest(path), true)
   }
+})
+
+test('projects deep links reach vite SPA fallback', () => {
+  const navigate = { method: 'GET', headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' } }
+  for (const path of ['/projects', '/projects?project=x']) assert.equal(shouldProxyApiRequest(path, navigate), false)
 })

@@ -872,7 +872,13 @@ def test_spa_deep_links_serve_index_html(spa_api):
     """GET /dashboard, /logs, /settings return 200 with HTML, not 404."""
     client = TestClient(spa_api.app)
 
-    for path in ("/dashboard", "/logs", "/settings"):
+    for path in (
+        "/dashboard",
+        "/logs",
+        "/settings",
+        "/projects",
+        "/projects?project=x",
+    ):
         response = client.get(path)
         assert response.status_code == 200, f"{path} returned {response.status_code}"
         assert "text/html" in response.headers.get("content-type", "")

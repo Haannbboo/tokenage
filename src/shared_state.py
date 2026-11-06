@@ -654,8 +654,12 @@ class SharedMapping(MutableMapping[str, Any]):
             try:
                 return self[key]
             except KeyError:
+                # A staged delete makes the key absent, so write unconditionally.
                 pending[self.namespace, key] = _MappingUpdate(
-                    deepcopy(default), self.ttl, self.cap, only_if_absent=True
+                    deepcopy(default),
+                    self.ttl,
+                    self.cap,
+                    only_if_absent=pending.get((self.namespace, key)) is not _DELETED,
                 )
                 return deepcopy(default)
         return deepcopy(

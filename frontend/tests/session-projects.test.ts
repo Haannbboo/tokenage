@@ -4,13 +4,13 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { afterEach, expect, it, vi } from 'vitest'
 import { SessionsTab } from '../src/pages/SessionsTab'
 
-const state = vi.hoisted(() => ({ project: null as string | null }))
+const state = vi.hoisted(() => ({ project: null as string | null, distributionFailed: false }))
 vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ activeSource: null, dateRange: 'all', timezone: 'UTC', showToast: vi.fn() }) }))
 vi.mock('../src/hooks/useSessionsData', () => ({ useSessionsData: (opts: any) => {
   state.project = opts.project
-  return { sessions: [{ session_id: 'unassigned-session', project: null, client_source: 'test', started: 1000000, ended: 2000000, request_count: 1, total_cost_usd: 0 }, { session_id: 'assigned-session', project: 'orchard', client_source: 'test', started: 1000000, ended: 2000000, request_count: 1, total_cost_usd: 0 }], sessionsLoading: false, distributionLoading: false, distribution: { by_agent: [], by_cost: [], by_duration: [], over_time: [], by_project: [{ key: 'orchard', session_count: 2, total_tokens: 1234, total_cost_usd: 1.5 }, { key: null, session_count: 1, total_tokens: 20, total_cost_usd: .1 }] } }
+  return { sessions: [{ session_id: 'unassigned-session', project: null, client_source: 'test', started: 1000000, ended: 2000000, request_count: 1, total_cost_usd: 0 }, { session_id: 'assigned-session', project: 'orchard', client_source: 'test', started: 1000000, ended: 2000000, request_count: 1, total_cost_usd: 0 }], sessionsLoading: false, distributionLoading: false, distribution: state.distributionFailed ? null : { by_agent: [], by_cost: [], by_duration: [], over_time: [], by_project: [{ key: 'orchard', session_count: 2, total_tokens: 1234, total_cost_usd: 1.5 }, { key: null, session_count: 1, total_tokens: 20, total_cost_usd: .1 }] } }
 } }))
-afterEach(cleanup)
+afterEach(() => { cleanup(); state.distributionFailed = false })
 it('shows project totals and lets users filter and clear assigned and unassigned sessions', () => {
   render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
   expect(screen.getByText('1,234')).toBeTruthy()
@@ -66,4 +66,15 @@ it('toggles assigned and unassigned project filters with Enter and Space', () =>
     expect(select.value).toBe('all')
     expect(row.getAttribute('aria-pressed')).toBe('false')
   }
+})
+
+it('keeps a clear chip for the project filter when distributions fail', () => {
+  const view = render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: 'project:orchard' } })
+  state.distributionFailed = true
+  view.rerender(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  expect(screen.queryByRole('combobox', { name: 'Project' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Project: orchard ×' }))
+  expect(state.project).toBeNull()
+  expect(screen.queryByRole('button', { name: /^Project: / })).toBeNull()
 })

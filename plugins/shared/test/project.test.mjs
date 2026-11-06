@@ -108,6 +108,39 @@ test("v2 pending location lookup runs once and does not block event handling", a
 })
 
 
+test("v2 pending lookup does not block a later report for another session", async () => {
+  const before = (await reports()).length
+  const close = createPluginV2("opencode").setup({
+    options: { endpoint: "https://collector.example/v1/logs" },
+    session: { get: ({ sessionID }) => sessionID === "pending-lookup" ? new Promise(() => {}) : Promise.resolve({ directory }) },
+    event: { subscribe: async function* () {
+      yield { type: "session.inbox.enqueued", data: { sessionID: "pending-lookup" } }
+      yield { type: "session.inbox.enqueued", data: { sessionID: "after-pending" } }
+    } },
+  })
+  const rows = await waitReports(before + 1)
+  close()
+  assert.equal(rows.find(r => r.session_id === "after-pending").project, "orchard")
+  assert.equal(rows.some(r => r.session_id === "pending-lookup"), false)
+})
+
+test("TOKENAGE_HOME expands a leading tilde like the Python client", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "tokenage-project-home-"))
+  const saved = { HOME: process.env.HOME, TOKENAGE_HOME: process.env.TOKENAGE_HOME }
+  try {
+    process.env.HOME = fakeHome
+    process.env.TOKENAGE_HOME = "~/x"
+    await mkdir(join(fakeHome, "x"))
+    await writeFile(join(fakeHome, "x", "credentials.json"), JSON.stringify({ server_url: "https://collector.example", ingest_token: "fake" }))
+    assert.equal(await reportProject("opencode", "tilde-home", directory), true)
+    assert.equal((await readdir(join(fakeHome, "x", "spool"))).filter(n => n.endsWith(".json")).length, 1)
+  } finally {
+    process.env.HOME = saved.HOME
+    process.env.TOKENAGE_HOME = saved.TOKENAGE_HOME
+    await rm(fakeHome, { recursive: true, force: true })
+  }
+})
+
 const pause = () => new Promise(resolve => setTimeout(resolve, 35))
 
 test("v2 info directory avoids lookup when event location is absent", async () => {

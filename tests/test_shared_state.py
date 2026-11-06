@@ -416,6 +416,18 @@ def test_mapping_setdefault_first_wins(store, monkeypatch, deferred):
     assert other_store(store).get("first-wins", "session") == "first"
 
 
+def test_deferred_setdefault_after_delete_writes_new_value(store, monkeypatch):
+    from src import shared_state as state
+
+    monkeypatch.setattr(state, "get_shared_state", lambda: store)
+    mapping = state.SharedMapping("first-wins", ttl=86400, cap=100_000)
+    mapping["session"] = "old"
+    with state.defer_updates():
+        del mapping["session"]
+        assert mapping.setdefault("session", "new") == "new"
+    assert other_store(store).get("first-wins", "session") == "new"
+
+
 def test_deferred_setdefault_does_not_overwrite_competing_write(store, monkeypatch):
     from src import shared_state as state
 

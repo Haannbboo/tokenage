@@ -221,18 +221,16 @@ def disable_agents(*, expected_endpoint: str | None = None) -> DisableResult:
     """Remove tokenage's telemetry settings from the agents it manages.
 
     Remove settings only when their collector matches this installation's known
-    endpoint. Unknown ownership leaves the configuration untouched.
+    endpoint. Unknown ownership leaves telemetry settings untouched; hooks
+    tokenage owns are still removed.
     """
     outcome = DisableResult()
     agents = installed_agents()
-    if not expected_endpoint:
-        outcome.skipped.extend(agents)
-        if agents:
-            print(
-                "warning: collector unknown; agent settings left unchanged",
-                file=sys.stderr,
-            )
-        return outcome
+    if not expected_endpoint and agents:
+        print(
+            "warning: collector unknown; telemetry settings left unchanged",
+            file=sys.stderr,
+        )
     for name in agents:
         code = AGENT_MODULES[name].disable(agent_targets()[name], expected_endpoint)
         if code == DONE:

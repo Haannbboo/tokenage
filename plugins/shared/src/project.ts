@@ -48,7 +48,8 @@ export async function reportProject(agent: string, sessionID: unknown, directory
   let temporary: string | undefined
   try {
     if (typeof directory !== "string" || !isAbsolute(directory)) return state.done = true
-    const home = process.env.TOKENAGE_HOME || join(homedir(), ".tokenage")
+    const raw = process.env.TOKENAGE_HOME || "~/.tokenage"
+    const home = raw === "~" || raw.startsWith("~/") ? join(homedir(), raw.slice(1)) : raw
     const credentials = JSON.parse(await readFile(join(home, "credentials.json"), "utf8"))
     if (typeof credentials.server_url !== "string" || typeof credentials.ingest_token !== "string" || !credentials.server_url || !credentials.ingest_token) return false
     if (!(await stat(directory)).isDirectory()) return state.done = true

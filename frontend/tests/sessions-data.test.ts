@@ -56,3 +56,22 @@ it('sends project filters including unassigned while keeping all project options
   rerender({ project: '' })
   await waitFor(() => expect(urls.some(u => u.pathname === '/sessions' && u.searchParams.has('project') && u.searchParams.get('project') === '')).toBe(true))
 })
+
+it('changing project after load more returns to page one with only the new project', async () => {
+  const urls: URL[] = []
+  const page = (project: string, from: number) => Array.from({ length: 50 }, (_, i) => ({ session_id: `${project}-${from + i}` }))
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const url = new URL(input, window.location.origin)
+    if (url.pathname === '/sessions') urls.push(url)
+    return { ok: true, json: async () => ({ sessions: url.pathname === '/sessions' ? page(url.searchParams.get('project') ?? 'all', Number(url.searchParams.get('offset'))) : [] }) }
+  }))
+  const { result, rerender } = renderHook(({ project }: { project: string | null }) => useSessionsData({ activeSource: null, dateRange: 'all', bucket: null, project }), { initialProps: { project: 'orchard' as string | null } })
+  await waitFor(() => expect(result.current.sessions).toHaveLength(50))
+  act(() => result.current.loadMoreSessions())
+  await waitFor(() => expect(result.current.sessions).toHaveLength(100))
+  rerender({ project: 'grove' })
+  await waitFor(() => expect(result.current.sessions.map(s => s.session_id)).toEqual(page('grove', 0).map(s => s.session_id)))
+  const last = urls[urls.length - 1]
+  expect(last.searchParams.get('project')).toBe('grove')
+  expect(last.searchParams.get('offset')).toBe('0')
+})

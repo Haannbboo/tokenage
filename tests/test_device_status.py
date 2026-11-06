@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 INSTALLATION_KEY = "k" * 43
@@ -203,3 +204,40 @@ def test_get_returns_null_status_for_corrupt_stored_json(api_module, fresh_db):
 def test_devices_routes_are_classified_for_the_auth_gate(api_module):
     assert "/devices" in api_module._SPA_API_PREFIXES
     api_module._assert_api_routes_classified()
+
+
+@pytest.mark.parametrize(
+    "metadata,expected_version,expected_commit",
+    [
+        ({"client_version": "0.1.201", "client_commit": "B" * 40}, "0.1.201", "b" * 40),
+        ({"client_version": "bad", "client_commit": "bad"}, "0.1.200", "a" * 40),
+        ({"client_version": "0.1.201", "client_commit": "bad"}, "0.1.201", "a" * 40),
+        ({"client_version": "bad", "client_commit": "b" * 40}, "0.1.200", "b" * 40),
+        ({}, "0.1.200", "a" * 40),
+        ({"client_version": "١.٢.٣"}, "0.1.200", "a" * 40),
+    ],
+)
+def test_status_refreshes_device_identity(
+    api_module, fresh_db, metadata, expected_version, expected_commit
+):
+    from src.auth.tokens import list_user_devices
+
+    client, user, _ = _device_client(api_module, fresh_db)
+    assert client.post("/devices/status", json=_report()).status_code == 204
+    report = _report()
+    del report["client_version"], report["client_commit"]
+    report.update(metadata)
+    assert client.post("/devices/status", json=report).status_code == 204
+    (device,) = list_user_devices(user.id, db_path=fresh_db.db_path)
+    assert device.client_version == expected_version
+    assert device.client_commit == expected_commit
+    (entry,) = client.get("/auth/devices").json()["devices"]
+    assert entry["client_version"] == expected_version
+    assert entry["client_commit"] == expected_commit
+    status_entry = client.get("/devices/status").json()["devices"][0]
+    assert status_entry["client_version"] == expected_version
+    assert status_entry["client_commit"] == expected_commit
+    status = status_entry["status"]
+    for key in ("client_version", "client_commit"):
+        if metadata.get(key) == "bad":
+            assert status[key] is None

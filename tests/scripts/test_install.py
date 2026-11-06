@@ -834,3 +834,11 @@ def test_unknown_option_is_refused_before_any_install(
 
     assert result.returncode != 0
     assert "unknown option: --bogus" in result.stderr
+
+
+def test_update_env_pins_commit_without_looking_up_main(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKENAGE_INSTALL_COMMIT", NEXT_COMMIT)
+    monkeypatch.setenv("TOKENAGE_FAKE_API_FAIL", "1")
+    result, home, _ = _run_install(tmp_path, sha=NEXT_COMMIT)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (home / ".tokenage" / "current").resolve().name == NEXT_COMMIT

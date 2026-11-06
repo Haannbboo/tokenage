@@ -172,7 +172,9 @@ def _build_subcommand(name: str) -> argparse.ArgumentParser:
             description="Update the client.",
         )
         parser.add_argument(
-            "--check", action="store_true", help="report without changing anything"
+            "--check",
+            action="store_true",
+            help="show the latest client and update availability",
         )
         parser.add_argument(
             "--dry-run", action="store_true", help="print the planned commands"

@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_normalize_model_name():
     from src.utils import normalize_model_name
 
@@ -60,3 +63,38 @@ def test_secs_to_micros_roundtrip(utils_module):
     assert utils_module.micros_to_secs(utils_module.secs_to_micros(original)) == float(
         original
     )
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, None),
+        (12, None),
+        ("١.٢.٣", None),
+        ("1.2.3\n", None),
+        ("1.2", None),
+        ("01.002.3", "01.002.3"),
+        ("1.2.3", "1.2.3"),
+    ],
+)
+def test_version_boundary(value, expected):
+    from src.utils import client_version
+
+    assert client_version(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, None),
+        (12, None),
+        ("A" * 40, "a" * 40),
+        ("g" * 40, None),
+        ("a" * 39, None),
+        ("a" * 40 + "\n", None),
+    ],
+)
+def test_commit_boundary(value, expected):
+    from src.utils import client_commit
+
+    assert client_commit(value) == expected

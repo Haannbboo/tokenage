@@ -36,18 +36,33 @@ def parse_token_args(argv: list[str]) -> argparse.Namespace:
         "--kind", choices=("cli", "ingest", "web"), default="cli", help="token kind"
     )
     create.add_argument("--name", help="device name to label the token with")
+    revoke = subparsers.add_parser(
+        "revoke",
+        help="revoke all of a user's tokens",
+        description=(
+            "Revoke all CLI, ingest and web tokens for a user. "
+            "Switching to Google strands owner@localhost devices; "
+            "sign them in again with a Google account."
+        ),
+    )
+    revoke.add_argument("--email", required=True, help="user email")
     return parser.parse_args(argv)
 
 
 def run_token_command(argv: list[str]) -> int:
     # Lazy: importing these loads the config, which `start` has to create first.
     from src.auth import mint_token
+    from src.auth.tokens import revoke_user_tokens
     from src.database import init_db
 
     token_args = parse_token_args(argv)
 
     init_db()
     try:
+        if token_args.action == "revoke":
+            count = revoke_user_tokens(token_args.email)
+            print(f"Revoked {count} tokens for {token_args.email.strip().lower()}.")
+            return 0
         token, user = mint_token(
             token_args.email, kind=token_args.kind, device_name=token_args.name
         )
@@ -60,16 +75,20 @@ def run_token_command(argv: list[str]) -> int:
 
 
 def run_login_link_command() -> int:
+    from src.auth import get_local_owner
     from src.auth.google import store_login_code
     from src.auth.routes import auth_provider
     from src.config.app import CONFIG
     from src.config.server_config import resolve_server_urls
+    from src.database import init_db
 
     if auth_provider() != "local":
         print("login-link only applies to auth.provider: local", file=sys.stderr)
         return 2
+    init_db()
     code = secrets.token_urlsafe(24)
-    store_login_code(code)
+    # Tag the link with the owner's epoch: `token revoke` kills it.
+    store_login_code(code, get_local_owner().token_epoch)
     api_url = resolve_server_urls(CONFIG)["api_url"]
     print(f"{api_url}/auth/local/login?code={code}")
     print("Single use; expires in 5 minutes.", file=sys.stderr)
@@ -90,7 +109,10 @@ def main(argv: list[str] | None = None) -> int:
             return ops.COMMANDS[args[0]]()
         return ops.COMMANDS[args[0]](args[1:])
     commands = " | ".join(["login-link", *ops.COMMANDS])
-    print(f"usage: {PROG} token create --email <email> | {commands}", file=sys.stderr)
+    print(
+        f"usage: {PROG} token create|revoke --email <email> | {commands}",
+        file=sys.stderr,
+    )
     return 2
 
 

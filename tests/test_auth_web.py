@@ -103,52 +103,35 @@ def _start_login(api_module, monkeypatch, client):
 # ---------------------------------------------------------------- state store
 
 
-def test_state_store_roundtrip(api_module, isolated_home):
+def test_state_cookie_roundtrip(api_module, monkeypatch):
+    _enable_auth(monkeypatch)
     auth_google = _routes_module().auth_google
-    auth_google.store_oauth_state(
-        "s1", {"nonce": "n1", "redirect_uri": "http://x/auth/google/callback"}
-    )
-    entry = auth_google.pop_oauth_state("s1")
-    assert entry == {
-        "nonce": "n1",
-        "redirect_uri": "http://x/auth/google/callback",
-    }
-    # Single-use: a second pop of the same state is a miss.
-    assert auth_google.pop_oauth_state("s1") is None
+    data = {"nonce": "n1", "redirect_uri": "http://x/auth/google/callback"}
+    cookie = auth_google.seal_oauth_state("s1", data)
+    assert auth_google.open_oauth_state(cookie, "s1") == data
 
 
-def test_state_store_rejects_expired_and_missing(api_module, isolated_home):
+def test_state_cookie_rejects_forged_expired_and_mismatched(api_module, monkeypatch):
+    _enable_auth(monkeypatch)
     auth_google = _routes_module().auth_google
-    auth_google.store_oauth_state("old", {"nonce": "n", "redirect_uri": "u"})
-    from src.shared_state import get_shared_state
-
-    get_shared_state().set(auth_google.OAUTH_STATE_NAMESPACE, "old", {}, -1)
-
-    assert auth_google.pop_oauth_state("old") is None
-    assert auth_google.pop_oauth_state("never-seen") is None
-
-
-def test_state_store_prunes_expired_on_insert(api_module, isolated_home):
-    auth_google = _routes_module().auth_google
-    auth_google.store_oauth_state("a", {"nonce": "n", "redirect_uri": "u"})
-    from src.shared_state import get_shared_state
-
-    store = get_shared_state()
-    store.set(auth_google.OAUTH_STATE_NAMESPACE, "a", {}, -1)
-    auth_google.store_oauth_state("b", {"nonce": "n", "redirect_uri": "u"})
-    assert store.get(auth_google.OAUTH_STATE_NAMESPACE, "a") is None
-    assert store.get(auth_google.OAUTH_STATE_NAMESPACE, "b") is not None
-
-
-def test_state_store_caps_pending_entries(api_module, isolated_home, monkeypatch):
-    auth_google = _routes_module().auth_google
-    monkeypatch.setattr(auth_google, "MAX_PENDING_STATES", 3)
-    for i in range(4):
-        auth_google.store_oauth_state(f"s{i}", {"nonce": "n", "redirect_uri": "u"})
-
-    assert auth_google.pop_oauth_state("s0") is None
-    for i in range(1, 4):
-        assert auth_google.pop_oauth_state(f"s{i}") is not None
+    cookie = auth_google.seal_oauth_state("s1", {"nonce": "n"})
+    payload, _, mac = cookie.partition(".")
+    for value, state in (
+        (cookie, "other"),
+        (cookie, ""),
+        (None, "s1"),
+        ("garbage", "s1"),
+        (f"{payload}.{'0' * len(mac)}", "s1"),
+        (f"{payload}A.{mac}", "s1"),
+        ("\u00e9\u00e9.\u00e9", "s1"),
+    ):
+        assert auth_google.open_oauth_state(value, state) is None
+    # Another secret (another deployment) cannot mint or read this one's states.
+    _enable_auth(monkeypatch, client_secret="rotated")
+    assert auth_google.open_oauth_state(cookie, "s1") is None
+    monkeypatch.setattr(auth_google, "STATE_TTL_SECONDS", -1)
+    expired = auth_google.seal_oauth_state("s1", {"nonce": "n"})
+    assert auth_google.open_oauth_state(expired, "s1") is None
 
 
 # ------------------------------------------------------------- auth.google.*
@@ -177,6 +160,16 @@ def test_google_login_redirects_to_google_and_stores_state(api_module, monkeypat
     assert state  # state was generated, embedded in the authorize URL
 
 
+def _state_cookie_cleared(response) -> bool:
+    """Exactly one Set-Cookie for the state cookie, and it deletes it."""
+    headers = [
+        header
+        for header in response.headers.get_list("set-cookie")
+        if header.startswith("tokenage_oauth_state=")
+    ]
+    return len(headers) == 1 and "Max-Age=0" in headers[0]
+
+
 def test_google_callback_happy_path(api_module, monkeypatch, fresh_db):
     _enable_auth(monkeypatch)
     _mock_google_flow(api_module, monkeypatch, name="Alice")
@@ -188,6 +181,7 @@ def test_google_callback_happy_path(api_module, monkeypatch, fresh_db):
     )
     assert callback.status_code == 302
     assert callback.headers["location"] == "/"
+    assert _state_cookie_cleared(callback)
 
     cookie = callback.cookies.get(SESSION_COOKIE)
     assert cookie and cookie.startswith("tokenage_web_")
@@ -289,10 +283,11 @@ def test_google_callback_expired_state(api_module, monkeypatch, fresh_db):
     client = TestClient(api_module.app)
     state = _start_login(api_module, monkeypatch, client)
 
-    from src.shared_state import get_shared_state
-
-    get_shared_state().set(
-        _routes_module().auth_google.OAUTH_STATE_NAMESPACE, state, {}, -1
+    auth_google = _routes_module().auth_google
+    monkeypatch.setattr(auth_google, "STATE_TTL_SECONDS", -1)
+    client.cookies.set(
+        "tokenage_oauth_state",
+        auth_google.seal_oauth_state(state, {"nonce": "n", "redirect_uri": "u"}),
     )
 
     callback = client.get(
@@ -376,6 +371,7 @@ def test_google_callback_email_unverified(api_module, monkeypatch, fresh_db):
     )
     assert callback.status_code == 302
     assert callback.headers["location"] == "/?auth_error=email_unverified"
+    assert _state_cookie_cleared(callback)
 
     engine = fresh_db.database_module.get_engine(fresh_db.db_path)
     with engine.connect() as conn:
@@ -396,6 +392,7 @@ def test_google_callback_allowlist_rejects_without_user_row(
     )
     assert callback.status_code == 302
     assert callback.headers["location"] == "/?auth_error=not_allowlisted"
+    assert _state_cookie_cleared(callback)
 
     engine = fresh_db.database_module.get_engine(fresh_db.db_path)
     with engine.connect() as conn:
@@ -432,6 +429,7 @@ def test_google_callback_oauth_failed(api_module, monkeypatch, fresh_db):
     )
     assert callback.status_code == 302
     assert callback.headers["location"] == "/?auth_error=oauth_failed"
+    assert _state_cookie_cleared(callback)
 
     engine = fresh_db.database_module.get_engine(fresh_db.db_path)
     with engine.connect() as conn:
@@ -1118,3 +1116,169 @@ def test_picture_write_failure_does_not_raise(api_module, monkeypatch, fresh_db)
 
     monkeypatch.setattr(tokens, "get_engine", fail)
     tokens.update_user_picture("missing", "https://example.com/a.png")
+
+
+def _limit_signin(monkeypatch, limit):
+    import src.config.app
+
+    monkeypatch.setitem(
+        src.config.app.CONFIG["rate_limits"], "signin_per_minute", limit
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/auth/google/login",
+        "/auth/cli/start?code_challenge=" + "a" * 43,
+        "/auth/local/login?code=invalid",
+    ],
+)
+def test_anonymous_signin_starts_share_per_ip_limit(api_module, monkeypatch, path):
+    if "/local/" not in path:
+        _enable_auth(monkeypatch)
+    _mock_authorize_url(api_module, monkeypatch)
+    client = TestClient(api_module.app, client=("203.0.113.1", 1))
+    # Off by default.
+    for _ in range(3):
+        assert client.get(path, follow_redirects=False).status_code != 429
+    _limit_signin(monkeypatch, 2)
+    for i in range(2):
+        # A direct caller cannot rotate its budget with forged forwarding headers.
+        response = client.get(
+            path,
+            headers={"x-forwarded-for": f"198.51.100.{i}"},
+            follow_redirects=False,
+        )
+        assert response.status_code != 429
+    limited = client.get(path, follow_redirects=False)
+    assert limited.status_code == 429
+    assert 1 <= int(limited.headers["retry-after"]) <= 60
+    other = TestClient(api_module.app, client=("203.0.113.2", 1))
+    assert other.get(path, follow_redirects=False).status_code != 429
+
+
+@pytest.mark.parametrize(
+    "path", ["/auth/google/login", "/auth/cli/start?code_challenge=" + "a" * 43]
+)
+def test_signin_limit_runs_off_the_event_loop(api_module, monkeypatch, path):
+    import asyncio
+
+    import src.ratelimit
+
+    _enable_auth(monkeypatch)
+    _mock_authorize_url(api_module, monkeypatch)
+    _limit_signin(monkeypatch, 5)
+    on_loop = []
+    original = src.ratelimit.rate_limit_hit
+
+    def rate_limit_hit(key, limit_name):
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return original(key, limit_name)
+
+    monkeypatch.setattr(src.ratelimit, "rate_limit_hit", rate_limit_hit)
+    client = TestClient(api_module.app, client=("203.0.113.1", 1))
+    assert client.get(path, follow_redirects=False).status_code == 302
+    assert on_loop == [False]
+
+
+def test_signin_limit_keys_ipv6_by_64_and_mapped_ipv4_as_ipv4():
+    from starlette.requests import Request
+
+    from src.auth.signin import _client_key
+
+    def key(host):
+        return _client_key(Request({"type": "http", "client": (host, 1)}))
+
+    assert key("2001:db8::1") == key("2001:db8::ffff") == "2001:db8::/64"
+    assert key("2001:db8:0:1::1") != key("2001:db8::1")
+    assert key("::ffff:203.0.113.1") == "203.0.113.1"
+    assert key("::ffff:203.0.113.1") != key("::ffff:203.0.113.2")
+
+
+def test_signed_in_cli_approval_spends_no_signin_budget(
+    api_module, monkeypatch, fresh_db
+):
+    _enable_auth(monkeypatch)
+    _limit_signin(monkeypatch, 1)
+    from src.auth.tokens import mint_token
+
+    token, _ = mint_token("a@example.com", kind="web")
+    client = TestClient(api_module.app, client=("203.0.113.1", 1))
+    client.cookies.set(SESSION_COOKIE, token)
+    client.headers["origin"] = str(client.base_url).rstrip("/")
+    for _ in range(3):
+        assert (
+            client.get("/auth/cli/start", params={"code_challenge": "a" * 43})
+        ).status_code == 200
+        assert (
+            client.post("/auth/cli/start", data={"code_challenge": "a" * 43})
+        ).status_code == 200
+
+
+def test_signin_flood_does_not_evict_another_users_pending_login(
+    api_module, monkeypatch, fresh_db
+):
+    _enable_auth(monkeypatch)
+    _mock_google_flow(api_module, monkeypatch)
+    auth_google = _routes_module().auth_google
+    # Even tiny store caps cannot be reached: anonymous starts store nothing.
+    monkeypatch.setattr(auth_google, "MAX_PENDING_STATES", 1)
+    monkeypatch.setattr(auth_google, "MAX_PENDING_CLI_CODES", 1)
+    victim = TestClient(api_module.app, client=("203.0.113.1", 1))
+    state = _start_login(api_module, monkeypatch, victim)
+    flooder = TestClient(api_module.app, client=("203.0.113.1", 2))
+    for i in range(10):
+        path = "/auth/google/login" if i % 2 else "/auth/cli/start"
+        response = flooder.get(
+            path, params={"code_challenge": "a" * 43}, follow_redirects=False
+        )
+        assert response.status_code == 302
+    callback = victim.get(
+        f"/auth/google/callback?code=the-code&state={state}", follow_redirects=False
+    )
+    assert callback.headers["location"] == "/"
+    assert SESSION_COOKIE in callback.cookies
+
+
+def test_signin_uses_only_server_trusted_proxy_headers(api_module, monkeypatch):
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    _enable_auth(monkeypatch)
+    _mock_authorize_url(api_module, monkeypatch)
+    _limit_signin(monkeypatch, 1)
+    app = ProxyHeadersMiddleware(api_module.app, trusted_hosts=["10.0.0.2"])
+    trusted = TestClient(app, client=("10.0.0.2", 1))
+    for ip in ("203.0.113.1", "203.0.113.2"):
+        assert (
+            trusted.get(
+                "/auth/google/login",
+                headers={"x-forwarded-for": ip},
+                follow_redirects=False,
+            ).status_code
+            == 302
+        )
+    untrusted = TestClient(app, client=("10.0.0.3", 1))
+    for i, ip in enumerate(("203.0.113.3", "203.0.113.4")):
+        assert untrusted.get(
+            "/auth/google/login",
+            headers={"x-forwarded-for": ip},
+            follow_redirects=False,
+        ).status_code == (302 if i == 0 else 429)
+
+
+def test_google_callback_rejects_local_owner_identity(api_module, monkeypatch):
+    _enable_auth(monkeypatch)
+    _mock_google_flow(api_module, monkeypatch, email="owner@localhost")
+    client = TestClient(api_module.app)
+    state = _start_login(api_module, monkeypatch, client)
+    response = client.get(
+        "/auth/google/callback",
+        params={"state": state, "code": "x"},
+        follow_redirects=False,
+    )
+    assert response.headers["location"] == "/?auth_error=not_allowlisted"

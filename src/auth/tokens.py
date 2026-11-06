@@ -17,6 +17,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from ..config.app import CONFIG
 from ..database.engine import get_engine
 from ..database.models import AuthToken, Device, User
 
@@ -33,6 +34,31 @@ def _now_micros() -> int:
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class MintRefused(Exception):
+    """The exchange may not mint; `detail` and `status_code` go to the client."""
+
+    def __init__(self, detail: str, status_code: int = 400):
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
+
+
+def _lock_user(session: Session, condition, *, bump: bool = False) -> None:
+    """Serialize one user's credential changes (revoke vs exchange).
+
+    Must be the transaction's first statement. A row write locks on both
+    engines: the user row until commit on Postgres (across nodes), the database
+    write lock on SQLite, where SELECT ... FOR UPDATE takes none. Lock order is
+    user, device, token. `bump` moves token_epoch so codes approved before this
+    revoke are refused (mint_device_tokens).
+    """
+    session.execute(
+        sa_update(User)
+        .where(condition)
+        .values(token_epoch=User.token_epoch + (1 if bump else 0))
+    )
 
 
 def _set_auth_statement_timeout(session: Session) -> None:
@@ -108,6 +134,8 @@ def mint_token(
         raise ValueError(
             f"invalid token kind: {kind!r} (expected one of {TOKEN_KINDS})"
         )
+    if not email_policy_allows(email):
+        raise ValueError(f"{email.strip().lower()} is not allowed by auth policy")
     token = f"tokenage_{kind}_{secrets.token_hex(24)}"
     user = get_or_create_user(email, db_path)
     engine = get_engine(db_path)
@@ -145,6 +173,28 @@ def _web_session_expired(token: AuthToken, now: int) -> bool:
     return token.kind == "web" and last_active <= now - WEB_IDLE_TIMEOUT_MICROS
 
 
+def auth_provider() -> str:
+    """The configured sign-in provider: "local" (default) or "google"."""
+    return CONFIG.get("auth", {}).get("provider", "local")
+
+
+def google_email_allowed(email: str) -> bool:
+    """Apply the Google email policy to both sign-in and existing credentials."""
+    email = email.strip().lower()
+    allowlist = CONFIG.get("auth", {}).get("allowlist") or []
+    normalized = {str(entry).strip().lower() for entry in allowlist if entry}
+    return (
+        bool(email)
+        and email != LOCAL_OWNER_EMAIL
+        and (not normalized or email in normalized)
+    )
+
+
+def email_policy_allows(email: str) -> bool:
+    """Whether the current provider lets this user hold credentials at all."""
+    return auth_provider() != "google" or google_email_allowed(email)
+
+
 def resolve_token(
     token: str, db_path: str | None = None
 ) -> tuple[User, AuthToken] | None:
@@ -170,6 +220,8 @@ def resolve_token(
             if row is None:
                 return None
             auth_token, user, device_id, device_revoked_at, device_user_id = row
+            if not email_policy_allows(user.email):
+                return None
             if auth_token.revoked_at is not None:
                 return None
             # An ingest token not bound to a device is a pre-device-binding leftover.
@@ -269,6 +321,9 @@ def revoke_token(token_id: str, user_id: str, db_path: str | None = None) -> boo
     """Revoke a token owned by this user. Returns False if absent/already revoked."""
     engine = get_engine(db_path)
     with Session(engine, expire_on_commit=False) as session:
+        _set_auth_statement_timeout(session)
+        # Its approved codes die at exchange (approver check under this lock).
+        _lock_user(session, User.id == user_id)
         result = session.execute(
             sa_update(AuthToken)
             .where(
@@ -281,6 +336,34 @@ def revoke_token(token_id: str, user_id: str, db_path: str | None = None) -> boo
         changed = result.rowcount > 0  # type: ignore[attr-defined]
         session.commit()
     return changed
+
+
+def revoke_user_tokens(email: str, db_path: str | None = None) -> int:
+    """Revoke all of one email's tokens and machines without creating a user.
+
+    Bumping token_epoch also refuses every unredeemed CLI code approved before
+    this, including Google-flow and local-owner ones that have no approver."""
+    email = email.strip().lower()
+    if not email:
+        raise ValueError("email must not be empty")
+    user_ids = select(User.id).where(User.email == email)
+    now = _now_micros()
+    with Session(get_engine(db_path)) as session:
+        _set_auth_statement_timeout(session)
+        _lock_user(session, User.email == email, bump=True)
+        # Device before token: mint_device_tokens locks in that order.
+        session.execute(
+            sa_update(Device)
+            .where(Device.user_id.in_(user_ids), Device.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
+        result = session.execute(
+            sa_update(AuthToken)
+            .where(AuthToken.user_id.in_(user_ids), AuthToken.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
+        session.commit()
+        return result.rowcount  # type: ignore[attr-defined]
 
 
 def list_user_tokens(user_id: str, db_path: str | None = None) -> list[AuthToken]:
@@ -323,9 +406,16 @@ def mint_device_tokens(
     client_version: str | None = None,
     client_commit: str | None = None,
     keep_ingest_token: str | None = None,
+    token_epoch: int | None = None,
+    approver_token_id: str | None = None,
     db_path: str | None = None,
 ) -> tuple[str, str, Device]:
-    """Rotate CLI credentials, keeping a valid machine ingest token if supplied."""
+    """Rotate CLI credentials, keeping a valid machine ingest token if supplied.
+
+    For a CLI code, pass the epoch and approving token it was minted with: both
+    are checked under the user lock, so a concurrent revoke either refuses this
+    (MintRefused) or runs after it and revokes what it minted.
+    """
     installation_hash = hash_token(installation_key)
     engine = get_engine(db_path)
     for attempt in range(2):
@@ -335,6 +425,28 @@ def mint_device_tokens(
         try:
             with Session(engine, expire_on_commit=False) as session:
                 _set_auth_statement_timeout(session)
+                _lock_user(session, User.id == user_id)
+                user = session.execute(
+                    select(User.email, User.token_epoch).where(User.id == user_id)
+                ).first()
+                if user is None or (
+                    token_epoch is not None and user.token_epoch != token_epoch
+                ):
+                    raise MintRefused("invalid code")
+                if (
+                    approver_token_id is not None
+                    and session.execute(
+                        select(AuthToken.id).where(
+                            AuthToken.id == approver_token_id,
+                            AuthToken.user_id == user_id,
+                            AuthToken.revoked_at.is_(None),
+                        )
+                    ).first()
+                    is None
+                ):
+                    raise MintRefused("invalid code")
+                if not email_policy_allows(user.email):
+                    raise MintRefused("account not allowed", 403)
                 device = session.execute(
                     select(Device)
                     .where(
@@ -384,7 +496,8 @@ def mint_device_tokens(
                     device.device_name = device_name
                     # A revoked machine comes back only through a fresh browser
                     # approval: the installation key is not a credential, so the
-                    # code + PKCE exchange is what re-authorizes it.
+                    # code + PKCE exchange is what re-authorizes it. Codes
+                    # approved before the revoke fail the epoch check above.
                     device.revoked_at = None
                     device.last_seen_at = now
                     if client_version is not None:
@@ -436,6 +549,7 @@ def revoke_device(device_id: str, user_id: str, db_path: str | None = None) -> b
     now = _now_micros()
     with Session(engine, expire_on_commit=False) as session:
         _set_auth_statement_timeout(session)
+        _lock_user(session, User.id == user_id)
         result = session.execute(
             sa_update(Device)
             .where(
@@ -447,6 +561,8 @@ def revoke_device(device_id: str, user_id: str, db_path: str | None = None) -> b
         )
         changed = result.rowcount > 0  # type: ignore[attr-defined]
         if changed:
+            # A code approved before this must not bring the machine back.
+            _lock_user(session, User.id == user_id, bump=True)
             session.execute(
                 sa_update(AuthToken)
                 .where(

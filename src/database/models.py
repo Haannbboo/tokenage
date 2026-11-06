@@ -37,6 +37,11 @@ class User(Base):
     name: Mapped[str | None] = mapped_column(String, nullable=True)
     picture: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Bumped by a user-wide or device revoke; CLI codes carry the value they
+    # were approved under and are refused at exchange once it moves.
+    token_epoch: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
 
 
 class Device(Base):

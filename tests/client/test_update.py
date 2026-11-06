@@ -213,6 +213,13 @@ def test_user_pin_preserved(fail, monkeypatch, setup_update, capsys):
         assert "Latest client     0.1.22  (commit ddddddd)" in capsys.readouterr().out
 
 
+def test_empty_user_pin_treated_as_unset(monkeypatch, setup_update, capsys):
+    monkeypatch.setenv("TOKENAGE_INSTALL_COMMIT", "")
+    assert update.run_update(check=False, dry_run=False) == 0
+    assert setup_update[1][1]["TOKENAGE_INSTALL_COMMIT"] == "b" * 40
+    assert "Latest client     0.1.21  (commit bbbbbbb)" in capsys.readouterr().out
+
+
 def test_invalid_user_pin(monkeypatch, setup_update):
     monkeypatch.setenv("TOKENAGE_INSTALL_COMMIT", "bad")
     assert update.run_update(check=False, dry_run=False) == 1

@@ -130,7 +130,7 @@ def _update_from_installer(
     dry_run: bool,
 ) -> int:
     """Show installed vs latest, then install exactly that commit unless already current."""
-    user_pin = os.environ.get("TOKENAGE_INSTALL_COMMIT")
+    user_pin = os.environ.get("TOKENAGE_INSTALL_COMMIT") or None
     if user_pin is not None:
         if not _COMMIT_RE.fullmatch(user_pin):
             print(

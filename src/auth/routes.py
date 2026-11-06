@@ -11,9 +11,9 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from src.client_identity import client_commit, client_version
 from src.config.app import CONFIG
 from src.config.server_config import resolve_server_urls
+from src.utils import client_commit, client_version
 
 from ..database import AuthToken, User
 from . import google as auth_google

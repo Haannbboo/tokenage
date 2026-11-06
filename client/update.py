@@ -29,6 +29,7 @@ _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
 
 def _installer_source(installer: Path) -> tuple[str, str]:
+    """Read the GitHub repository and branch the installer installs from."""
     script = installer.read_text(encoding="utf-8")
     repository = re.search(
         r"^REPOSITORY=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$", script, re.M
@@ -42,6 +43,7 @@ def _installer_source(installer: Path) -> tuple[str, str]:
 def _resolve_target(
     repository: str, branch: str, pin: str | None = None
 ) -> tuple[str, str]:
+    """Find the commit and client version the installer would install."""
     sha = pin
     if sha is None:
         with urlopen(
@@ -62,6 +64,7 @@ def _resolve_target(
 
 
 def _failure_reason(exc: Exception) -> str:
+    """Turn a resolve error into a short reason (offline, TLS, rate limit, 404)."""
     if isinstance(exc, HTTPError):
         if exc.code in {403, 429}:
             return f"GitHub rate limit (HTTP {exc.code})"
@@ -126,6 +129,7 @@ def _update_from_installer(
     check: bool,
     dry_run: bool,
 ) -> int:
+    """Show installed vs latest, then install exactly that commit unless already current."""
     user_pin = os.environ.get("TOKENAGE_INSTALL_COMMIT")
     if user_pin is not None:
         if not _COMMIT_RE.fullmatch(user_pin):

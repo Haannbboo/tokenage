@@ -1,3 +1,5 @@
+import re
+
 _MODEL_NAME_ALIASES = {
     "space-bunny-free": "stealth/space-bunny-alpha",
     "ling-3.1-flash-free": "inclusionai/ling-3.1-flash",
@@ -45,3 +47,20 @@ def secs_to_micros(secs: int | float) -> int:
 def micros_to_secs(micros: int) -> float:
     """Convert integer microseconds to epoch seconds."""
     return micros / 1_000_000
+
+
+def client_version(value: object) -> str | None:
+    """Return the value if it is a plain MAJOR.MINOR.PATCH version, else None."""
+    return (
+        value
+        if isinstance(value, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value)
+        else None
+    )
+
+
+def client_commit(value: object) -> str | None:
+    """Return the value lowercased if it is a 40-character commit sha, else None."""
+    if not isinstance(value, str):
+        return None
+    value = value.lower()
+    return value if re.fullmatch(r"[0-9a-f]{40}", value) else None

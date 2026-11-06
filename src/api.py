@@ -21,7 +21,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from protocol import MAX_SUPPORTED_GENERATION, MIN_SUPPORTED_GENERATION
 from protocol.device_status import DeviceStatusReport
 from protocol.usage_report import UsageReport
-from src.client_identity import client_commit, client_version
 from src.config.app import CONFIG, _config_lock
 from src.config.server_config import resolve_server_urls
 
@@ -79,7 +78,7 @@ from .pricing.costs import resolve_cost_match
 from .pricing.models import ResolvedCost
 from .pricing.snapshots import enrich_rows
 from .ratelimit import rate_limit_hit, resolve_ingest_request_async
-from .utils import normalize_model_name
+from .utils import client_commit, client_version, normalize_model_name
 
 logger = logging.getLogger(__name__)
 USAGE_QUERY_LIMIT_MAX = 1000

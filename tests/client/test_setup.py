@@ -118,6 +118,7 @@ def test_setup_disable_removes_only_our_keys(machine: Path, capsys) -> None:
     assert setup.run_setup(disable=True) == 0
     assert "un-wired" in capsys.readouterr().out
     remaining = json.loads(settings.read_text())
+    assert "hooks" not in remaining
     assert remaining == {"model": "opus", "env": {"MY_OWN": "keep"}}
 
 
@@ -340,6 +341,47 @@ def test_disable_unknown_collector_preserves_existing_settings(
         assert auth.logout(keep_agents=False) == 0
         assert [path.read_bytes() for path in (claude, codex)] == before
         assert not (machine / ".tokenage" / "credentials.json").exists()
+
+
+def test_disable_unknown_collector_removes_owned_hooks(machine, capsys):
+    import tomllib
+
+    from client import hooks
+
+    _sign_in_without_collector(machine)
+    claude = machine / ".claude" / "settings.json"
+    codex = machine / ".codex" / "config.toml"
+    env = {"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": ENDPOINT}
+    claude.write_text(
+        json.dumps(
+            {
+                "env": env,
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": hooks.hook_command("claude"),
+                                }
+                            ]
+                        }
+                    ]
+                },
+            }
+        )
+    )
+    codex.write_text(
+        f'[otel.exporter.otlp-http]\nendpoint = "{ENDPOINT}"\n\n'
+        "[[hooks.SessionStart]]\n[[hooks.SessionStart.hooks]]\n"
+        f'type = "command"\ncommand = {json.dumps(hooks.hook_command("codex"))}\n'
+    )
+    assert setup.run_setup(disable=True) == 1
+    assert capsys.readouterr().err.count("warning: collector unknown") == 1
+    assert json.loads(claude.read_text()) == {"env": env}
+    after = tomllib.loads(codex.read_text())
+    assert "SessionStart" not in after.get("hooks", {})
+    assert after["otel"] == {"exporter": {"otlp-http": {"endpoint": ENDPOINT}}}
 
 
 def test_disable_reports_agent_failures(machine, capsys):

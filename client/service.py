@@ -461,6 +461,10 @@ def run_foreground() -> int:
 
     proxy = start_proxy()
 
+    from client.event_spool import start_drain
+
+    event_stop = start_drain()
+
     from client.retirement import start_cleanup
 
     cleanup_stop = None
@@ -481,6 +485,7 @@ def run_foreground() -> int:
             while not stop and time.monotonic() < deadline:
                 time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
     finally:
+        event_stop.set()
         if cleanup_stop is not None:
             cleanup_stop.set()
         proxy.stop()

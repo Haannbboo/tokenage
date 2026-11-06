@@ -288,6 +288,7 @@ class SessionRecord(Base):
     user_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id"), nullable=False, index=True
     )
+    project_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     client_source: Mapped[str | None] = mapped_column(String, nullable=True)
     started: Mapped[int] = mapped_column(BigInteger, nullable=False)
     ended: Mapped[int] = mapped_column(BigInteger, nullable=False)

@@ -21,6 +21,7 @@
     "@kilocode/plugin": "^7.3.8"
   },
   "devDependencies": {
+    "@types/node": "^24.19.2",
     "typescript": "5.9.3"
   }
 }

@@ -10,6 +10,10 @@ export const zh: Record<string, string> = {
 
   'Active sessions': '活跃会话',
   'By agent': '按代理',
+  'By project': '按项目',
+  'Project': '项目',
+  'All projects': '全部项目',
+  'Unassigned': '未分配',
   'By duration': '按时长',
   'By cost': '按费用',
   'of cost': '费用占比',

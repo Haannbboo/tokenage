@@ -9,6 +9,7 @@ from .database.models import metadata
 TENANT_TABLES = ("usage", "usage_hourly", "sessions", "tool_calls")
 DEVICE_ID_TABLES = ("usage", "usage_hourly")
 RETIRED_SESSION_COLUMNS = (
+    "project",
     "outcome",
     "source",
     "confidence",
@@ -18,7 +19,6 @@ RETIRED_SESSION_COLUMNS = (
     "evidence_json",
     "failure_reason",
     "evaluated_at",
-    "project",
 )
 
 # Run in one transaction. Rebuild the rollup from raw usage, which is kept, so
@@ -191,6 +191,17 @@ def migrate_database(db_path: str | None = None) -> list[str]:
         )
 
     # create_all does not add columns to tables that already exist.
+    if not any(c["name"] == "project_name" for c in insp.get_columns("sessions")):
+        with engine.begin() as connection:
+            guard = "IF NOT EXISTS " if engine.dialect.name == "postgresql" else ""
+            connection.execute(
+                text(
+                    f"ALTER TABLE sessions ADD COLUMN {guard}project_name VARCHAR(100)"
+                )
+            )
+        applied.append("sessions.project_name")
+        insp = inspect(engine)
+
     if not any(c["name"] == "picture" for c in insp.get_columns("users")):
         with engine.begin() as connection:
             # Two nodes can migrate at once; SQLite has no IF NOT EXISTS here.

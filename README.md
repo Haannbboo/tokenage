@@ -432,3 +432,22 @@ Please keep examples consistent: plain agent invocations should use `tokenage co
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Session projects
+
+The Sessions page groups tokens, cost and session counts by project and lets you
+filter sessions by name. Claude Code and Codex use a local SessionStart hook;
+OpenCode (v1/v2) and Kilo use the tokenage plugin. Run `tokenage setup` to install
+these integrations. In Codex, open `/hooks` and review/trust the tokenage
+SessionStart hook once before it can run.
+
+Only the project **name** is sent: Git checkout/worktree names are resolved
+locally, with the working folder name as fallback. Paths, transcripts and hook
+payloads are never spooled or sent. The first accepted name stays with the
+session. Existing sessions are not backfilled; an unassigned session can acquire
+a name when resumed. Proxy-only usage has no session association.
+
+Reports wait in a private, bounded spool for the client service (up to 1,000
+files, retained for 24 hours). Signed-out hooks skip reporting; a different
+server/device credential discards the previous login's backlog. For remote
+OpenCode hosts, run the client service on that host too.

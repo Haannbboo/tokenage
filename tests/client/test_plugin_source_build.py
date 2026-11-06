@@ -111,7 +111,8 @@ def test_hosted_login_removes_old_server_plugin_and_token(agent, tmp_path, monke
     assert "old-secret" not in config_path.read_text()
 
 
-def test_hosted_claude_setup_does_not_register_versioned_hook(tmp_path):
+def test_hosted_claude_setup_registers_stable_hook(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     settings = tmp_path / "home" / ".claude" / "settings.json"
     for _ in range(2):
         assert claude.configure(settings, "https://new.test/v1/logs", "new-secret") == 0
@@ -120,4 +121,12 @@ def test_hosted_claude_setup_does_not_register_versioned_hook(tmp_path):
         "https://new.test/v1/logs"
     )
     assert data["env"]["OTEL_EXPORTER_OTLP_HEADERS"] == "x-tokenage-token=new-secret"
-    assert "hooks" not in data
+    from client.hooks import hook_command
+
+    assert data["hooks"]["SessionStart"] == [
+        {
+            "hooks": [
+                {"type": "command", "command": hook_command("claude"), "timeout": 10}
+            ]
+        }
+    ]

@@ -166,7 +166,9 @@ endpoint = "https://traces.example"
     )
 
     assert result.returncode == 0, result.stderr
-    assert tomllib.loads(config.read_text()) == expected
+    assert {
+        k: v for k, v in tomllib.loads(config.read_text()).items() if k != "hooks"
+    } == expected
 
 
 def test_codex_configure_without_final_newline_preserves_options(tmp_path):
@@ -186,7 +188,9 @@ timeout_ms = 8000""")
     )
 
     assert result.returncode == 0, result.stderr
-    assert tomllib.loads(config.read_text()) == expected
+    assert {
+        k: v for k, v in tomllib.loads(config.read_text()).items() if k != "hooks"
+    } == expected
 
 
 def test_codex_configure_commented_table_after_disable(tmp_path):
@@ -203,11 +207,9 @@ exporter = "none"
     )
 
     assert result.returncode == 0, result.stderr
-    assert tomllib.loads(config.read_text()) == {
-        "otel": {
-            "environment": "production",
-            "exporter": {"otlp-http": {"endpoint": ENDPOINT, "protocol": "json"}},
-        }
+    assert tomllib.loads(config.read_text())["otel"] == {
+        "environment": "production",
+        "exporter": {"otlp-http": {"endpoint": ENDPOINT, "protocol": "json"}},
     }
 
 
@@ -239,7 +241,9 @@ x-custom = "keep"
             tmp_path,
         )
         assert result.returncode == 0, result.stderr
-        assert tomllib.loads(config.read_text()) == expected
+        assert {
+            k: v for k, v in tomllib.loads(config.read_text()).items() if k != "hooks"
+        } == expected
         assert "[otel] # user settings" in config.read_text()
 
         result = _run(
@@ -515,13 +519,13 @@ def test_plugin_build_rereads_concurrent_config_edits(
         assert config_path.read_text() == concurrent
 
 
-def test_compact_endpoint_input_and_no_claude_hook_registration(tmp_path):
+def test_compact_endpoint_input_and_claude_hook_registration(tmp_path):
     settings = tmp_path / "settings.json"
     result = _run("claude", [str(settings), ENDPOINT], tmp_path)
     assert result.returncode == 0, result.stderr
     after = json.loads(settings.read_text())
     assert after["env"]["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] == ENDPOINT
-    assert "hooks" not in after
+    assert len(after["hooks"]["SessionStart"]) == 1
 
 
 @pytest.mark.parametrize("agent", ["claude", "codex", "opencode", "kilo"])

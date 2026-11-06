@@ -22,7 +22,7 @@ export function sessionFilterQuery(source: string | null, device: string | null,
   if (since) params.set('since', since)
   return params
 }
-export function useSessionsData(opts: { activeSource: string | null; dateRange: DateRangeOption; bucket: SessionBucket | null }) {
+export function useSessionsData(opts: { activeSource: string | null; dateRange: DateRangeOption; bucket: SessionBucket | null; project?: string | null }) {
   const { refreshTrigger, activeDevice, activeFilter, timezone } = useApp()
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [distribution, setDistribution] = useState<SessionDistribution | null>(null)
@@ -39,13 +39,14 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
   const since = useMemo(() => getSinceDate(opts.dateRange), [opts.dateRange, refreshTrigger])
   const query = sessionFilterQuery(opts.activeSource, activeDevice, activeFilter, since).toString()
   const bucketKey = JSON.stringify(opts.bucket)
+  const project = opts.project ?? null
   const handleSessionSort = useCallback((column: string) => {
     if (sessionSortBy === column) setSessionSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')
     else { setSessionSortBy(column); setSessionSortOrder('desc') }
     setSessionPage(1)
   }, [sessionSortBy])
-  const previousFilter = useRef(`${query}|${bucketKey}`)
-  useEffect(() => { setSessionPage(1); setSessions([]) }, [query, bucketKey])
+  const previousFilter = useRef(`${query}|${bucketKey}|${project}`)
+  useEffect(() => { setSessionPage(1); setSessions([]) }, [query, bucketKey, project])
   useEffect(() => { setSessionPage(1) }, [refreshTrigger])
   useEffect(() => {
     const controller = new AbortController()
@@ -57,7 +58,7 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
     return () => controller.abort()
   }, [query, opts.dateRange, timezone, refreshTrigger])
   useEffect(() => {
-    const filterKey = `${query}|${bucketKey}`
+    const filterKey = `${query}|${bucketKey}|${project}`
     if (previousFilter.current !== filterKey) {
       previousFilter.current = filterKey
       if (sessionPage !== 1) return
@@ -65,6 +66,7 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
     const controller = new AbortController()
     const params = new URLSearchParams(query)
     applySessionBucket(params, JSON.parse(bucketKey))
+    if (project !== null) params.set('project', project)
     params.set('sort_by', sessionSortBy); params.set('sort_order', sessionSortOrder)
     params.set('limit', '50'); params.set('offset', String((sessionPage - 1) * 50))
     setSessionsLoading(true); setSessionsError(false)
@@ -72,6 +74,6 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
       setSessions(prev => sessionPage === 1 ? data.sessions : [...prev, ...data.sessions]); setHasMoreSessions(data.sessions.length === 50)
     }).catch(() => { if (!controller.signal.aborted) setSessionsError(true) }).finally(() => { if (!controller.signal.aborted) setSessionsLoading(false) })
     return () => controller.abort()
-  }, [query, bucketKey, sessionSortBy, sessionSortOrder, sessionPage, refreshTrigger, retry])
+  }, [query, bucketKey, project, sessionSortBy, sessionSortOrder, sessionPage, refreshTrigger, retry])
   return { sessions, sessionsLoading, sessionsError, distribution, distributionLoading, distributionError, hasMoreSessions, sessionSortBy, sessionSortOrder, handleSessionSort, setSessionPage, loadMoreSessions }
 }

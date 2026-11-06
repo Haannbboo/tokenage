@@ -9,6 +9,7 @@ from typing import Any
 
 from client.agents import DONE, FAILED, SKIPPED, write_private
 from client.agents import info as _info
+from client.hooks import update_session_hooks
 
 
 def load_settings(path: Path) -> dict[str, Any]:
@@ -41,9 +42,6 @@ def _disable(settings_path: Path, expected_endpoint: str | None) -> int:
     while the endpoint is the one tokenage wrote. The hooks are identified by
     script path, so they can only be ours.
     """
-    if not expected_endpoint:
-        print("collector unknown; Claude configuration left unchanged", file=sys.stderr)
-        return SKIPPED
     if not settings_path.exists():
         _info(f"No Claude Code settings at {settings_path}")
         return SKIPPED
@@ -51,20 +49,25 @@ def _disable(settings_path: Path, expected_endpoint: str | None) -> int:
     env = settings.get("env")
     env = env if isinstance(env, dict) else {}
     current = env.get("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
-    if current != expected_endpoint:
-        print(
-            f"{settings_path} has no matching collector; left alone",
-            file=sys.stderr,
-        )
-        return SKIPPED
-
     changed = False
-    for key in _OWNED_ENV_KEYS:
+    try:
+        changed = update_session_hooks(settings, "claude", remove=True)
+    except ValueError:
+        _info("Claude SessionStart hook removal skipped: unsupported hooks layout")
+    owned = bool(expected_endpoint) and current == expected_endpoint
+    if not owned:
+        note = (
+            "collector unknown"
+            if not expected_endpoint
+            else "no matching collector; left alone"
+        )
+        print(f"Claude telemetry: {note}", file=sys.stderr)
+    for key in _OWNED_ENV_KEYS if owned else ():
         if key in env:
             del env[key]
             changed = True
     headers = env.get("OTEL_EXPORTER_OTLP_HEADERS")
-    if isinstance(headers, str):
+    if owned and isinstance(headers, str):
         remaining = [
             part
             for part in headers.split(",")
@@ -105,6 +108,10 @@ def configure(target: str | Path, logs_endpoint: str, token: str | None = None) 
             desired_env["OTEL_EXPORTER_OTLP_HEADERS"] = f"x-tokenage-token={token}"
 
         changed = False
+        try:
+            changed = update_session_hooks(settings, "claude")
+        except ValueError:
+            _info("Claude SessionStart hook skipped: unsupported hooks layout")
         for k, v in desired_env.items():
             if env.get(k) != v:
                 env[k] = v

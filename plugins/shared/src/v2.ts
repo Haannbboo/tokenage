@@ -1,3 +1,4 @@
+import { reportProject } from "./project.js"
 import { finiteNumber } from "./helpers.js"
 import { MAX_TRACKED_MESSAGES } from "./prompt.js"
 import { buildOtlpPayload, buildToolEventPayload, emitOtlp } from "./otlp.js"
@@ -13,6 +14,7 @@ type V2Event = {
   id?: string
   created?: number
   type?: string
+  location?: { directory?: string }
   data?: Record<string, any>
 }
 
@@ -217,6 +219,7 @@ function createV2Tracker(
 
 type V2Context = {
   options?: Record<string, any>
+  session?: { get(input: { sessionID: string }, options?: { signal?: AbortSignal }): Promise<Record<string, any>> }
   event: { subscribe(options?: { signal?: AbortSignal }): AsyncIterable<V2Event> }
 }
 
@@ -233,10 +236,34 @@ export function createPluginV2(clientSource: string) {
       if (!endpoint) return
       const handle = createV2Tracker(clientSource, endpoint, headers)
       const controller = new AbortController()
+      const projects = new Map<string, { attempts: number; inFlight: boolean; done: boolean }>()
+      async function project(event: V2Event) {
+        const data = event.data ?? {}
+        const sessionID = data.sessionID ?? data.info?.id
+        if (typeof sessionID !== "string") return
+        const state = projects.get(sessionID) ?? { attempts: 0, inFlight: false, done: false }
+        if (state.done || state.inFlight || state.attempts >= 3) return
+        state.attempts++
+        state.inFlight = true
+        projects.set(sessionID, state)
+        trim(projects)
+        try {
+          // SDK LocationRef lives on the event; Session has a plain directory.
+          let directory = event.location?.directory ?? data.info?.directory
+          if (typeof directory !== "string" && ctx.session) {
+            const info = await ctx.session.get({ sessionID }, { signal: AbortSignal.timeout(800) })
+            directory = info?.location?.directory ?? info?.directory
+          }
+          state.done = await reportProject(clientSource, sessionID, directory)
+        } finally {
+          state.inFlight = false
+        }
+      }
       void (async () => {
         try {
           for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
             try {
+              void project(event).catch(() => {})
               await handle(event)
             } catch (err) {
               console.error("[tokenage] event handling failed:", err)

@@ -72,8 +72,15 @@ class SharedState(Protocol):
     def status(self) -> list[PartitionStatus]: ...
     def get(self, namespace: str, key: str) -> Any: ...
     def set(
-        self, namespace: str, key: str, value: Any, ttl: float, cap: int | None = None
-    ) -> None: ...
+        self,
+        namespace: str,
+        key: str,
+        value: Any,
+        ttl: float,
+        cap: int | None = None,
+        *,
+        only_if_absent: bool = False,
+    ) -> Any: ...
     def pop(self, namespace: str, key: str) -> Any: ...
     def rate_limit(self, key: str, limit: int) -> int | None: ...
 
@@ -219,10 +226,23 @@ class SQLiteSharedState:
             return json.loads(row[0]) if row else None
 
     def set(
-        self, namespace: str, key: str, value: Any, ttl: float, cap: int | None = None
-    ) -> None:
+        self,
+        namespace: str,
+        key: str,
+        value: Any,
+        ttl: float,
+        cap: int | None = None,
+        *,
+        only_if_absent: bool = False,
+    ) -> Any:
         with self._connection(True) as conn:
             conn.execute("DELETE FROM kv WHERE expires<=?", (time.time(),))
+            if only_if_absent:
+                row = conn.execute(
+                    "SELECT value FROM kv WHERE namespace=? AND key=?", (namespace, key)
+                ).fetchone()
+                if row is not None:
+                    return json.loads(row[0])
             if cap is not None:
                 count = conn.execute(
                     "SELECT count(*) FROM kv WHERE namespace=? AND key<>?",
@@ -236,6 +256,7 @@ class SQLiteSharedState:
                 "INSERT INTO kv VALUES (?,?,?,?) ON CONFLICT(namespace,key) DO UPDATE SET value=excluded.value, expires=excluded.expires",
                 (namespace, key, json.dumps(value), time.time() + ttl),
             )
+            return value
 
     def pop(self, namespace: str, key: str) -> Any:
         with self._connection(True) as conn:
@@ -414,11 +435,22 @@ class RedisSharedState:
             return json.loads(value) if value is not None else None
 
     def set(
-        self, namespace: str, key: str, value: Any, ttl: float, cap: int | None = None
-    ) -> None:
+        self,
+        namespace: str,
+        key: str,
+        value: Any,
+        ttl: float,
+        cap: int | None = None,
+        *,
+        only_if_absent: bool = False,
+    ) -> Any:
         with self._available():
-            self._client.eval(
+            result = self._client.eval(
                 """
+                if ARGV[4] == '1' then
+                    local existing = redis.call('GET', KEYS[1])
+                    if existing then return existing end
+                end
                 local t = redis.call('TIME')
                 local now = t[1] * 1000 + t[2] / 1000
                 redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
@@ -452,7 +484,9 @@ class RedisSharedState:
                 json.dumps(value),
                 math.ceil(ttl * 1000),
                 cap if cap is not None else "",
+                "1" if only_if_absent else "0",
             )
+            return json.loads(result) if result is not None else value
 
     def pop(self, namespace: str, key: str) -> Any:
         with self._available():
@@ -540,6 +574,14 @@ _DELETED = object()
 CORRELATION_TTL_SECONDS = 600
 
 
+@dataclass
+class _MappingUpdate:
+    value: Any
+    ttl: float
+    cap: int | None
+    only_if_absent: bool = False
+
+
 @contextmanager
 def defer_updates():
     updates = {}
@@ -551,20 +593,39 @@ def defer_updates():
             if value is _DELETED:
                 store.pop(namespace, key)
             else:
-                store.set(namespace, key, value, CORRELATION_TTL_SECONDS)
+                store.set(
+                    namespace,
+                    key,
+                    value.value,
+                    value.ttl,
+                    cap=value.cap,
+                    **({"only_if_absent": True} if value.only_if_absent else {}),
+                )
     finally:
         _pending.reset(token)
 
 
 class SharedMapping(MutableMapping[str, Any]):
-    def __init__(self, namespace: str):
+    def __init__(
+        self,
+        namespace: str,
+        *,
+        ttl: float = CORRELATION_TTL_SECONDS,
+        cap: int | None = None,
+    ):
         self.namespace = namespace
+        self.ttl = ttl
+        self.cap = cap
 
     def __getitem__(self, key: str) -> Any:
         pending = _pending.get()
         state_key = (self.namespace, key)
         value = (
-            pending[state_key]
+            (
+                pending[state_key].value
+                if pending[state_key] is not _DELETED
+                else _DELETED
+            )
             if pending is not None and state_key in pending
             else get_shared_state().get(self.namespace, key)
         )
@@ -575,9 +636,42 @@ class SharedMapping(MutableMapping[str, Any]):
     def __setitem__(self, key: str, value: Any) -> None:
         pending = _pending.get()
         if pending is not None:
-            pending[self.namespace, key] = deepcopy(value)
+            pending[self.namespace, key] = _MappingUpdate(
+                deepcopy(value), self.ttl, self.cap
+            )
         else:
-            get_shared_state().set(self.namespace, key, value, CORRELATION_TTL_SECONDS)
+            get_shared_state().set(
+                self.namespace,
+                key,
+                value,
+                self.ttl,
+                cap=self.cap,
+            )
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        pending = _pending.get()
+        if pending is not None:
+            try:
+                return self[key]
+            except KeyError:
+                # A staged delete makes the key absent, so write unconditionally.
+                pending[self.namespace, key] = _MappingUpdate(
+                    deepcopy(default),
+                    self.ttl,
+                    self.cap,
+                    only_if_absent=pending.get((self.namespace, key)) is not _DELETED,
+                )
+                return deepcopy(default)
+        return deepcopy(
+            get_shared_state().set(
+                self.namespace,
+                key,
+                default,
+                self.ttl,
+                cap=self.cap,
+                only_if_absent=True,
+            )
+        )
 
     def __delitem__(self, key: str) -> None:
         pending = _pending.get()

@@ -954,44 +954,6 @@ def test_sessions_api_calls_still_get_json(spa_api, monkeypatch):
         assert response.status_code == 401
 
 
-def test_pricing_navigation_serves_the_page(spa_api, monkeypatch):
-    """/pricing is the old pricing page path and the pricing API: opening it in
-    a browser loads the SPA (which redirects to Settings), fetches get JSON."""
-    api_module = spa_api
-
-    async def no_live_costs():
-        return {}, {}, {}
-
-    monkeypatch.setattr(api_module, "load_model_price_overrides", lambda **kw: {})
-    monkeypatch.setattr(api_module, "_resolve_live_cost_maps", no_live_costs)
-    client = TestClient(api_module.app)
-
-    for headers in (_NAVIGATION, {"accept": "text/html"}):
-        response = client.get("/pricing", headers=headers)
-        assert response.status_code == 200
-        assert response.text == api_module._index_html.read_text()
-        assert "Sec-Fetch-Mode" in response.headers["vary"]
-
-    for headers in ({}, {"accept": "*/*", "sec-fetch-mode": "cors"}):
-        response = client.get("/pricing", headers=headers)
-        assert response.status_code == 200
-        assert response.json()["models"] == []
-        assert "Sec-Fetch-Mode" in response.headers["vary"]
-
-    # Only exactly /pricing: its sub-routes stay API-only.
-    for path in ("/pricing/overrides", "/pricing/gpt-4o"):
-        response = client.get(path, headers=_NAVIGATION)
-        assert "application/json" in response.headers["content-type"], path
-
-    monkeypatch.setitem(
-        api_module.CONFIG, "auth", {"provider": "google", "allowlist": []}
-    )
-    assert client.get("/pricing", headers=_NAVIGATION).status_code == 200
-    response = client.get("/pricing", headers={"accept": "application/json"})
-    assert response.status_code == 401
-    assert response.json() == api_module.AUTH_GATE_LOGIN_REQUIRED
-
-
 def test_spa_deep_links_do_not_hijack_api_routes(api_module, monkeypatch):
     """SPA middleware must not rewrite API routes to index.html."""
     monkeypatch.setattr(api_module, "fetch_recent_usage", lambda **kwargs: [])

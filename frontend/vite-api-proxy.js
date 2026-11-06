@@ -4,7 +4,7 @@ import { resolveApiUrl } from './vite-api-url.js'
 
 // SPA pages that share their path with an API route (mirrors
 // _SPA_API_SHARED_PAGES in src/api.py): a browser navigation gets the page.
-const SHARED_PAGES = new Set(['/sessions', '/pricing'])
+const SHARED_PAGES = new Set(['/sessions'])
 
 export function isPageNavigation(method = 'GET', headers = {}) {
   if (method !== 'GET') return false

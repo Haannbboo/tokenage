@@ -48,15 +48,6 @@ test('shouldProxyApiRequest matches config, usage and session routes', () => {
   assert.equal(shouldProxyApiRequest('/assets/index.js'), false)
 })
 
-test('a browser navigation to /pricing gets the page, its API calls do not', () => {
-  const navigate = { method: 'GET', headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html,*/*;q=0.8' } }
-  assert.equal(shouldProxyApiRequest('/pricing', navigate), false)
-  assert.equal(shouldProxyApiRequest('/pricing', { method: 'GET', headers: { accept: 'text/html' } }), false)
-  assert.equal(shouldProxyApiRequest('/pricing', { method: 'GET', headers: { 'sec-fetch-mode': 'cors', accept: '*/*' } }), true)
-  assert.equal(shouldProxyApiRequest('/pricing?source=user&limit=50', { method: 'GET', headers: { accept: 'application/json' } }), true)
-  assert.equal(shouldProxyApiRequest('/pricing/overrides', navigate), true)
-})
-
 test('a browser navigation to /sessions gets the page, its API calls do not', () => {
   const navigate = { method: 'GET', headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html,*/*;q=0.8' } }
   assert.equal(shouldProxyApiRequest('/sessions', navigate), false)

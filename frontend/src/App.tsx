@@ -24,7 +24,6 @@ function AppLayout() {
         <Route path="/dashboard" element={<DashboardPage onNavigateToLogs={handleNavigateToLogs} />} />
         <Route path="/sessions" element={<SessionsPage onNavigateToLogs={handleNavigateToLogs} />} />
         <Route path="/logs" element={<LogsPage />} />
-        <Route path="/pricing" element={<Navigate to="/settings?section=pricing" replace />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

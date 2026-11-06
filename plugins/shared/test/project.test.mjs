@@ -135,8 +135,11 @@ test("TOKENAGE_HOME expands a leading tilde like the Python client", async () =>
     assert.equal(await reportProject("opencode", "tilde-home", directory), true)
     assert.equal((await readdir(join(fakeHome, "x", "spool"))).filter(n => n.endsWith(".json")).length, 1)
   } finally {
-    process.env.HOME = saved.HOME
-    process.env.TOKENAGE_HOME = saved.TOKENAGE_HOME
+    // Assigning undefined would store the string "undefined".
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
     await rm(fakeHome, { recursive: true, force: true })
   }
 })

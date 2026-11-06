@@ -1225,7 +1225,7 @@ _SPA_SERVED = _frontend_dist.is_dir()
 
 # SPA pages whose path is also an API route. The browser opening the page
 # gets index.html; fetches and CLI calls to the same path still get the API.
-_SPA_API_SHARED_PAGES = ("/sessions",)
+_SPA_API_SHARED_PAGES = ("/sessions", "/pricing")
 
 
 def _is_page_navigation(request: Request) -> bool:

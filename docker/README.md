@@ -133,6 +133,11 @@ set the public HTTPS origin in `server.base_url` instead. Cookie-authenticated
 writes (logout, revoke, pricing edits) need `server.base_url` or a proxy that
 preserves Host; otherwise they return 403.
 
+`rate_limits.signin_per_minute` (default 0, off) caps anonymous sign-in starts
+per client IP. Keep it at 0 unless the API sees real client IPs, that is,
+`FORWARDED_ALLOW_IPS` trusts a proxy that sets them; otherwise every caller
+shares the proxy's budget.
+
 For an existing Postgres:
 
 - `localhost` means this container. Use `host.docker.internal` for the host

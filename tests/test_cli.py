@@ -89,7 +89,9 @@ def test_run_token_command_prints_the_token_once(cli_module, isolated_home, caps
 
 def test_main_without_a_command_prints_usage(cli_module, isolated_home, capsys):
     assert cli_module.main([]) == 2
-    assert "usage: tokenage server token create --email" in capsys.readouterr().err
+    assert (
+        "usage: tokenage server token create|revoke --email" in capsys.readouterr().err
+    )
 
 
 # ------------------------------------------------------------ launcher wiring
@@ -537,3 +539,86 @@ def test_server_dispatch_consumes_no_banner_without_changing_other_arguments(tmp
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout == expected
+
+
+def test_token_revoke_revokes_only_the_named_users_tokens(cli_module, capsys):
+    from src.auth.tokens import mint_token, resolve_token
+    from src.database import init_db
+
+    init_db()
+    revoked = [
+        mint_token("a@example.com", kind=kind)[0] for kind in ("cli", "web", "ingest")
+    ]
+    retained = [
+        mint_token("b@example.com", kind=kind)[0] for kind in ("cli", "web", "ingest")
+    ]
+    assert cli_module.main(["token", "revoke", "--email", " A@Example.COM "]) == 0
+    assert "Revoked 3 tokens for a@example.com." in capsys.readouterr().out
+    assert all(resolve_token(token) is None for token in revoked)
+    assert all(resolve_token(token) is not None for token in retained)
+    assert cli_module.main(["token", "revoke", "--email", "a@example.com"]) == 0
+    assert "Revoked 0 tokens" in capsys.readouterr().out
+    assert cli_module.main(["token", "revoke", "--email", "missing@example.com"]) == 0
+    assert cli_module.main(["token", "revoke", "--email", " "]) == 2
+
+
+def test_login_link_refused_when_revoke_lands_before_the_mint(
+    cli_module, api_module, fresh_db, capsys, monkeypatch
+):
+    """The link's epoch is checked in the mint transaction, not before it."""
+    from fastapi.testclient import TestClient
+
+    from src.auth import tokens
+
+    assert cli_module.main(["login-link"]) == 0
+    code = capsys.readouterr().out.strip().split("code=", 1)[1]
+
+    original = tokens.get_or_create_user
+
+    def revoke_mid_mint(email, db_path=None):
+        user = original(email, db_path)
+        if sys._getframe(1).f_code.co_name == "mint_token":
+            tokens.revoke_user_tokens(email, db_path)
+        return user
+
+    monkeypatch.setattr(tokens, "get_or_create_user", revoke_mid_mint)
+    client = TestClient(api_module.app)
+    response = client.get(f"/auth/local/login?code={code}", follow_redirects=False)
+    assert response.status_code == 400
+    assert tokens.list_user_tokens(tokens.get_local_owner().id) == []
+
+
+def test_token_revoke_help(cli_module, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli_module.main(["token", "revoke", "--help"])
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--email" in help_text
+    assert "owner@localhost" in help_text
+
+
+def test_token_revoke_invalidates_a_pending_login_link(
+    cli_module, api_module, fresh_db, capsys
+):
+    """A link issued before the revoke must not mint a fresh owner session."""
+    from fastapi.testclient import TestClient
+
+    assert cli_module.main(["login-link"]) == 0
+    code = capsys.readouterr().out.strip().split("code=", 1)[1]
+
+    assert cli_module.main(["token", "revoke", "--email", "owner@localhost"]) == 0
+    capsys.readouterr()
+
+    client = TestClient(api_module.app)
+    response = client.get(f"/auth/local/login?code={code}", follow_redirects=False)
+    assert response.status_code == 400
+
+    # A link issued after the revoke still works.
+    assert cli_module.main(["login-link"]) == 0
+    fresh = capsys.readouterr().out.strip().split("code=", 1)[1]
+    assert (
+        client.get(
+            f"/auth/local/login?code={fresh}", follow_redirects=False
+        ).status_code
+        == 302
+    )

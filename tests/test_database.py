@@ -4973,6 +4973,59 @@ def test_migrate_database_adds_user_picture_idempotently(fresh_db):
     assert migrate(fresh_db.db_path) == []
 
 
+def test_migrate_database_adds_user_token_epoch_idempotently(fresh_db):
+    from sqlalchemy import text
+
+    engine = fresh_db.database_module.get_engine(fresh_db.db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO users (id, email, created_at) VALUES ('old', 'old@example.com', 1)"
+            )
+        )
+        conn.execute(text("ALTER TABLE users DROP COLUMN token_epoch"))
+    migrate = fresh_db.schema_migrations_module.migrate_database
+    assert "users.token_epoch" in migrate(fresh_db.db_path)
+    with engine.connect() as conn:
+        assert (
+            conn.execute(
+                text("SELECT token_epoch FROM users WHERE id = 'old'")
+            ).scalar_one()
+            == 0
+        )
+    assert migrate(fresh_db.db_path) == []
+
+
+def test_migrate_database_epoch_lock_timeout_asks_for_a_retry(fresh_db):
+    """A blocked ALTER must fail fast with a retry hint, not stall the server."""
+    from sqlalchemy import event, inspect, text
+    from sqlalchemy.exc import OperationalError
+
+    class _LockTimeout(Exception):
+        pgcode = "55P03"  # PostgreSQL lock_timeout
+
+    engine = fresh_db.database_module.get_engine(fresh_db.db_path)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE users DROP COLUMN token_epoch"))
+
+    def timeout(conn, cursor, statement, parameters, context, executemany):
+        if "ADD COLUMN" in statement and "token_epoch" in statement:
+            raise OperationalError(statement, parameters, _LockTimeout())
+
+    migrate = fresh_db.schema_migrations_module.migrate_database
+    event.listen(engine, "before_cursor_execute", timeout)
+    try:
+        with pytest.raises(RuntimeError, match="lock timeout.*2s.*retry"):
+            migrate(fresh_db.db_path)
+        # Nothing was committed: the column is still missing.
+        assert not any(
+            c["name"] == "token_epoch" for c in inspect(engine).get_columns("users")
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", timeout)
+        migrate(fresh_db.db_path)  # restore the schema for the next test
+
+
 def test_migrate_database_creates_missing_model_indexes(fresh_db):
     schema_migrations = fresh_db.schema_migrations_module
     database_module = fresh_db.database_module

@@ -40,7 +40,14 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     auth.setdefault("provider", "local")
     if auth["provider"] not in ("local", "google"):
         raise ValueError("auth.provider must be 'local' or 'google'")
-    auth.setdefault("allowlist", [])
+    # `allowlist:` with no value (null) means no allowlist: any verified account.
+    if auth.get("allowlist") is None:
+        auth["allowlist"] = []
+    allowlist = auth["allowlist"]
+    if not isinstance(allowlist, list) or not all(
+        isinstance(entry, str) for entry in allowlist
+    ):
+        raise ValueError("auth.allowlist must be a list of email addresses")
     # Google OAuth credentials: config.yaml by default (0600), with TOKENAGE_AUTH__GOOGLE_CLIENT_* overriding when
     # set — so a deployment can still inject them without touching the file.
     for key in ("google_client_id", "google_client_secret"):
@@ -59,6 +66,17 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     rate_limits = config.setdefault("rate_limits", {})
     rate_limits.setdefault("ingest_per_minute", 1000)  # per token: OTLP + usage
     rate_limits.setdefault("api_per_minute", 1200)  # per user: authenticated API
+    # signin: per client IP (IPv6 by /64), anonymous Google/CLI sign-in starts
+    # and login links. Needs real client IPs (FORWARDED_ALLOW_IPS) before
+    # enabling, or every caller behind the proxy shares one budget.
+    # cli_approve: per signed-in user, CLI login approvals (each stores a
+    # pending code). 0 = off for both.
+    for key, default in (("signin_per_minute", 0), ("cli_approve_per_minute", 10)):
+        if rate_limits.get(key) is None:  # unset or left empty
+            rate_limits[key] = default
+        value = rate_limits[key]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"rate_limits.{key} must be a non-negative integer")
 
     if "url" not in db:
         db.setdefault("path", os.path.join(get_tracker_home(), "usage.db"))

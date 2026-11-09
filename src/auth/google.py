@@ -1,14 +1,19 @@
 """Google OAuth web login flow (docs/design/specs/pr2-google-oauth-web-login.md).
 
 authlib handles the OAuth2/OIDC handshake (authorization URL construction,
-code exchange, ID-token verification). OAuth ``state`` values are tracked
-server-side in the shared-state store —
-there is no client-side signed session.
+code exchange, ID-token verification). A pending OAuth ``state`` and its data
+travel in a signed, expiring HttpOnly cookie, so an anonymous sign-in start
+allocates nothing server-side that another start could evict.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -21,13 +26,16 @@ from src.shared_state import get_shared_state
 
 logger = logging.getLogger(__name__)
 
-OAUTH_STATE_NAMESPACE = "oauth-state"
 STATE_TTL_SECONDS = 5 * 60
 MAX_PENDING_STATES = 512
 
 # One-time CLI and browser login codes share the same store and TTL.
 CLI_CODE_NAMESPACE = "cli-codes"
 CLI_CODE_TTL_SECONDS = 300
+# Codes are minted only by signed-in approvals (rate_limits.cli_approve_per_minute
+# per user) and completed Google sign-ins. Keep the cap small: the SQLite store
+# counts the namespace inside its write lock on every insert.
+MAX_PENDING_CLI_CODES = 4096
 LOGIN_CODE_NAMESPACE = "login-codes"
 
 # Google endpoints are pinned (no discovery-document fetch at runtime); the
@@ -107,20 +115,48 @@ async def verify_id_token(token: dict[str, Any], nonce: str) -> dict[str, Any]:
     return dict(claims)
 
 
-def store_oauth_state(state: str, data: dict[str, Any]) -> None:
-    """Persist a single-use OAuth state for five minutes."""
-    _store_entry(
-        OAUTH_STATE_NAMESPACE, state, data, STATE_TTL_SECONDS, MAX_PENDING_STATES
-    )
+def _state_mac(payload: str) -> str:
+    credentials = google_credentials()
+    if credentials is None:
+        raise OAuthFlowError("google oauth is not configured")
+    # The client secret is shared by every node and never leaves the server.
+    key = hashlib.sha256(b"tokenage-oauth-state\0" + credentials[1].encode()).digest()
+    return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
 
 
-def pop_oauth_state(state: str) -> dict[str, Any] | None:
-    return _pop_entry(OAUTH_STATE_NAMESPACE, state)
+def seal_oauth_state(state: str, data: dict[str, Any]) -> str:
+    """Return the state cookie value: `data` signed and valid for five minutes."""
+    body = {**data, "state": state, "exp": time.time() + STATE_TTL_SECONDS}
+    payload = base64.urlsafe_b64encode(json.dumps(body).encode()).decode()
+    payload = payload.rstrip("=")
+    return f"{payload}.{_state_mac(payload)}"
+
+
+def open_oauth_state(cookie: str | None, state: str) -> dict[str, Any] | None:
+    """Return the data sealed for `state`, or None if forged, expired or another
+    browser's. Replays are harmless: Google's authorization code is single-use."""
+    payload, _, mac = (cookie or "").partition(".")
+    try:
+        if not state or not hmac.compare_digest(
+            mac.encode(), _state_mac(payload).encode()
+        ):
+            return None
+        body = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (OAuthFlowError, ValueError):
+        return None
+    if (
+        not isinstance(body, dict)
+        or not isinstance(body.get("exp"), (int, float))
+        or body.pop("exp") <= time.time()
+        or not hmac.compare_digest(str(body.pop("state", "")).encode(), state.encode())
+    ):
+        return None
+    return body
 
 
 def store_cli_code(code: str, data: dict[str, Any]) -> None:
     _store_entry(
-        CLI_CODE_NAMESPACE, code, data, CLI_CODE_TTL_SECONDS, MAX_PENDING_STATES
+        CLI_CODE_NAMESPACE, code, data, CLI_CODE_TTL_SECONDS, MAX_PENDING_CLI_CODES
     )
 
 
@@ -128,9 +164,17 @@ def pop_cli_code(code: str) -> dict[str, Any] | None:
     return _pop_entry(CLI_CODE_NAMESPACE, code)
 
 
-def store_login_code(code: str) -> None:
+def store_login_code(code: str, token_epoch: int = 0) -> None:
+    """Store a one-time login link, tagged with the owner's token epoch.
+
+    The epoch makes a later revoke kill the link (checked in auth_local_login).
+    """
     _store_entry(
-        LOGIN_CODE_NAMESPACE, code, {}, CLI_CODE_TTL_SECONDS, MAX_PENDING_STATES
+        LOGIN_CODE_NAMESPACE,
+        code,
+        {"token_epoch": token_epoch},
+        CLI_CODE_TTL_SECONDS,
+        MAX_PENDING_STATES,
     )
 
 

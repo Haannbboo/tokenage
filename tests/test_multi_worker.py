@@ -68,16 +68,13 @@ for line in sys.stdin:
             consumer = Consumer()
         result = consumer.drain()
     elif action == "state-store":
-        google.store_oauth_state("state", {"nonce": "test"})
         google.store_cli_code("cli", {"challenge": "test"})
         google.store_login_code("login")
-        for namespace in (google.OAUTH_STATE_NAMESPACE, google.CLI_CODE_NAMESPACE,
-                          google.LOGIN_CODE_NAMESPACE):
+        for namespace in (google.CLI_CODE_NAMESPACE, google.LOGIN_CODE_NAMESPACE):
             get_shared_state().set(namespace, "expired", {}, -1)
         result = True
     elif action == "state-pop":
         result = {
-            "oauth": [google.pop_oauth_state("state"), google.pop_oauth_state("expired")],
             "cli": [google.pop_cli_code("cli"), google.pop_cli_code("expired")],
             "login": [google.pop_login_code("login"), google.pop_login_code("expired")],
         }
@@ -314,9 +311,8 @@ def test_signin_state_single_use_and_expiry_across_processes(
             child.send("state-pop")
         results = [child.receive() for child in children[1:]]
         for name, expected in (
-            ("oauth", {"nonce": "test"}),
             ("cli", {"challenge": "test"}),
-            ("login", {}),
+            ("login", {"token_epoch": 0}),
         ):
             assert sum(result[name][0] == expected for result in results) == 1
             assert (
@@ -324,7 +320,7 @@ def test_signin_state_single_use_and_expiry_across_processes(
             )
             assert all(result[name][1] is None for result in results)
         assert children[0].call("state-pop") == {
-            name: [None, None] for name in ("oauth", "cli", "login")
+            name: [None, None] for name in ("cli", "login")
         }
 
 

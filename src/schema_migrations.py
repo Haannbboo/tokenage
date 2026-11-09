@@ -124,6 +124,14 @@ def _ensure_postgres_usage_cursor_index(engine) -> bool:
         return True
 
 
+def _is_lock_timeout(exc: DBAPIError) -> bool:
+    """True for the PostgreSQL lock_timeout error (SQLSTATE 55P03)."""
+    return (
+        getattr(exc.orig, "pgcode", None) == "55P03"
+        or getattr(exc.orig, "sqlstate", None) == "55P03"
+    )
+
+
 def _drop_evaluator_schema(engine) -> list[str]:
     """Retire evaluator storage before any tenant/device backfill touches it.
 
@@ -158,10 +166,7 @@ def _drop_evaluator_schema(engine) -> list[str]:
                     )
                     applied.append(f"sessions.drop_{name}")
     except DBAPIError as exc:
-        if (
-            getattr(exc.orig, "pgcode", None) == "55P03"
-            or getattr(exc.orig, "sqlstate", None) == "55P03"
-        ):
+        if _is_lock_timeout(exc):
             raise RuntimeError(
                 "Evaluator schema removal hit the PostgreSQL lock timeout (2s); "
                 "no evaluator drops were committed. Release the blocking transaction "
@@ -210,6 +215,30 @@ def migrate_database(db_path: str | None = None) -> list[str]:
                 text(f"ALTER TABLE users ADD COLUMN {guard}picture VARCHAR")
             )
         applied.append("users.picture")
+        insp = inspect(engine)
+    if not any(c["name"] == "token_epoch" for c in insp.get_columns("users")):
+        try:
+            with engine.begin() as connection:
+                if engine.dialect.name == "postgresql":
+                    # Bound the wait for ACCESS EXCLUSIVE: a long transaction on
+                    # users would otherwise queue every request that joins it.
+                    connection.execute(text("SET LOCAL lock_timeout = '2s'"))
+                guard = "IF NOT EXISTS " if engine.dialect.name == "postgresql" else ""
+                connection.execute(
+                    text(
+                        f"ALTER TABLE users ADD COLUMN {guard}token_epoch INTEGER "
+                        "NOT NULL DEFAULT 0"
+                    )
+                )
+        except DBAPIError as exc:
+            if _is_lock_timeout(exc):
+                raise RuntimeError(
+                    "Adding users.token_epoch hit the PostgreSQL lock timeout (2s); "
+                    "this release needs the column, so nothing was committed. "
+                    "Release the blocking transaction and retry the migration."
+                ) from exc
+            raise
+        applied.append("users.token_epoch")
         insp = inspect(engine)
 
     missing_device_id = [

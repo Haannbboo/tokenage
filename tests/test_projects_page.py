@@ -215,13 +215,30 @@ def test_bad_json_and_top_five_and_ten(projects_api):
     assert data["recent_sessions"][0]["session_id"] == "recent-11"
 
 
-def test_numeric_json_map_skips_huge_ints():
+def test_numeric_json_map_skips_huge_ints(projects_api):
+    import sys
+
+    from src.database.models import SessionRecord
     from src.database.sessions import _numeric_json_map
 
-    assert _numeric_json_map(f'{{"a": 1{"0" * 400}, "b": 2}}') == {
-        "a": 10**400,
+    top = int(sys.float_info.max)
+    assert _numeric_json_map(f'{{"a": 1{"0" * 400}, "b": 2, "c": {top}}}') == {
         "b": 2,
+        "c": top,
     }
+    # Detail sums maps across sessions; a huge int plus a float used to overflow.
+    client, fresh_db = projects_api
+    with Session(fresh_db.database_module.get_engine()) as db:
+        db.get(
+            SessionRecord, "a"
+        ).models_json = f'{{"model-a": 1{"0" * 400}, "model-b": 1.5}}'
+        db.get(SessionRecord, "b").models_json = '{"model-a": 0.5, "model-b": 2}'
+        db.commit()
+    response = client.get(
+        "/sessions/projects/detail", params={**WINDOW, "name": "orchard"}
+    )
+    assert response.status_code == 200
+    assert response.json()["models"] == {"model-b": 3.5, "model-a": 0.5}
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,7 @@ import calendar
 import json
 import logging
 import math
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -800,8 +801,11 @@ def _numeric_json_map(payload: str | None) -> dict[str, float]:
     return {
         key: value
         for key, value in data.items()
-        # Ints are always finite; math.isfinite overflows on huge ones.
-        if (type(value) is int or (type(value) is float and math.isfinite(value)))
+        # Ints above the float range overflow when summed with floats.
+        if (
+            (type(value) is int and value <= sys.float_info.max)
+            or (type(value) is float and math.isfinite(value))
+        )
         and value >= 0
     }
 
@@ -1102,7 +1106,14 @@ def aggregate_session_context(
             .order_by(bucketed.c.request)
         ).all()
     if not rows:
-        return {"points": [], "peak_tokens": 0, "request_count": 0}
+        # Every request failed (or none exist): no points, but the real count.
+        with get_engine(db_path).connect() as connection:
+            count = connection.execute(
+                select(func.count()).where(
+                    Usage.session_id == session_id, Usage.user_id == user_id
+                )
+            ).scalar_one()
+        return {"points": [], "peak_tokens": 0, "request_count": count}
     # Each point is the bucket's peak request, so its number, id and details match its value.
     points = [
         {

@@ -36,6 +36,8 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # deliberately refuses to create it.
     (home / ".codex").mkdir()
     (home / ".claude").mkdir()
+    # Logout revocation is covered in test_client_auth; keep these offline.
+    monkeypatch.setattr(auth, "_revoke_logout_device", lambda credentials: False)
     return home
 
 

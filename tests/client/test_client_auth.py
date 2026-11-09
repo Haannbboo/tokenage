@@ -22,6 +22,7 @@ from protocol import CURRENT_GENERATION
 EXCHANGE_PAYLOAD = {
     "user": {"id": "u1", "email": "a@example.com", "name": "Alice"},
     "device_name": "testhost",
+    "device_id": "device-testhost",
     "cli_token": "tokenage_cli abcdef",
     "ingest_token": "tokenage_ingest abcdef",
     "otlp": {
@@ -219,6 +220,7 @@ def test_login_writes_credentials_0600(monkeypatch, capsys):
     assert data["server_url"] == "https://srv.example"
     assert data["email"] == "a@example.com"
     assert data["device_name"] == "testhost"
+    assert data["device_id"] == EXCHANGE_PAYLOAD["device_id"]
     assert data["cli_token"] == EXCHANGE_PAYLOAD["cli_token"]
     assert data["ingest_token"] == EXCHANGE_PAYLOAD["ingest_token"]
     assert data["otlp_logs_endpoint"] == EXCHANGE_PAYLOAD["otlp"]["logs_endpoint"]
@@ -552,6 +554,201 @@ def test_logout_keep_agents_names_the_collector_not_the_api(capsys):
     warning = capsys.readouterr().err
     assert "https://collector.example/v1/logs" in warning
     assert "https://api.example" not in warning
+
+
+@pytest.mark.parametrize("keep_agents", [False, True])
+@pytest.mark.parametrize("status", [204, 401, 404, 500, 503, 307])
+def test_logout_revokes_before_local_delete(
+    monkeypatch, capsys, caplog, keep_agents, status
+):
+    cli_token = "test-cli-secret-never-print"
+    ingest_token = "test-ingest-secret-never-print"
+    auth.save_credentials(
+        {
+            "server_url": "https://srv.example/",
+            "device_id": "device-one",
+            "cli_token": cli_token,
+            "ingest_token": ingest_token,
+        }
+    )
+    monkeypatch.setenv("TOKENAGE_SERVER", "https://other.example")
+    calls = []
+
+    def post(url, **kwargs):
+        assert paths.credentials_path().exists()
+        calls.append((url, kwargs))
+        return SimpleNamespace(status_code=status)
+
+    monkeypatch.setattr(auth.httpx, "post", post)
+    monkeypatch.setattr(setup, "disable_agents", lambda **kwargs: setup.DisableResult())
+    assert auth.logout(keep_agents=keep_agents) == 0
+    assert not paths.credentials_path().exists()
+    assert calls == [
+        (
+            "https://srv.example/auth/devices/device-one/revoke",
+            {
+                "headers": {"Authorization": f"Bearer {cli_token}"},
+                "timeout": auth._LOGOUT_TIMEOUT,
+                "follow_redirects": False,
+            },
+        )
+    ]
+    output = capsys.readouterr()
+    success = status in (204, 401)
+    assert ("may still be active" in output.err) is not success
+    if not success:
+        assert "Settings → Devices" in output.err
+    assert ("revoked on the server" in output.out) is success
+    assert ("stays listed" in output.out) is not success
+    if keep_agents:
+        assert ("will be rejected" in output.err) is success
+        assert ("may keep reporting" in output.err) is not success
+    for token in (cli_token, ingest_token):
+        assert token not in output.out + output.err + caplog.text
+
+
+@pytest.mark.parametrize("error", [httpx.ConnectError, httpx.ReadTimeout])
+def test_logout_offline_deletes_credentials_and_warns(
+    monkeypatch, capsys, caplog, error
+):
+    token = "test-cli-secret-never-print"
+    auth.save_credentials(
+        {"server_url": "https://srv.example", "device_id": "one", "cli_token": token}
+    )
+
+    def post(*args, **kwargs):
+        raise error(f"sensitive error containing {token}")
+
+    monkeypatch.setattr(auth.httpx, "post", post)
+    assert auth.logout(keep_agents=True) == 0
+    assert auth.load_credentials() is None
+    output = capsys.readouterr()
+    assert "may still be active" in output.err
+    assert "Settings → Devices" in output.err
+    assert "may keep reporting" in output.err
+    assert "will be rejected" not in output.err
+    assert token not in output.out + output.err + caplog.text
+
+
+@pytest.mark.parametrize("device_id", [None, "", "..", "a/b", 7])
+def test_logout_without_usable_device_id_looks_up_current_device(
+    monkeypatch, capsys, caplog, device_id
+):
+    token = "test-cli-secret-never-print"
+    credentials = {"server_url": "https://srv.example", "cli_token": token}
+    if device_id is not None:
+        credentials["device_id"] = device_id
+    auth.save_credentials(credentials)
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append(("GET", url, kwargs))
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "web_sessions": [{"id": "web-1", "current": False}],
+                "devices": [
+                    {"id": "other", "current": False},
+                    {"id": "device-current", "current": True},
+                ],
+            },
+        )
+
+    def post(url, **kwargs):
+        calls.append(("POST", url, kwargs))
+        return SimpleNamespace(status_code=204)
+
+    monkeypatch.setattr(auth.httpx, "get", get)
+    monkeypatch.setattr(auth.httpx, "post", post)
+    assert auth.logout(keep_agents=True) == 0
+    assert auth.load_credentials() is None
+    request = {
+        "headers": {"Authorization": f"Bearer {token}"},
+        "timeout": auth._LOGOUT_TIMEOUT,
+        "follow_redirects": False,
+    }
+    assert calls == [
+        ("GET", "https://srv.example/auth/devices", request),
+        ("POST", "https://srv.example/auth/devices/device-current/revoke", request),
+    ]
+    output = capsys.readouterr()
+    assert "may still be active" not in output.err
+    assert "will be rejected" in output.err
+    assert "revoked on the server" in output.out
+    assert token not in output.out + output.err + caplog.text
+
+
+@pytest.mark.parametrize(
+    "lookup",
+    [
+        SimpleNamespace(status_code=401, json=dict),
+        SimpleNamespace(status_code=307, json=dict),
+        SimpleNamespace(status_code=200, json=lambda: {"devices": []}),
+        SimpleNamespace(status_code=200, json=lambda: ["not", "an", "object"]),
+        SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "devices": [{"id": "a", "current": True}, {"id": "b", "current": True}]
+            },
+        ),
+        SimpleNamespace(
+            status_code=200, json=lambda: {"devices": [{"id": "../x", "current": True}]}
+        ),
+        SimpleNamespace(status_code=200, json=lambda: json.loads("not json")),
+        httpx.ConnectError,
+        httpx.ReadTimeout,
+    ],
+)
+def test_logout_lookup_failure_warns_and_deletes(monkeypatch, capsys, caplog, lookup):
+    token = "test-cli-secret-never-print"
+    auth.save_credentials({"server_url": "https://srv.example", "cli_token": token})
+
+    def get(*args, **kwargs):
+        if isinstance(lookup, type):
+            raise lookup(f"sensitive error containing {token}")
+        return lookup
+
+    def unexpected_post(*args, **kwargs):
+        pytest.fail("no device identified, so nothing may be revoked")
+
+    monkeypatch.setattr(auth.httpx, "get", get)
+    monkeypatch.setattr(auth.httpx, "post", unexpected_post)
+    assert auth.logout(keep_agents=True) == 0
+    assert auth.load_credentials() is None
+    output = capsys.readouterr()
+    assert "may still be active" in output.err
+    assert "Settings → Devices" in output.err
+    assert "may keep reporting" in output.err
+    assert "stays listed" in output.out
+    assert token not in output.out + output.err + caplog.text
+
+
+@pytest.mark.parametrize(
+    ("credentials", "reason"),
+    [
+        ({}, "lack a server URL or CLI token"),
+        ({"server_url": "https://srv.example"}, "lack a server URL or CLI token"),
+        (
+            {"server_url": "http://srv.example", "cli_token": "t", "device_id": "d"},
+            "stored server URL is invalid",
+        ),
+    ],
+)
+def test_logout_unusable_credentials_warn_without_request(
+    monkeypatch, capsys, credentials, reason
+):
+    auth.save_credentials(credentials)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("unusable credentials must not make a request")
+
+    monkeypatch.setattr(auth.httpx, "get", unexpected)
+    monkeypatch.setattr(auth.httpx, "post", unexpected)
+    assert auth.logout(keep_agents=True) == 0
+    assert auth.load_credentials() is None
+    warning = capsys.readouterr().err
+    assert reason in warning
+    assert "may keep reporting" in warning
 
 
 # --------------------------------------------------------- endpoint checking

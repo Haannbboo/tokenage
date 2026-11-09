@@ -788,6 +788,52 @@ def test_devices_revoke_unknown_id_is_404(api_module, monkeypatch, fresh_db):
     assert response.status_code == 404
 
 
+def test_device_self_revoke_without_origin_rejects_cli_and_ingest(
+    api_module, monkeypatch, fresh_db
+):
+    _enable_auth(monkeypatch)
+    from src.auth.tokens import mint_device_tokens, mint_token, resolve_token
+
+    _, user = mint_token("a@example.com", kind="web", db_path=fresh_db.db_path)
+    cli, ingest, device = mint_device_tokens(
+        user.id, "logout-installation", "laptop", db_path=fresh_db.db_path
+    )
+    client = TestClient(api_module.app)
+    report = {
+        "provider": "anthropic",
+        "model": "test-model",
+        "prompt_tokens": 1,
+        "completion_tokens": 1,
+        "endpoint": "/v1/messages",
+        "client_source": "claude-code",
+        "status": 200,
+    }
+    ingest_headers = {"x-tokenage-token": ingest}
+    assert (
+        client.post("/ingest/v1/usage", json=report, headers=ingest_headers).status_code
+        == 204
+    )
+    assert (
+        client.post(
+            f"/auth/devices/{device.id}/revoke",
+            headers={"Authorization": f"Bearer {cli}"},
+        ).status_code
+        == 204
+    )
+    assert resolve_token(cli, db_path=fresh_db.db_path) is None
+    assert resolve_token(ingest, db_path=fresh_db.db_path) is None
+    assert (
+        client.get(
+            "/auth/devices", headers={"Authorization": f"Bearer {cli}"}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post("/ingest/v1/usage", json=report, headers=ingest_headers).status_code
+        == 401
+    )
+
+
 # ---------------------------------------------------------------- database
 
 

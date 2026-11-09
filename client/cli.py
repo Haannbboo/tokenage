@@ -35,7 +35,7 @@ tokenage <command> [options]
 COMMANDS = """\
 commands:
   login [--server URL]      sign in to a server and configure detected agents
-  logout [--keep-agents]    remove this machine's credentials
+  logout [--keep-agents]    revoke this device and remove its credentials
   setup [--disable]         configure detected agents to report usage
   status [--json]           show this client's sign-in and agent configuration
   update [--check]          update the client
@@ -141,12 +141,12 @@ def _build_subcommand(name: str) -> argparse.ArgumentParser:
     if name == "logout":
         parser = argparse.ArgumentParser(
             prog=f"{PROG} logout",
-            description="Remove this machine's credentials.",
+            description="Revoke this device on the server and remove local credentials.",
         )
         parser.add_argument(
             "--keep-agents",
             action="store_true",
-            help="leave agent configuration in place (it will be rejected)",
+            help="leave agent configuration in place (rejected after device revocation)",
         )
         _add_banner_flag(parser)
         return parser

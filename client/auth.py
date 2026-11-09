@@ -346,6 +346,7 @@ def login(
                 "user_id": user.get("id"),
                 "email": user["email"],
                 "device_name": payload.get("device_name"),
+                "device_id": payload.get("device_id"),
                 "cli_token": payload["cli_token"],
                 "ingest_token": token,
                 "otlp_logs_endpoint": endpoint,
@@ -388,13 +389,87 @@ def login(
     return 0
 
 
+_DEVICE_ID = re.compile(r"[A-Za-z0-9_-]+")
+# ponytail: per-phase bound (connect 3s, read/write 5s); a server that accepts
+# and then hangs stalls logout ~5s per request, at most two requests.
+_LOGOUT_TIMEOUT = httpx.Timeout(5, connect=3)
+
+
+def _valid_device_id(value: Any) -> bool:
+    return isinstance(value, str) and _DEVICE_ID.fullmatch(value) is not None
+
+
+def _current_device_id(server: str, request: dict[str, Any]) -> str | None:
+    """The device the server says this CLI token belongs to, if exactly one."""
+    response = httpx.get(f"{server}/auth/devices", **request)
+    if response.status_code != 200:
+        return None
+    try:
+        devices = response.json().get("devices")
+    except (AttributeError, ValueError):
+        return None
+    if not isinstance(devices, list):
+        return None
+    current = [
+        device.get("id")
+        for device in devices
+        if isinstance(device, dict) and device.get("current") is True
+    ]
+    if len(current) == 1 and _valid_device_id(current[0]):
+        return current[0]
+    return None
+
+
+def _revocation_unconfirmed(reason: str) -> bool:
+    print(
+        f"  warning   device revocation could not be confirmed ({reason}); "
+        "the server-side device may still be active. Revoke it in Settings → Devices.",
+        file=sys.stderr,
+    )
+    return False
+
+
+def _revoke_logout_device(credentials: dict[str, Any]) -> bool:
+    """Best-effort revocation; never include credentials or server errors in output."""
+    server = credentials.get("server_url")
+    token = credentials.get("cli_token")
+    device_id = credentials.get("device_id")
+    if not (isinstance(server, str) and server and isinstance(token, str) and token):
+        return _revocation_unconfirmed(
+            "stored credentials lack a server URL or CLI token"
+        )
+    try:
+        server = normalize_server_url(server)
+    except ValueError:
+        return _revocation_unconfirmed("stored server URL is invalid")
+    request: dict[str, Any] = {
+        "headers": {"Authorization": f"Bearer {token}"},
+        "timeout": _LOGOUT_TIMEOUT,
+        "follow_redirects": False,
+    }
+    try:
+        if not _valid_device_id(device_id):
+            # Logins from before credentials stored device_id: ask the server.
+            device_id = _current_device_id(server, request)
+            if device_id is None:
+                return _revocation_unconfirmed("server did not identify this device")
+        response = httpx.post(f"{server}/auth/devices/{device_id}/revoke", **request)
+    except httpx.HTTPError:
+        return _revocation_unconfirmed("server unavailable or request timed out")
+    if response.status_code in (200, 204, 401):
+        return True
+    return _revocation_unconfirmed(f"server returned HTTP {response.status_code}")
+
+
 def logout(*, keep_agents: bool) -> int:
     from client.setup import disable_agents
 
-    previous = load_credentials() or {}
+    credentials = load_credentials()
+    previous = credentials or {}
     # Captured before the credentials go, so un-wiring knows which collector
     # these agent files were pointing at and leaves anyone else's alone.
     collector = previous.get("otlp_logs_endpoint")
+    revoked = credentials is not None and _revoke_logout_device(credentials)
     if not clear_credentials():
         print("Not signed in; nothing to remove.", file=sys.stderr)
         return 1
@@ -408,7 +483,11 @@ def logout(*, keep_agents: bool) -> int:
         print(
             "  warning   agents still point at the last configured collector"
             + (f" ({display_endpoint(endpoint)})" if endpoint else "")
-            + " and will be rejected",
+            + (
+                " and will be rejected"
+                if revoked
+                else " and may keep reporting until the device is revoked"
+            ),
             file=sys.stderr,
         )
     else:
@@ -424,6 +503,8 @@ def logout(*, keep_agents: bool) -> int:
             )
             return 1
     print(
-        "Signed out. The device stays listed in Settings → Devices until you remove it."
+        "Signed out. This device is revoked on the server."
+        if revoked
+        else "Signed out. The device stays listed in Settings → Devices until you remove it."
     )
     return 0

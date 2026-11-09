@@ -26,8 +26,12 @@ export function useProjectsData(project: string | null, dateRange: DateRangeOpti
   params.set('granularity', 'day')
   params.set('tz_offset', getTimezoneOffset(resolveTimezone(timezone)))
   const query = params.toString()
-  const list = useProjectRead<ProjectsResponse>(`/sessions/projects?${query}`, refreshTrigger, 'projects')
+  // Cache key: the filters, with the range name instead of `since`, which moves on every refresh.
+  const filters = new URLSearchParams(params)
+  filters.set('since', dateRange)
+  const key = filters.toString()
+  const list = useProjectRead<ProjectsResponse>(`/sessions/projects?${query}`, refreshTrigger, key)
   if (project !== null) params.set('name', project)
-  const detail = useProjectRead<ProjectDetail>(project === null ? null : `/sessions/projects/detail?${params}`, refreshTrigger, project)
+  const detail = useProjectRead<ProjectDetail>(project === null ? null : `/sessions/projects/detail?${params}`, refreshTrigger, project === null ? null : `${key}\n${project}`)
   return { list, detail }
 }

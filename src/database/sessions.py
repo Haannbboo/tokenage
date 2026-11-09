@@ -800,7 +800,9 @@ def _numeric_json_map(payload: str | None) -> dict[str, float]:
     return {
         key: value
         for key, value in data.items()
-        if type(value) in (int, float) and math.isfinite(value) and value >= 0
+        # Ints are always finite; math.isfinite overflows on huge ones.
+        if (type(value) is int or (type(value) is float and math.isfinite(value)))
+        and value >= 0
     }
 
 

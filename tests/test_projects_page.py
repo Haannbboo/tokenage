@@ -215,6 +215,15 @@ def test_bad_json_and_top_five_and_ten(projects_api):
     assert data["recent_sessions"][0]["session_id"] == "recent-11"
 
 
+def test_numeric_json_map_skips_huge_ints():
+    from src.database.sessions import _numeric_json_map
+
+    assert _numeric_json_map(f'{{"a": 1{"0" * 400}, "b": 2}}') == {
+        "a": 10**400,
+        "b": 2,
+    }
+
+
 @pytest.mark.parametrize(
     "params,status",
     [

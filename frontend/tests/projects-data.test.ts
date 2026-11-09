@@ -52,3 +52,16 @@ it('keeps list and detail data visible while refreshing and clears detail when c
   await waitFor(() => expect(view.result.current.detail.data?.key).toBe('two'))
   state.refreshTrigger = 0
 })
+
+it('drops the previous filters data and surfaces the error when the new filters fetch fails', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => (
+    url.includes('client_source=claude') ? { ok: false, json: async () => ({}) } : { ok: true, json: async () => ({ projects: [{ name: 'old' }] }) }
+  )))
+  const view = renderHook(() => useProjectsData(null, '30d'))
+  await waitFor(() => expect(view.result.current.list.data).not.toBeNull())
+  state.activeSource = 'claude'
+  view.rerender()
+  await waitFor(() => expect(view.result.current.list.error).toBe(true))
+  expect(view.result.current.list.data).toBeNull()
+  state.activeSource = 'codex'
+})

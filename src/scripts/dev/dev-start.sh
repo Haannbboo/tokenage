@@ -64,7 +64,7 @@ API_PORT="$(find_port)"
 VITE_PORT="$(find_port)"
 
 # --- Create ephemeral work dir and copy DB ---
-WORK_DIR="$(mktemp -d -t tokenage-dev-)"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tokenage-dev-XXXXXX")"
 DB_PATH="${WORK_DIR}/usage.db"
 DB_URL="sqlite:///${DB_PATH}"
 

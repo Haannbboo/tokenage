@@ -8,14 +8,14 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from protocol import MAX_SUPPORTED_GENERATION, MIN_SUPPORTED_GENERATION
@@ -65,6 +65,7 @@ from .database import (
     summarize_usage_window,
     upsert_model_price,
 )
+from .database.usage import _iso_to_micros
 from .ingest_queue import (
     TRANSIENT_DB_ERRORS,
     IngestQueueFull,
@@ -86,6 +87,22 @@ from .utils import client_commit, client_version, normalize_model_name
 logger = logging.getLogger(__name__)
 USAGE_QUERY_LIMIT_MAX = 1000
 LOCAL_CORS_ORIGIN_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$")
+
+
+def _check_date(value: str | None) -> str | None:
+    """Reject a since/until the queries cannot parse: a 422, not a 500."""
+    if value:  # the queries ignore an empty bound
+        try:
+            _iso_to_micros(value)
+        except (ValueError, OverflowError):
+            raise ValueError("must be an ISO-8601 date or datetime") from None
+    return value
+
+
+DateParam = Annotated[str | None, AfterValidator(_check_date)]
+TzOffset = Annotated[str, Query(pattern=r"^[+-](0[0-9]|1[0-4]):[0-5][0-9]$")]
+Granularity = Literal["day", "hour", "15m"]
+Dimension = Literal["model", "provider", "client_source", "device"]
 
 AUTH_GATE_LOGIN_REQUIRED = {"detail": "login required"}
 
@@ -362,8 +379,8 @@ async def get_usage(
     device_id: str | None = None,
     session_id: str | None = None,
     tool_name: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
 ):
     cursor = None
     if before is not None:
@@ -410,8 +427,8 @@ def get_usage_count(
     device_id: str | None = None,
     session_id: str | None = None,
     tool_name: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
 ):
     return {
         "total": count_usage(
@@ -436,8 +453,8 @@ def usage_high_watermark(request: Request):
 @app.get("/usage/sources")
 def usage_sources(
     request: Request,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
 ):
     return distinct_client_sources(
         user_id=_request_user_id(request), since=since, until=until
@@ -447,8 +464,8 @@ def usage_sources(
 @app.get("/usage/tools")
 def usage_tools(
     request: Request,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
 ):
     return distinct_tool_names(
         user_id=_request_user_id(request), since=since, until=until
@@ -460,8 +477,8 @@ def usage_run_summary(
     request: Request,
     after_ts: int = 0,
     until_ts: int | None = None,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
     client_source: str | None = None,
     device_id: str | None = None,
     session_id: str | None = None,
@@ -487,8 +504,8 @@ def usage_run_summary(
 @app.get("/usage/summary")
 def usage_summary(
     request: Request,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
@@ -508,8 +525,8 @@ def usage_summary(
 @app.get("/usage/by-source")
 def usage_by_source(
     request: Request,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
@@ -529,8 +546,8 @@ def usage_by_source(
 @app.get("/usage/by-tool")
 def usage_by_tool(
     request: Request,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
@@ -550,8 +567,8 @@ def usage_by_tool(
 @app.get("/usage/by-provider")
 def usage_by_provider(
     request: Request,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
@@ -596,14 +613,14 @@ def _validate_fine_window(granularity: str, since: str | None, until: str | None
 @app.get("/usage/daily")
 def usage_daily(
     request: Request,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
-    granularity: str = "day",
-    tz_offset: str = "+00:00",
+    granularity: Granularity = "day",
+    tz_offset: TzOffset = "+00:00",
 ):
     _validate_fine_window(granularity, since, until)
     return aggregate_usage_by_period(
@@ -622,15 +639,15 @@ def usage_daily(
 @app.get("/usage/daily-by-dimension")
 def usage_daily_by_dimension(
     request: Request,
-    dimension: str = "model",
-    since: str | None = None,
-    until: str | None = None,
+    dimension: Dimension = "model",
+    since: DateParam = None,
+    until: DateParam = None,
     provider: str | None = None,
     model: str | None = None,
     client_source: str | None = None,
     device_id: str | None = None,
-    granularity: str = "day",
-    tz_offset: str = "+00:00",
+    granularity: Granularity = "day",
+    tz_offset: TzOffset = "+00:00",
 ):
     _validate_fine_window(granularity, since, until)
     return aggregate_daily_by_dimension(
@@ -669,7 +686,7 @@ def _session_query_filters(
             model=_model_filter(request, model),
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 def _session_list_filters(
@@ -718,20 +735,12 @@ def get_sessions_summary(filters: SessionFilters = Depends(_session_query_filter
     return summarize_sessions(filters=filters)
 
 
-def _validate_session_bucketing(granularity: str, tz_offset: str) -> None:
-    if granularity not in {"day", "hour", "15m"}:
-        raise HTTPException(status_code=400, detail="Invalid granularity")
-    if not re.fullmatch(r"[+-](?:0[0-9]|1[0-4]):[0-5][0-9]", tz_offset):
-        raise HTTPException(status_code=400, detail="Invalid tz_offset")
-
-
 @app.get("/sessions/distribution")
 def get_sessions_distribution(
     filters: SessionFilters = Depends(_session_query_filters),
-    granularity: str = "day",
-    tz_offset: str = "+00:00",
+    granularity: Granularity = "day",
+    tz_offset: TzOffset = "+00:00",
 ):
-    _validate_session_bucketing(granularity, tz_offset)
     try:
         return aggregate_session_distribution(
             filters=filters, granularity=granularity, tz_offset=tz_offset
@@ -743,10 +752,9 @@ def get_sessions_distribution(
 @app.get("/sessions/projects")
 def get_session_projects(
     filters: SessionFilters = Depends(_session_query_filters),
-    granularity: str = "day",
-    tz_offset: str = "+00:00",
+    granularity: Granularity = "day",
+    tz_offset: TzOffset = "+00:00",
 ):
-    _validate_session_bucketing(granularity, tz_offset)
     try:
         return aggregate_session_projects(
             filters=filters, granularity=granularity, tz_offset=tz_offset
@@ -759,10 +767,9 @@ def get_session_projects(
 def get_session_project_detail(
     name: str = Query(..., min_length=1, max_length=100),
     filters: SessionFilters = Depends(_session_query_filters),
-    granularity: str = "day",
-    tz_offset: str = "+00:00",
+    granularity: Granularity = "day",
+    tz_offset: TzOffset = "+00:00",
 ):
-    _validate_session_bucketing(granularity, tz_offset)
     try:
         result = session_project_detail(name=name, filters=filters)
     except ValueError as exc:
@@ -1219,8 +1226,8 @@ async def reprice_estimated_usage(
     request: Request,
     provider: str | None = None,
     model: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
+    since: DateParam = None,
+    until: DateParam = None,
 ):
     """Reprice the caller's estimated (unbound) usage rows against current
     pricing, honoring the caller's overrides.

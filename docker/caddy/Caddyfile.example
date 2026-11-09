@@ -40,8 +40,9 @@
 		lb_try_interval 250ms
 		lb_retry_match expression false
 
-		fail_duration 10s
-		max_fails 1
+		# Active checks every 5s remove dead upstreams; dial failures already
+		# retry another upstream within lb_try_duration. Passive health is off:
+		# rejecting an oversized request body can look like an upstream failure.
 		health_uri /version
 		health_method GET
 		health_interval 5s

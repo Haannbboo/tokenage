@@ -98,9 +98,10 @@ Caddy resolves hostnames on each new connection. With upstream keepalive disable
 as in the example, replacing an upstream container needs no proxy reload, including
 for ingest POSTs. Active `GET /version` checks run every 5 seconds
 with a 2-second timeout; one failed check removes the node, one successful check restores
-it. Passive checks exclude a node for the full 10-second `fail_duration` after one
-failed request, even if active checks pass during that time. The
-example uses a 1-second dial timeout and a 60-second response header timeout.
+it. Passive health checks are disabled because an upstream rejecting an oversized
+request body can look like an upstream failure. Dial failures already retry another
+upstream within `lb_try_duration`. The example uses a 1-second dial timeout and a
+60-second response header timeout.
 Responses flush immediately, including streams.
 
 Retries wait up to 5 seconds for an available node. In Caddy 2.11.7, dial failures

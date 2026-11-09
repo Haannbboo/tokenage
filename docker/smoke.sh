@@ -151,11 +151,10 @@ for directive in (
     "dial_timeout 1s",
     "response_header_timeout 60s",
     "lb_policy least_conn",
-    "fail_duration 10s",
-    "max_fails 1",
     "flush_interval -1",
 ):
     assert directive in active, f"Missing required directive: {directive}"
+assert "fail_duration" not in active and "max_fails" not in active, "Passive health checks must stay disabled"
 assert "trusted_proxies" not in active
 PYCONFIG
 "${compose[@]}" --profile caddy up -d caddy
@@ -194,6 +193,13 @@ for attempt in 1 2 3 4 5; do
 done
 rm -f "$scratch/oversized.json"
 echo 'PASS: Caddy rejects ingest bodies larger than 10 MiB'
+# An oversized request must leave the upstream available for the next request.
+status=$(curl --max-time 5 --silent --show-error --output /dev/null --write-out '%{http_code}' "$endpoint/version")
+if [ "$status" != 200 ]; then
+    echo "FAIL: /version after oversized body got HTTP $status" >&2
+    exit 1
+fi
+echo 'PASS: upstream remains available after oversized body'
 # Installer origin is operator-configured, never taken from request headers.
 curl --max-time 5 --fail --silent -H 'Host: other.example.test' "$endpoint/install.sh" |
     python3 -c "import sys; assert 'TOKENAGE_INSTALL_SERVER=https://smoke.example.test\n' in sys.stdin.read()"

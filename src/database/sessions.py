@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, case, func, select, text, update
+from sqlalchemy import and_, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -1057,6 +1057,7 @@ def aggregate_session_context(
             Usage.model.label("model"),
             Usage.total_cost_usd.label("cost"),
             Usage.latency_ms.label("latency_ms"),
+            Usage.status.label("status"),
             (
                 func.coalesce(Usage.prompt_tokens, 0)
                 + func.coalesce(Usage.cache_creation_tokens, 0)
@@ -1070,15 +1071,21 @@ def aggregate_session_context(
     # Width comes from the same snapshot as the numbering, so a concurrent
     # insert cannot add a 201st bucket.
     width = (numbered.c.total + MAX_CONTEXT_POINTS - 1) // MAX_CONTEXT_POINTS
-    bucketed = select(
-        numbered,
-        func.row_number()
-        .over(
-            partition_by=(numbered.c.request - 1) // width,
-            order_by=(numbered.c.context.desc(), numbered.c.request),
+    # Failed requests (e.g. HTTP 500) record no prompt tokens; drop them before
+    # ranking so they neither plot as 0 nor hide a bucket's successful peak.
+    bucketed = (
+        select(
+            numbered,
+            func.row_number()
+            .over(
+                partition_by=(numbered.c.request - 1) // width,
+                order_by=(numbered.c.context.desc(), numbered.c.request),
+            )
+            .label("rank"),
         )
-        .label("rank"),
-    ).subquery()
+        .where(or_(numbered.c.status.is_(None), numbered.c.status < 400))
+        .subquery()
+    )
     with get_engine(db_path).connect() as connection:
         rows = connection.execute(
             select(

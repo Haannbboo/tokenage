@@ -637,6 +637,7 @@ def test_daily_by_dimension_endpoint_passes_all_filters(api_module, monkeypatch)
         "device_id": None,
         "granularity": "day",
         "tz_offset": "-07:00",
+        "tz": None,
     }
 
 
@@ -1450,3 +1451,55 @@ def test_malformed_read_params_are_422(api_module, path, params):
 )
 def test_valid_read_params_still_succeed(api_module, path, params):
     assert TestClient(api_module.app).get(path, params=params).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/usage/daily",
+        "/usage/daily-by-dimension",
+        "/sessions/distribution",
+        "/sessions/projects",
+        "/sessions/projects/detail",
+    ],
+)
+@pytest.mark.parametrize("tz", ["Invalid/Zone", "", "../UTC", "/etc/passwd"])
+def test_unknown_iana_timezone_is_ignored(api_module, path, tz):
+    from fastapi.testclient import TestClient
+
+    detail = path.endswith("detail")
+    params = {"tz": tz, **({"name": "repo"} if detail else {})}
+    response = TestClient(api_module.app).get(path, params=params)
+    assert response.status_code == (404 if detail else 200)
+
+
+@pytest.mark.parametrize(
+    "path,function",
+    [
+        ("/usage/daily", "aggregate_usage_by_period"),
+        ("/usage/daily-by-dimension", "aggregate_daily_by_dimension"),
+        ("/sessions/distribution", "aggregate_session_distribution"),
+        ("/sessions/projects", "aggregate_session_projects"),
+    ],
+)
+@pytest.mark.parametrize(
+    "tz,forwarded", [("America/New_York", "America/New_York"), ("Mars/Olympus", None)]
+)
+def test_iana_timezone_is_forwarded(
+    api_module, monkeypatch, path, function, tz, forwarded
+):
+    from fastapi.testclient import TestClient
+
+    captured = {}
+
+    def aggregate(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(api_module, function, aggregate)
+    response = TestClient(api_module.app).get(
+        path, params={"tz": tz, "tz_offset": "+12:00"}
+    )
+    assert response.status_code == 200
+    assert captured["tz"] == forwarded
+    assert captured["tz_offset"] == "+12:00"

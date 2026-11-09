@@ -5391,3 +5391,227 @@ def test_multiple_model_filters_apply_to_raw_and_rollup(fresh_db):
         row["model"]
         for row in db.fetch_recent_usage(limit=10, user_id="test-user", model="first")
     } == {"first"}
+
+
+@pytest.mark.parametrize(
+    "dimension", [None, "model", "provider", "client_source", "device"]
+)
+def test_iana_usage_buckets_cross_dst(fresh_db, dimension):
+    from zoneinfo import ZoneInfo
+
+    from src.database.usage import _iso_to_micros
+
+    db = fresh_db.database_module
+    db.init_db(fresh_db.db_path)
+    zone = ZoneInfo("America/New_York")
+    assert (
+        datetime(2026, 11, 1, 5, tzinfo=UTC)
+        .astimezone(zone)
+        .utcoffset()
+        .total_seconds()
+        == -14400
+    )
+    assert (
+        datetime(2026, 11, 1, 6, tzinfo=UTC)
+        .astimezone(zone)
+        .utcoffset()
+        .total_seconds()
+        == -18000
+    )
+    for stamp in [
+        "2026-10-30T03:30:00Z",
+        "2026-10-30T04:30:00Z",
+        "2026-11-02T04:30:00Z",
+        "2026-11-02T05:30:00Z",
+    ]:
+        ingest_write(
+            db.log_usage,
+            db.Usage(
+                device_id="test-device",
+                ts=_iso_to_micros(stamp),
+                provider="anthropic",
+                model="test-model",
+                client_source=None,
+                session_id=None,
+                endpoint="/v1/messages",
+                prompt_tokens=10,
+                completion_tokens=10,
+                reasoning_tokens=None,
+                cached_tokens=None,
+                total_tokens=20,
+                latency_ms=100,
+                ttft_ms=None,
+                tool_tokens=None,
+                cache_creation_tokens=None,
+                input_cost_usd=0.001,
+                output_cost_usd=0.001,
+                total_cost_usd=0.002,
+                status=200,
+                base_url_id=None,
+                user_id="test-user",
+            ),
+            db_path=fresh_db.db_path,
+        )
+    params = dict(
+        user_id="test-user",
+        since="2026-10-29",
+        until="2026-11-04",
+        tz_offset="-05:00",
+        db_path=fresh_db.db_path,
+    )
+    aggregate = (
+        db.aggregate_usage_by_period
+        if dimension is None
+        else db.aggregate_daily_by_dimension
+    )
+    if dimension is not None:
+        params["dimension"] = dimension
+    fixed = aggregate(**params)
+    zoned = aggregate(**params, tz="America/New_York")
+    assert {row["period"]: row["requests"] for row in fixed} == {
+        "2026-10-29": 2,
+        "2026-11-01": 1,
+        "2026-11-02": 1,
+    }
+    assert {row["period"]: row["requests"] for row in zoned} == {
+        "2026-10-29": 1,
+        "2026-10-30": 1,
+        "2026-11-01": 1,
+        "2026-11-02": 1,
+    }
+    assert sum(row["total_tokens"] for row in zoned) == 80
+    assert sum(row["total_cost_usd"] for row in zoned) == pytest.approx(0.008)
+
+
+@pytest.mark.parametrize("raw", [False, True])
+def test_timezone_expression_is_portable_and_uses_rollup_when_exact(fresh_db, raw):
+    from sqlalchemy import select
+    from sqlalchemy.dialects import postgresql, sqlite
+
+    from src.database.usage import _hourly_filters, _timezone_bucket_start
+
+    # Reuse the full integration case to populate both raw and hourly rows.
+    test_iana_usage_buckets_cross_dst(fresh_db, None)
+    period = _timezone_bucket_start(
+        86400,
+        "America/New_York",
+        since=None,
+        until=None,
+        filters=_hourly_filters(user_id="test-user"),
+        db_path=fresh_db.db_path,
+        raw=raw,
+    )
+    query = select(period.label("period")).group_by(period)
+    for dialect in [sqlite.dialect(), postgresql.dialect()]:
+        compiled = query.compile(dialect=dialect)
+        assert not compiled.params
+        assert "CASE WHEN" in str(compiled)
+        assert ("usage.ts" if raw else "usage_hourly.hour") in str(compiled)
+
+
+def test_fractional_timezone_keeps_rollup_unless_window_is_raw(fresh_db):
+    from src.database.usage import _iso_to_micros
+
+    db = fresh_db.database_module
+    db.init_db(fresh_db.db_path)
+    for stamp in ["2026-10-30T18:15:00Z", "2026-10-30T18:45:00Z"]:
+        ingest_write(
+            db.log_usage,
+            db.Usage(
+                device_id="test-device",
+                ts=_iso_to_micros(stamp),
+                provider="anthropic",
+                model="test-model",
+                client_source=None,
+                session_id=None,
+                endpoint="/v1/messages",
+                prompt_tokens=10,
+                completion_tokens=10,
+                reasoning_tokens=None,
+                cached_tokens=None,
+                total_tokens=20,
+                latency_ms=100,
+                ttft_ms=None,
+                tool_tokens=None,
+                cache_creation_tokens=None,
+                input_cost_usd=0.001,
+                output_cost_usd=0.001,
+                total_cost_usd=0.002,
+                status=200,
+                base_url_id=None,
+                user_id="test-user",
+            ),
+            db_path=fresh_db.db_path,
+        )
+    for aggregate in [db.aggregate_usage_by_period, db.aggregate_daily_by_dimension]:
+        params = (
+            {"dimension": "model"}
+            if aggregate == db.aggregate_daily_by_dimension
+            else {}
+        )
+        # Long and unbounded ranges stay on the rollup: 18:00 UTC is 23:30 local,
+        # so both requests of that hour land on the 30th (the <=30 min edge).
+        for since in [None, "2025-11-01"]:
+            rows = aggregate(
+                user_id="test-user",
+                since=since,
+                tz="Asia/Kolkata",
+                db_path=fresh_db.db_path,
+                **params,
+            )
+            assert {row["period"]: row["requests"] for row in rows} == {"2026-10-30": 2}
+        # A short, unaligned window reads raw rows and splits the hour exactly.
+        rows = aggregate(
+            user_id="test-user",
+            since="2026-10-30T12:30:00Z",
+            until="2026-10-31T00:00:00Z",
+            tz="Asia/Kolkata",
+            db_path=fresh_db.db_path,
+            **params,
+        )
+        assert {row["period"]: row["requests"] for row in rows} == {
+            "2026-10-30": 1,
+            "2026-10-31": 1,
+        }
+
+
+def test_timezone_transitions_are_bounded_by_since_until(fresh_db):
+    from sqlalchemy import event
+
+    from src.database.engine import get_engine
+
+    test_iana_usage_buckets_cross_dst(fresh_db, None)
+    db = fresh_db.database_module
+    engine = get_engine(fresh_db.db_path)
+    statements: list[str] = []
+
+    def record(connection, cursor, statement, *args):
+        statements.append(statement.lower())
+
+    def aggregate(**params):
+        statements.clear()
+        rows = db.aggregate_usage_by_period(
+            user_id="test-user", db_path=fresh_db.db_path, **params
+        )
+        return (
+            {row["period"]: row["requests"] for row in rows},
+            [s for s in statements if "min(" in s or "max(" in s],
+        )
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        expected = {"2026-10-29": 1, "2026-10-30": 1, "2026-11-01": 1, "2026-11-02": 1}
+        # `since` given: no bounds query; `until` defaults to now.
+        assert aggregate(tz="America/New_York", since="2026-10-29") == (expected, [])
+        # Fixed-offset zones need no transitions at all.
+        assert aggregate(tz="UTC")[1] == []
+        assert aggregate(tz="Asia/Kolkata")[1] == []
+        # Only the missing `since` is queried, from the rollup.
+        periods, [query] = aggregate(tz="America/New_York", model="test-model")
+        assert periods == expected
+        assert "min(usage_hourly.hour)" in query
+        assert "max(" not in query and " usage " not in query
+        # No matching rows: the scan starts at `until`, not 1970.
+        assert aggregate(tz="America/New_York", model="missing") == ({}, [query])
+    finally:
+        event.remove(engine, "before_cursor_execute", record)

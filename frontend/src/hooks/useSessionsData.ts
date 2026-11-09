@@ -55,6 +55,7 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
     if (project !== null) params.set('project', project)
     params.set('granularity', rangeGranularity(opts.dateRange))
     params.set('tz_offset', getTimezoneOffset(resolveTimezone(timezone)))
+    params.set('tz', resolveTimezone(timezone))
     setDistributionLoading(true); setDistributionError(false)
     fetch(`/sessions/distribution?${params}`, { signal: controller.signal }).then(r => { if (!r.ok) throw new Error(); return r.json() }).then(setDistribution).catch(() => { if (!controller.signal.aborted) { setDistribution(null); setDistributionError(true) } }).finally(() => { if (!controller.signal.aborted) setDistributionLoading(false) })
     return () => controller.abort()

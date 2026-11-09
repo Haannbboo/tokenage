@@ -16,6 +16,7 @@ it('shares session filters while requesting daily project activity and independe
   expect(requests).toHaveLength(1)
   const params = requests[0].searchParams
   expect(params.get('granularity')).toBe('day')
+  expect(params.get('tz')).toBe('UTC')
   expect(params.get('client_source')).toBe('codex')
   expect(params.get('device_id')).toBe('device-one')
   expect(params.get('provider')).toBe('openai')
@@ -27,6 +28,7 @@ it('shares session filters while requesting daily project activity and independe
   expect(requests[1].pathname).toBe('/sessions/projects/detail')
   expect(requests[1].searchParams.get('name')).toBe('repo / café')
   expect(requests[1].searchParams.get('tz_offset')).toBe('+00:00')
+  expect(requests[1].searchParams.get('tz')).toBe('UTC')
 })
 
 it('keeps list and detail data visible while refreshing and clears detail when changing projects', async () => {

@@ -25,6 +25,7 @@ export function useProjectsData(project: string | null, dateRange: DateRangeOpti
   // The project chart and activity tiles measure days, including partial days.
   params.set('granularity', 'day')
   params.set('tz_offset', getTimezoneOffset(resolveTimezone(timezone)))
+  params.set('tz', resolveTimezone(timezone))
   const query = params.toString()
   // Cache key: the filters, with the range name instead of `since`, which moves on every refresh.
   const filters = new URLSearchParams(params)

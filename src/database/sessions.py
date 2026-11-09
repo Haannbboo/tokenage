@@ -10,11 +10,13 @@ import json
 import logging
 import math
 import sys
+from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -29,10 +31,12 @@ from .models import (
     Usage,
 )
 from .usage import (
+    _calendar_grid,
     _format_periods,
     _granularity,
     _tz_seconds,
     _usage_filters,
+    _zone_offset,
 )
 
 logger = logging.getLogger(__name__)
@@ -732,6 +736,7 @@ def aggregate_session_distribution(
     filters: SessionFilters,
     granularity: str = "day",
     tz_offset: str = "+00:00",
+    tz: str | None = None,
     db_path: str | None = None,
 ) -> dict[str, Any]:
     """Count active sessions over time and aggregate lifetime costs by dimension.
@@ -776,7 +781,7 @@ def aggregate_session_distribution(
     for row in result["by_agent"]:
         row["cost_share"] = row["total_cost_usd"] / total_cost if total_cost else 0.0
     result["over_time"] = _active_session_buckets(
-        timestamps, filters=filters, granularity=granularity, tz_offset=tz_offset
+        timestamps, filters=filters, granularity=granularity, tz_offset=tz_offset, tz=tz
     )
     return result
 
@@ -816,8 +821,9 @@ def _project_time_buckets(
     filters: SessionFilters,
     granularity: str,
     tz_offset: str,
+    tz: str | None = None,
 ) -> list[dict[str, Any]]:
-    """One activity sweep; work is linear in sessions, buckets and sparse output."""
+    """One activity sweep after locating each session on the bucket grid."""
     if not timestamps:
         return []
     lower = (
@@ -834,22 +840,30 @@ def _project_time_buckets(
         return []
     seconds, fmt = _granularity(granularity)
     size = seconds * 1_000_000
-    offset = _tz_seconds(tz_offset) * 1_000_000
+    offset = (
+        _zone_offset(lower // 1_000_000, ZoneInfo(tz)) if tz else _tz_seconds(tz_offset)
+    ) * 1_000_000
     grid_start = (lower + offset) // size * size - offset
     count = (upper - grid_start + size - 1) // size
-    if count > MAX_TIME_BUCKETS:
+    if count > MAX_TIME_BUCKETS and not (tz and granularity == "day"):
         raise ValueError("Range too long for this granularity")
+    edges = (
+        _calendar_grid(lower, upper, tz, MAX_TIME_BUCKETS)
+        if tz and granularity == "day"
+        else [grid_start + i * size for i in range(count + 1)]
+    )
+    count = len(edges) - 1
     changes: list[dict[str, int]] = [{} for _ in range(count + 1)]
     for name, started, ended in timestamps:
         if ended < lower or started >= upper:
             continue
-        first = max(0, (started - grid_start) // size)
-        last = min(count - 1, (ended - grid_start) // size)
+        first = max(0, bisect_right(edges, started) - 1)
+        last = min(count - 1, bisect_right(edges, ended) - 1)
         if first <= last:
             changes[first][name] = changes[first].get(name, 0) + 1
             changes[last + 1][name] = changes[last + 1].get(name, 0) - 1
     active: dict[str, int] = {}
-    rows = []
+    rows: list[dict[str, Any]] = []
     for index in range(count):
         for name, delta in changes[index].items():
             value = active.get(name, 0) + delta
@@ -857,7 +871,7 @@ def _project_time_buckets(
                 active[name] = value
             else:
                 active.pop(name, None)
-        key = grid_start + index * size
+        key = edges[index]
         rows.append(
             {
                 "key": key,
@@ -866,12 +880,17 @@ def _project_time_buckets(
                     max(key, lower) / 1_000_000, UTC
                 ).isoformat(),
                 "end": datetime.fromtimestamp(
-                    min(key + size, upper) / 1_000_000, UTC
+                    min(edges[index + 1], upper) / 1_000_000, UTC
                 ).isoformat(),
                 "by_project": dict(active),
             }
         )
     _format_periods(rows, fmt, 1_000_000)
+    if tz:
+        for row in rows:
+            row["period"] = datetime.fromtimestamp(
+                int(row["key"]) / 1_000_000, ZoneInfo(tz)
+            ).strftime(fmt)
     return rows
 
 
@@ -880,6 +899,7 @@ def aggregate_session_projects(
     filters: SessionFilters,
     granularity: str = "day",
     tz_offset: str = "+00:00",
+    tz: str | None = None,
     db_path: str | None = None,
 ) -> dict[str, Any]:
     """Project lifetime totals from session rows in the overlapping window."""
@@ -939,6 +959,7 @@ def aggregate_session_projects(
             filters=filters,
             granularity=granularity,
             tz_offset=tz_offset,
+            tz=tz,
         ),
     }
 
@@ -1026,6 +1047,7 @@ def _active_session_buckets(
     filters: SessionFilters,
     granularity: str,
     tz_offset: str,
+    tz: str | None = None,
 ) -> list[dict[str, Any]]:
     if not timestamps:
         return []
@@ -1043,27 +1065,35 @@ def _active_session_buckets(
         return []
     seconds, fmt = _granularity(granularity)
     size = seconds * 1_000_000
-    offset = _tz_seconds(tz_offset) * 1_000_000
+    offset = (
+        _zone_offset(lower // 1_000_000, ZoneInfo(tz)) if tz else _tz_seconds(tz_offset)
+    ) * 1_000_000
     grid_start = (lower + offset) // size * size - offset
     count = (upper - grid_start + size - 1) // size
-    if count > MAX_TIME_BUCKETS:
+    if count > MAX_TIME_BUCKETS and not (tz and granularity == "day"):
         raise ValueError("Range too long for this granularity")
+    edges = (
+        _calendar_grid(lower, upper, tz, MAX_TIME_BUCKETS)
+        if tz and granularity == "day"
+        else [grid_start + i * size for i in range(count + 1)]
+    )
+    count = len(edges) - 1
     changes = [0] * (count + 1)
     for started, ended in timestamps:
         # The outer buckets are clipped; exclude timestamps beyond those edges.
         if ended < lower or started >= upper:
             continue
-        first = max(0, (started - grid_start) // size)
-        last = min(count - 1, (ended - grid_start) // size)
+        first = max(0, bisect_right(edges, started) - 1)
+        last = min(count - 1, bisect_right(edges, ended) - 1)
         if first <= last:
             changes[first] += 1
             changes[last + 1] -= 1
-    rows = []
+    rows: list[dict[str, Any]] = []
     active = 0
     for i in range(count):
         active += changes[i]
-        key = grid_start + i * size
-        start, end = max(key, lower), min(key + size, upper)
+        key = edges[i]
+        start, end = max(key, lower), min(edges[i + 1], upper)
         rows.append(
             {
                 "key": key,
@@ -1074,6 +1104,11 @@ def _active_session_buckets(
             }
         )
     _format_periods(rows, fmt, 1_000_000)
+    if tz:
+        for row in rows:
+            row["period"] = datetime.fromtimestamp(
+                int(row["key"]) / 1_000_000, ZoneInfo(tz)
+            ).strftime(fmt)
     return rows
 
 

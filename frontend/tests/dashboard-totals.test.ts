@@ -57,3 +57,21 @@ it('shares one advancing-clock window with dashboard requests and refreshes it',
   checkWindow(3)
   expect(result.current.dashboardFilterParams.since).not.toBe(firstSince)
 })
+
+it('sends the resolved IANA timezone with daily and heatmap reads', async () => {
+  context.timezone = 'America/New_York'
+  const urls: URL[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    urls.push(new URL(input, window.location.origin))
+    return { ok: true, json: async () => [] }
+  }))
+  const { result } = renderHook(() => useDashboardData({ includeHeatmap: true, includeCount: false }))
+  await waitFor(() => expect(result.current.dashboardInitialLoading).toBe(false))
+  const daily = urls.filter(url => url.pathname === '/usage/daily')
+  expect(daily).toHaveLength(2)
+  for (const url of daily) {
+    expect(url.searchParams.get('tz')).toBe('America/New_York')
+    expect(url.searchParams.has('tz_offset')).toBe(true)
+  }
+  context.timezone = 'UTC'
+})

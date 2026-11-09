@@ -10,10 +10,11 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from functools import cache
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     BigInteger,
@@ -1871,6 +1872,120 @@ def _bucket_start(size: int, tz_offset: str, column: Any, scale: int) -> Any:
     return local - local % literal_column(str(size * scale), BigInteger)
 
 
+def _zone_offset(second: int, zone: ZoneInfo) -> int:
+    offset = datetime.fromtimestamp(second, zone).utcoffset()
+    assert offset is not None
+    return int(offset.total_seconds())
+
+
+@cache
+def _fixed_offset(tz: str) -> int | None:
+    """The zone's offset if it never changed in 1970-2100, else None."""
+    zone = ZoneInfo(tz)
+    # Daily probes, like the transition scan: IANA changes are days apart.
+    offsets = {_zone_offset(day, zone) for day in range(0, 4_102_444_800, 86400)}
+    return offsets.pop() if len(offsets) == 1 else None
+
+
+def _timezone_bucket_start(
+    size: int,
+    tz: str,
+    *,
+    since: str | None,
+    until: str | None,
+    filters: list[Any],
+    db_path: str | None,
+    raw: bool,
+) -> Any:
+    """Portable SQL using the IANA offset valid at each row's UTC timestamp.
+
+    Express only offset transitions as CASE arms, found between `since` and
+    `until` (or now). Without `since`, the earliest rollup hour matching
+    *filters* (usage_hourly filters) bounds the scan. Inline integer constants
+    keep PostgreSQL SELECT and GROUP BY identical.
+
+    ponytail: on the hourly rollup a half-hour offset or transition shifts
+    whole UTC hours, so a request within 30 min of a local bucket edge can land
+    in the neighbouring bucket, as with `_bucket_start`; raw rows only when
+    `raw` asks for them (short windows, sub-hour buckets).
+    """
+
+    def integer(value: int) -> Any:
+        return literal_column(str(value), BigInteger)
+
+    column = Usage.ts if raw else UsageHourly.hour
+    scale = 1_000_000 if raw else 1
+    width = integer(size * scale)
+    fixed = _fixed_offset(tz)
+    if fixed is not None:
+        local = column + integer(fixed * scale)
+        return local - ((local % width + width) % width)
+    zone = ZoneInfo(tz)
+    since_hour, until_hour = _hour_bounds(since, until)
+    end = (
+        until_hour + 3600
+        if until_hour is not None
+        else int(datetime.now(UTC).timestamp())
+    )
+    start = since_hour
+    if start is None:
+        with get_engine(db_path).connect() as connection:
+            start = connection.execute(
+                select(func.min(UsageHourly.hour)).where(*filters)
+            ).scalar()
+        if start is None:
+            start = end
+    initial = _zone_offset(start, zone)
+    previous = initial
+    changes: list[tuple[int, int]] = []
+    cursor = start
+    # IANA transitions are separated by more than a day. Bisect each UTC day
+    # whose endpoints have different offsets, down to the transition second.
+    while cursor < end:
+        probe = min(cursor + 86400, end)
+        current = _zone_offset(probe, zone)
+        if current != previous:
+            left, right = cursor, probe
+            while right - left > 1:
+                middle = (left + right) // 2
+                if _zone_offset(middle, zone) == previous:
+                    left = middle
+                else:
+                    right = middle
+            changes.append((right, current))
+            previous = current
+        cursor = probe
+    arms = [
+        (column >= integer(second * scale), integer(offset * scale))
+        for second, offset in reversed(changes)
+    ]
+    offset = (
+        case(*arms, else_=integer(initial * scale))
+        if arms
+        else integer(initial * scale)
+    )
+    local = column + offset
+    # Normalize negative modulo too: SQLite and PostgreSQL retain its sign.
+    return local - ((local % width + width) % width)
+
+
+def _calendar_grid(lower: int, upper: int, tz: str, limit: int) -> list[int]:
+    """Local midnight boundaries in UTC microseconds, including the final edge."""
+    zone = ZoneInfo(tz)
+    day = datetime.fromtimestamp(lower / 1_000_000, zone).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    edges = [int(day.timestamp() * 1_000_000)]
+    while edges[-1] < upper:
+        if len(edges) > limit:
+            raise ValueError("Range too long for this granularity")
+        day += timedelta(days=1)
+        edge = int(day.timestamp() * 1_000_000)
+        if edge > edges[-1]:  # A date can be skipped by an IANA offset change.
+            edges.append(edge)
+    return edges
+
+
 def _format_periods(rows: list[dict[str, Any]], fmt: str, scale: int = 1) -> None:
     for row in rows:
         row["period"] = datetime.fromtimestamp(row["period"] / scale, UTC).strftime(fmt)
@@ -1887,6 +2002,7 @@ def aggregate_usage_by_period(
     device_id: str | None = None,
     granularity: str = "day",
     tz_offset: str = "+00:00",
+    tz: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Bucket usage into local-time periods.
@@ -1895,12 +2011,33 @@ def aggregate_usage_by_period(
     the raw rows, which the rollup cannot be split into.
     """
     size, fmt = _granularity(granularity)
-    if size < 3600 or _needs_raw_window(since, until):
-        period = _bucket_start(size, tz_offset, Usage.ts, 1_000_000).label("period")
-        rollup, scale = _raw_rollup, 1_000_000
+    fine = size < 3600 or _needs_raw_window(since, until)
+    if tz:
+        period = _timezone_bucket_start(
+            size,
+            tz,
+            since=since,
+            until=until,
+            filters=_hourly_filters(
+                user_id=user_id,
+                until=until,
+                provider=provider,
+                model=model,
+                client_source=client_source,
+                device_id=device_id,
+            ),
+            db_path=db_path,
+            raw=fine,
+        )
     else:
-        period = _bucket_start(size, tz_offset, UsageHourly.hour, 1).label("period")
-        rollup, scale = _rollup, 1
+        period = _bucket_start(
+            size,
+            tz_offset,
+            Usage.ts if fine else UsageHourly.hour,
+            1_000_000 if fine else 1,
+        )
+    period = period.label("period")
+    rollup, scale = (_raw_rollup, 1_000_000) if fine else (_rollup, 1)
     rows = rollup(
         period,
         user_id=user_id,
@@ -1929,6 +2066,7 @@ def aggregate_daily_by_dimension(
     device_id: str | None = None,
     granularity: str = "day",
     tz_offset: str = "+00:00",
+    tz: str | None = None,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Local usage grouped by a dimension (model/provider/client_source/device).
@@ -1937,6 +2075,31 @@ def aggregate_daily_by_dimension(
     """
     size, fmt = _granularity(granularity)
     fine = size < 3600 or _needs_raw_window(since, until)
+    if tz:
+        period = _timezone_bucket_start(
+            size,
+            tz,
+            since=since,
+            until=until,
+            filters=_hourly_filters(
+                user_id=user_id,
+                until=until,
+                provider=provider,
+                model=model,
+                client_source=client_source,
+                device_id=device_id,
+            ),
+            db_path=db_path,
+            raw=fine,
+        )
+    else:
+        period = _bucket_start(
+            size,
+            tz_offset,
+            Usage.ts if fine else UsageHourly.hour,
+            1_000_000 if fine else 1,
+        )
+    period = period.label("period")
     table = Usage if fine else UsageHourly
     name_cols: list[Any] = []
     dim_col: Any
@@ -1952,12 +2115,6 @@ def aggregate_daily_by_dimension(
         name_cols = [Device.device_name.label("dimension_name")]
     else:
         dim_col = table.model
-    period = _bucket_start(
-        size,
-        tz_offset,
-        Usage.ts if fine else UsageHourly.hour,
-        1_000_000 if fine else 1,
-    ).label("period")
     rollup = _raw_rollup if fine else _rollup
     rows = rollup(
         dim_col.label("dimension"),

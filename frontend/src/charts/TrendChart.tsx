@@ -148,6 +148,7 @@ export function TrendChart({
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id);
         if (filterParams.since) url.searchParams.set('since', filterParams.since);
         url.searchParams.set('tz_offset', tzOffset);
+        url.searchParams.set('tz', tz)
 
         const res = await fetch(url.toString(), { signal: controller.signal });
         if (!res.ok) throw new Error();
@@ -162,7 +163,7 @@ export function TrendChart({
     }
     fetchModelRows();
     return () => controller.abort();
-  }, [filterParams, granularity, tzOffset, modelAttempt, view, setModelError]);
+  }, [filterParams, granularity, tz, tzOffset, modelAttempt, view, setModelError]);
 
   const modelBuckets = useMemo(() => {
     const map = new Map<string, Map<string, { tokens: number; cost: number; requests: number }>>();

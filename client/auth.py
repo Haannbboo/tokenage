@@ -16,6 +16,7 @@ import re
 import secrets
 import socket
 import sys
+import threading
 import webbrowser
 from datetime import UTC, datetime
 from pathlib import Path
@@ -390,18 +391,20 @@ def login(
 
 
 _DEVICE_ID = re.compile(r"[A-Za-z0-9_-]+")
-# ponytail: per-phase bound (connect 3s, read/write 5s); a server that accepts
-# and then hangs stalls logout ~5s per request, at most two requests.
+# Per-phase httpx bound (connect 3s, read/write 5s); _LOGOUT_DEADLINE caps the
+# whole revocation, since a server trickling bytes never trips a phase timeout.
 _LOGOUT_TIMEOUT = httpx.Timeout(5, connect=3)
+_LOGOUT_DEADLINE = 10.0
+_UNREACHABLE = "server unavailable or request timed out"
+_REJECTED = "the server rejected the stored token"
 
 
 def _valid_device_id(value: Any) -> bool:
     return isinstance(value, str) and _DEVICE_ID.fullmatch(value) is not None
 
 
-def _current_device_id(server: str, request: dict[str, Any]) -> str | None:
+def _current_device_id(response: httpx.Response) -> str | None:
     """The device the server says this CLI token belongs to, if exactly one."""
-    response = httpx.get(f"{server}/auth/devices", **request)
     if response.status_code != 200:
         return None
     try:
@@ -420,6 +423,24 @@ def _current_device_id(server: str, request: dict[str, Any]) -> str | None:
     return None
 
 
+def _revoke(server: str, request: dict[str, Any], device_id: Any) -> str | None:
+    """Revoke this device; None on success, else why it is unconfirmed."""
+    if not _valid_device_id(device_id):
+        # Logins from before credentials stored device_id: ask the server.
+        response = httpx.get(f"{server}/auth/devices", **request)
+        if response.status_code == 401:
+            return _REJECTED
+        device_id = _current_device_id(response)
+        if device_id is None:
+            return "server did not identify this device"
+    response = httpx.post(f"{server}/auth/devices/{device_id}/revoke", **request)
+    if response.status_code in (200, 204):
+        return None
+    if response.status_code == 401:
+        return _REJECTED
+    return f"server returned HTTP {response.status_code}"
+
+
 def _revocation_unconfirmed(reason: str) -> bool:
     print(
         f"  warning   device revocation could not be confirmed ({reason}); "
@@ -434,7 +455,14 @@ def _revoke_logout_device(credentials: dict[str, Any]) -> bool:
     server = credentials.get("server_url")
     token = credentials.get("cli_token")
     device_id = credentials.get("device_id")
-    if not (isinstance(server, str) and server and isinstance(token, str) and token):
+    if not (
+        isinstance(server, str)
+        and server
+        and isinstance(token, str)
+        and token
+        and token.isascii()
+        and token.isprintable()
+    ):
         return _revocation_unconfirmed(
             "stored credentials lack a server URL or CLI token"
         )
@@ -447,18 +475,25 @@ def _revoke_logout_device(credentials: dict[str, Any]) -> bool:
         "timeout": _LOGOUT_TIMEOUT,
         "follow_redirects": False,
     }
-    try:
-        if not _valid_device_id(device_id):
-            # Logins from before credentials stored device_id: ask the server.
-            device_id = _current_device_id(server, request)
-            if device_id is None:
-                return _revocation_unconfirmed("server did not identify this device")
-        response = httpx.post(f"{server}/auth/devices/{device_id}/revoke", **request)
-    except httpx.HTTPError:
-        return _revocation_unconfirmed("server unavailable or request timed out")
-    if response.status_code in (200, 204, 401):
-        return True
-    return _revocation_unconfirmed(f"server returned HTTP {response.status_code}")
+    outcome: list[str | None] = []
+
+    def attempt() -> None:
+        try:
+            outcome.append(_revoke(server, request, device_id))
+        except httpx.HTTPError:
+            outcome.append(_UNREACHABLE)
+        except Exception:
+            # Exception text may carry the token or server data; never show it.
+            outcome.append("unexpected error during revocation")
+
+    # ponytail: daemon thread + join is the overall deadline; a request still
+    # running after it is abandoned and dies with the process. Swap for an
+    # async client with a cancel scope if logout ever runs in a long-lived process.
+    thread = threading.Thread(target=attempt, daemon=True)
+    thread.start()
+    thread.join(_LOGOUT_DEADLINE)
+    reason = outcome[0] if outcome else _UNREACHABLE
+    return True if reason is None else _revocation_unconfirmed(reason)
 
 
 def logout(*, keep_agents: bool) -> int:

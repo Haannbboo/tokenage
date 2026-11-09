@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import stat
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -594,10 +596,11 @@ def test_logout_revokes_before_local_delete(
         )
     ]
     output = capsys.readouterr()
-    success = status in (204, 401)
+    success = status == 204
     assert ("may still be active" in output.err) is not success
     if not success:
         assert "Settings → Devices" in output.err
+    assert ("rejected the stored token" in output.err) is (status == 401)
     assert ("revoked on the server" in output.out) is success
     assert ("stays listed" in output.out) is not success
     if keep_agents:
@@ -720,6 +723,53 @@ def test_logout_lookup_failure_warns_and_deletes(monkeypatch, capsys, caplog, lo
     assert "Settings → Devices" in output.err
     assert "may keep reporting" in output.err
     assert "stays listed" in output.out
+    rejected = getattr(lookup, "status_code", None) == 401
+    assert ("rejected the stored token" in output.err) is rejected
+    assert token not in output.out + output.err + caplog.text
+
+
+def test_logout_revocation_deadline_bounds_a_hanging_server(monkeypatch, capsys):
+    token = "test-cli-secret-never-print"
+    auth.save_credentials(
+        {"server_url": "https://srv.example", "device_id": "one", "cli_token": token}
+    )
+    release = threading.Event()
+
+    def trickling_post(*args, **kwargs):
+        release.wait(5)
+        return SimpleNamespace(status_code=204)
+
+    monkeypatch.setattr(auth, "_LOGOUT_DEADLINE", 0.05)
+    monkeypatch.setattr(auth.httpx, "post", trickling_post)
+    started = time.monotonic()
+    try:
+        assert auth.logout(keep_agents=True) == 0
+    finally:
+        release.set()
+    assert time.monotonic() - started < 2
+    assert auth.load_credentials() is None
+    output = capsys.readouterr()
+    assert "server unavailable or request timed out" in output.err
+    assert "may keep reporting" in output.err
+    assert "stays listed" in output.out
+    assert token not in output.out + output.err
+
+
+def test_logout_unexpected_revocation_error_is_unconfirmed(monkeypatch, capsys, caplog):
+    token = "test-cli-secret-never-print"
+    auth.save_credentials(
+        {"server_url": "https://srv.example", "device_id": "one", "cli_token": token}
+    )
+
+    def post(*args, **kwargs):
+        raise UnicodeEncodeError("ascii", token, 0, 1, f"contains {token}")
+
+    monkeypatch.setattr(auth.httpx, "post", post)
+    assert auth.logout(keep_agents=True) == 0
+    assert auth.load_credentials() is None
+    output = capsys.readouterr()
+    assert "unexpected error during revocation" in output.err
+    assert "may keep reporting" in output.err
     assert token not in output.out + output.err + caplog.text
 
 
@@ -731,6 +781,22 @@ def test_logout_lookup_failure_warns_and_deletes(monkeypatch, capsys, caplog, lo
         (
             {"server_url": "http://srv.example", "cli_token": "t", "device_id": "d"},
             "stored server URL is invalid",
+        ),
+        (
+            {
+                "server_url": "https://srv.example",
+                "cli_token": "tökén",
+                "device_id": "d",
+            },
+            "lack a server URL or CLI token",
+        ),
+        (
+            {
+                "server_url": "https://srv.example",
+                "cli_token": "t\nx",
+                "device_id": "d",
+            },
+            "lack a server URL or CLI token",
         ),
     ],
 )

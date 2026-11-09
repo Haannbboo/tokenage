@@ -271,11 +271,11 @@ def test_detail_name_validation_and_404(projects_api, params, status):
 )
 def test_project_bucketing_validation(projects_api, path, invalid):
     client, _ = projects_api
+    # Malformed params are 422; a well-formed range too long to bucket is 400.
+    too_long = invalid.get("since") == "1"
     assert client.get(
         path, params={**WINDOW, "name": "orchard", **invalid}
-    ).status_code == (
-        200 if path.endswith("/detail") and invalid.get("since") == "1" else 400
-    )
+    ).status_code == ((200 if path.endswith("/detail") else 400) if too_long else 422)
 
 
 def test_agent_mix_coalesces_null_and_empty(projects_api):

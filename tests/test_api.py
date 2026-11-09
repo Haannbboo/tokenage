@@ -392,7 +392,6 @@ def test_usage_daily_endpoint_passes_the_fine_granularity(api_module, monkeypatc
             "until": "2026-05-04T00:00:00Z",
         },
         {"granularity": "15m", "since": "2026-05-01T00:00:00Z", "until": "2026-05-03"},
-        {"granularity": "15m", "since": "invalid"},
     ],
 )
 def test_fine_usage_requires_bounded_window(api_module, path, params):
@@ -1412,3 +1411,42 @@ def test_read_routes_accept_multiple_models(api_module, monkeypatch, path, funct
     )
     assert client.get(path, params={"model": "one"}).status_code == 200
     assert captured == [["one", "two"], "one"]
+
+
+@pytest.mark.parametrize(
+    "path, params",
+    [
+        ("/usage/summary", {"since": "yesterday"}),
+        ("/usage/count", {"until": "2026-13-01"}),
+        ("/usage/daily", {"tz_offset": "Z"}),
+        ("/usage/daily", {"tz_offset": "America/New_York"}),
+        ("/sessions", {"since": "garbage"}),
+        ("/usage/by-tool", {"since": "bad"}),
+        ("/usage", {"since": "0001-01-01T00:00:00+01:00"}),
+        ("/usage/daily", {"granularity": "week"}),
+        ("/usage/daily", {"since": "invalid", "granularity": "15m"}),
+        ("/usage/daily-by-dimension", {"dimension": "color"}),
+        ("/sessions/distribution", {"tz_offset": "+99:00"}),
+    ],
+)
+def test_malformed_read_params_are_422(api_module, path, params):
+    response = TestClient(api_module.app).get(path, params=params)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "path, params",
+    [
+        (
+            "/usage/daily",
+            {"since": "2026-01-01", "until": "2026-01-02T00:00:00Z"}
+            | {"granularity": "hour", "tz_offset": "+05:30"},
+        ),
+        ("/usage/daily-by-dimension", {"dimension": "device", "tz_offset": "-08:00"}),
+        ("/sessions", {"since": "2026-01-01T00:00:00+00:00", "until": "2026-02-01"}),
+    ],
+)
+def test_valid_read_params_still_succeed(api_module, path, params):
+    assert TestClient(api_module.app).get(path, params=params).status_code == 200

@@ -202,7 +202,7 @@ def test_missing_end_and_negative_duration_are_under_one_minute(fresh_db):
 def test_bad_dates_are_json_errors(api_module, params):
     client = TestClient(api_module.app)
     for path in ("/sessions", "/sessions/distribution", "/sessions/summary"):
-        assert client.get(path, params=params).status_code == 400
+        assert client.get(path, params=params).status_code == 422
 
 
 @pytest.mark.parametrize("params", [{"duration_bucket": "bad"}, {"cost_bucket": "bad"}])
@@ -216,7 +216,7 @@ def test_bad_chart_options_are_json_errors(api_module, params):
         TestClient(api_module.app)
         .get("/sessions/distribution", params=params)
         .status_code
-        == 400
+        == 422
     )
 
 

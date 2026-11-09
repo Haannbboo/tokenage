@@ -629,6 +629,56 @@ def test_session_context_preserves_46_requests(sessions_api):
     assert [p["request"] for p in result["points"]] == list(range(1, 47))
 
 
+def _add_context_rows(db, session_id, count, status_for):
+    from src.database.models import Usage
+
+    with Session(db.database_module.get_engine()) as session:
+        for i in range(count):
+            failed = status_for(i)
+            session.add(
+                Usage(
+                    id=f"{session_id}-{i}",
+                    user_id="test-user",
+                    session_id=session_id,
+                    model="test",
+                    provider="test",
+                    endpoint="otlp",
+                    ts=TS + i,
+                    prompt_tokens=0 if failed else 100 + i,
+                    status=failed or 200,
+                )
+            )
+        session.commit()
+
+
+def test_session_context_skips_failed_requests(sessions_api):
+    client, db = sessions_api
+    _add_context_rows(db, "failed", 5, lambda i: 500 if i == 2 else None)
+    result = client.get("/sessions/failed/context").json()
+    assert [p["request"] for p in result["points"]] == [1, 2, 4, 5]
+    assert all(p["context_tokens"] > 0 for p in result["points"])
+    assert result["request_count"] == 5
+    assert result["peak_tokens"] == 104
+
+
+def test_session_context_all_failed_keeps_request_count(sessions_api):
+    client, db = sessions_api
+    _add_context_rows(db, "allfail", 3, lambda i: 500)
+    result = client.get("/sessions/allfail/context").json()
+    assert result == {"points": [], "peak_tokens": 0, "request_count": 3}
+
+
+def test_session_context_buckets_rank_only_successful_requests(sessions_api):
+    client, db = sessions_api
+    # Width 3: bucket 1-3 peaks at failed request 3, bucket 4-6 is all failed.
+    _add_context_rows(db, "fbucket", 401, lambda i: 500 if 2 <= i <= 5 else None)
+    result = client.get("/sessions/fbucket/context").json()
+    requests = [p["request"] for p in result["points"]]
+    assert requests[:2] == [2, 9]
+    assert all(p["context_tokens"] > 0 for p in result["points"])
+    assert result["request_count"] == 401
+
+
 def test_sessions_rejects_out_of_range_paging(sessions_api):
     client, _ = sessions_api
     for params in ({"limit": 0}, {"limit": 501}, {"limit": -1}, {"offset": -1}):

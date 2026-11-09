@@ -9,13 +9,14 @@ import calendar
 import json
 import logging
 import math
+import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, case, func, select, text, update
+from sqlalchemy import and_, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -584,7 +585,7 @@ def _session_record_to_dict(rec: SessionRecord) -> dict[str, Any]:
         "successful_requests": rec.successful_requests,
         "failed_requests": rec.failed_requests,
     }
-    tool_calls = json.loads(rec.tool_calls_json or "{}")
+    tool_calls = _numeric_json_map(rec.tool_calls_json)
     if tool_calls:
         result["tool_calls_json"] = tool_calls
     else:
@@ -740,7 +741,6 @@ def aggregate_session_distribution(
     """
     conditions = _session_filters(filters)
     dimensions = {
-        "by_project": SessionRecord.project_name,
         "by_agent": func.coalesce(SessionRecord.client_source, ""),
         "by_duration": _fixed_bucket_expr(_duration_s_expr(), DURATION_BUCKETS),
         "by_cost": _fixed_bucket_expr(SessionRecord.total_cost_usd, COST_BUCKETS),
@@ -781,6 +781,215 @@ def aggregate_session_distribution(
     return result
 
 
+_PROJECT_TOTALS = (
+    "total_cost_usd",
+    "request_count",
+    "prompt_tokens",
+    "cached_tokens",
+    "cache_creation_tokens",
+)
+
+
+def _numeric_json_map(payload: str | None) -> dict[str, float]:
+    """Ignore malformed maps and non-finite or nonnumeric values."""
+    try:
+        data = json.loads(payload or "{}")
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        key: value
+        for key, value in data.items()
+        # Ints above the float range overflow when summed with floats.
+        if (
+            (type(value) is int and value <= sys.float_info.max)
+            or (type(value) is float and math.isfinite(value))
+        )
+        and value >= 0
+    }
+
+
+def _project_time_buckets(
+    timestamps: Sequence[Any],
+    *,
+    filters: SessionFilters,
+    granularity: str,
+    tz_offset: str,
+) -> list[dict[str, Any]]:
+    """One activity sweep; work is linear in sessions, buckets and sparse output."""
+    if not timestamps:
+        return []
+    lower = (
+        int(filters.since)
+        if filters.since is not None
+        else min(row.started for row in timestamps)
+    )
+    upper = (
+        int(filters.until)
+        if filters.until is not None
+        else int(datetime.now(UTC).timestamp() * 1_000_000)
+    )
+    if upper <= lower:
+        return []
+    seconds, fmt = _granularity(granularity)
+    size = seconds * 1_000_000
+    offset = _tz_seconds(tz_offset) * 1_000_000
+    grid_start = (lower + offset) // size * size - offset
+    count = (upper - grid_start + size - 1) // size
+    if count > MAX_TIME_BUCKETS:
+        raise ValueError("Range too long for this granularity")
+    changes: list[dict[str, int]] = [{} for _ in range(count + 1)]
+    for name, started, ended in timestamps:
+        if ended < lower or started >= upper:
+            continue
+        first = max(0, (started - grid_start) // size)
+        last = min(count - 1, (ended - grid_start) // size)
+        if first <= last:
+            changes[first][name] = changes[first].get(name, 0) + 1
+            changes[last + 1][name] = changes[last + 1].get(name, 0) - 1
+    active: dict[str, int] = {}
+    rows = []
+    for index in range(count):
+        for name, delta in changes[index].items():
+            value = active.get(name, 0) + delta
+            if value:
+                active[name] = value
+            else:
+                active.pop(name, None)
+        key = grid_start + index * size
+        rows.append(
+            {
+                "key": key,
+                "period": key + offset,
+                "start": datetime.fromtimestamp(
+                    max(key, lower) / 1_000_000, UTC
+                ).isoformat(),
+                "end": datetime.fromtimestamp(
+                    min(key + size, upper) / 1_000_000, UTC
+                ).isoformat(),
+                "by_project": dict(active),
+            }
+        )
+    _format_periods(rows, fmt, 1_000_000)
+    return rows
+
+
+def aggregate_session_projects(
+    *,
+    filters: SessionFilters,
+    granularity: str = "day",
+    tz_offset: str = "+00:00",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Project lifetime totals from session rows in the overlapping window."""
+    conditions = [*_session_filters(filters), SessionRecord.project_name.is_not(None)]
+    totals = [
+        func.sum(getattr(SessionRecord, key)).label(key) for key in _PROJECT_TOTALS
+    ]
+    agent = func.coalesce(SessionRecord.client_source, "")
+    with get_engine(db_path).connect() as connection:
+        groups = connection.execute(
+            select(
+                SessionRecord.project_name.label("key"),
+                func.count().label("session_count"),
+                *totals,
+                func.max(SessionRecord.ended).label("last_active"),
+            )
+            .where(*conditions)
+            .group_by(SessionRecord.project_name)
+            .order_by(
+                func.sum(SessionRecord.total_cost_usd).desc(),
+                SessionRecord.project_name,
+            )
+        ).all()
+        agents = connection.execute(
+            select(
+                SessionRecord.project_name,
+                agent.label("agent"),
+                func.count().label("session_count"),
+            )
+            .where(*conditions)
+            .group_by(SessionRecord.project_name, agent)
+        ).all()
+        timestamps = connection.execute(
+            select(
+                SessionRecord.project_name, SessionRecord.started, SessionRecord.ended
+            ).where(*conditions)
+        ).all()
+    agent_counts: dict[str | None, dict[str, int]] = {}
+    for row in agents:
+        counts = agent_counts.setdefault(row.project_name, {})
+        counts[row.agent] = counts.get(row.agent, 0) + row.session_count
+    projects = []
+    for row in groups:
+        project = dict(row._mapping)
+        for key in _PROJECT_TOTALS:
+            project[key] = (
+                float(project[key] or 0)
+                if key == "total_cost_usd"
+                else int(project[key] or 0)
+            )
+        project["agents"] = agent_counts.get(row.key, {})
+        projects.append(project)
+    return {
+        "projects": projects,
+        "over_time": _project_time_buckets(
+            timestamps,
+            filters=filters,
+            granularity=granularity,
+            tz_offset=tz_offset,
+        ),
+    }
+
+
+def session_project_detail(
+    *,
+    name: str,
+    filters: SessionFilters,
+    db_path: str | None = None,
+) -> dict[str, Any] | None:
+    filters = replace(filters, project=name)
+    conditions = _session_filters(filters)
+    models: dict[str, float] = {}
+    tools: dict[str, float] = {}
+    with get_engine(db_path).connect() as connection:
+        totals = connection.execute(
+            select(
+                func.count().label("session_count"),
+                func.sum(SessionRecord.failed_requests).label("failed_requests"),
+                func.sum(SessionRecord.latency_sum_ms).label("latency_sum_ms"),
+                func.min(SessionRecord.started).label("first_started"),
+            ).where(*conditions)
+        ).one()
+        if not totals.session_count:
+            return None
+        # Stream just the two JSON columns; never materialize full session rows.
+        maps = connection.execute(
+            select(
+                SessionRecord.models_json,
+                SessionRecord.tool_calls_json,
+            )
+            .where(*conditions)
+            .execution_options(yield_per=500)
+        )
+        for models_json, tools_json in maps:
+            for combined, payload in ((models, models_json), (tools, tools_json)):
+                for key, value in _numeric_json_map(payload).items():
+                    combined[key] = combined.get(key, 0) + value
+    return {
+        "key": name,
+        "failed_requests": int(totals.failed_requests or 0),
+        "latency_sum_ms": float(totals.latency_sum_ms or 0),
+        "first_started": totals.first_started,
+        "models": dict(
+            sorted(models.items(), key=lambda item: (-item[1], item[0]))[:5]
+        ),
+        "tools": dict(sorted(tools.items(), key=lambda item: (-item[1], item[0]))[:5]),
+        "recent_sessions": fetch_sessions(filters=filters, limit=10, db_path=db_path),
+    }
+
+
 def _active_session_buckets(
     timestamps: Sequence[Any],
     *,
@@ -793,7 +1002,7 @@ def _active_session_buckets(
     lower = (
         int(filters.since)
         if filters.since is not None
-        else min(row.started for row in timestamps)
+        else min(row[0] for row in timestamps)
     )
     upper = (
         int(filters.until)
@@ -852,6 +1061,7 @@ def aggregate_session_context(
             Usage.model.label("model"),
             Usage.total_cost_usd.label("cost"),
             Usage.latency_ms.label("latency_ms"),
+            Usage.status.label("status"),
             (
                 func.coalesce(Usage.prompt_tokens, 0)
                 + func.coalesce(Usage.cache_creation_tokens, 0)
@@ -865,15 +1075,21 @@ def aggregate_session_context(
     # Width comes from the same snapshot as the numbering, so a concurrent
     # insert cannot add a 201st bucket.
     width = (numbered.c.total + MAX_CONTEXT_POINTS - 1) // MAX_CONTEXT_POINTS
-    bucketed = select(
-        numbered,
-        func.row_number()
-        .over(
-            partition_by=(numbered.c.request - 1) // width,
-            order_by=(numbered.c.context.desc(), numbered.c.request),
+    # Failed requests (e.g. HTTP 500) record no prompt tokens; drop them before
+    # ranking so they neither plot as 0 nor hide a bucket's successful peak.
+    bucketed = (
+        select(
+            numbered,
+            func.row_number()
+            .over(
+                partition_by=(numbered.c.request - 1) // width,
+                order_by=(numbered.c.context.desc(), numbered.c.request),
+            )
+            .label("rank"),
         )
-        .label("rank"),
-    ).subquery()
+        .where(or_(numbered.c.status.is_(None), numbered.c.status < 400))
+        .subquery()
+    )
     with get_engine(db_path).connect() as connection:
         rows = connection.execute(
             select(
@@ -890,7 +1106,14 @@ def aggregate_session_context(
             .order_by(bucketed.c.request)
         ).all()
     if not rows:
-        return {"points": [], "peak_tokens": 0, "request_count": 0}
+        # Every request failed (or none exist): no points, but the real count.
+        with get_engine(db_path).connect() as connection:
+            count = connection.execute(
+                select(func.count()).where(
+                    Usage.session_id == session_id, Usage.user_id == user_id
+                )
+            ).scalar_one()
+        return {"points": [], "peak_tokens": 0, "request_count": count}
     # Each point is the bucket's peak request, so its number, id and details match its value.
     points = [
         {

@@ -6,6 +6,7 @@ import { AppProvider, useApp } from './contexts/AppContext'
 import { AppShell } from './components/Sidebar'
 import { LoginGate } from './components/LoginGate'
 import { DashboardPage } from './pages/DashboardPage'
+import { ProjectsPage } from './pages/ProjectsPage'
 import { SessionsPage } from './pages/SessionsPage'
 import { LogsPage } from './pages/LogsPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -23,6 +24,7 @@ function AppLayout() {
       <Routes>
         <Route path="/dashboard" element={<DashboardPage onNavigateToLogs={handleNavigateToLogs} />} />
         <Route path="/sessions" element={<SessionsPage onNavigateToLogs={handleNavigateToLogs} />} />
+        <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/logs" element={<LogsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

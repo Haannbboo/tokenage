@@ -17,6 +17,7 @@ const ASCII_ART = `████████  ██████  ██   ██
 const WORKSPACE: { to: string; label: string; icon: IconName }[] = [
   { to: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
   { to: '/sessions', label: 'Sessions', icon: 'sessions' },
+  { to: '/projects', label: 'Projects', icon: 'projects' },
   { to: '/logs', label: 'Request Logs', icon: 'logs' },
 ]
 const SETTINGS = { to: '/settings', label: 'Settings', icon: 'settings' as const }
@@ -223,11 +224,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav className="sidebar-nav" aria-label={t('Main')}>
           <ul className="sidebar-list">
             {WORKSPACE.map(item => <SidebarLink key={item.to} {...item} onNavigate={closeNavigation} />)}
-            <li>
-              <span className="sidebar-link is-disabled" role="link" aria-disabled="true" aria-label={`${t('Projects')} · ${t('Soon')}`} data-tip={`${t('Projects')} · ${t('Soon')}`}>
-                <Icon name="projects" /><span className="sidebar-label has-pill">{t('Projects')}<span className="pill">{t('Soon')}</span></span>
-              </span>
-            </li>
           </ul>
           <ul className="sidebar-list sidebar-foot">
             <SidebarLink {...SETTINGS} onNavigate={closeNavigation} />

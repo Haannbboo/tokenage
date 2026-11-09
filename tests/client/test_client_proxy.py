@@ -290,6 +290,40 @@ def test_upstream_error_relayed_and_reported(cfg):
     assert reports[0].status == 429
 
 
+@pytest.mark.parametrize(
+    ("path", "body", "effort"),
+    [
+        ("/v1/chat/completions", {"reasoning_effort": "High"}, "high"),
+        ("/v1/responses", {"reasoning": {"effort": "minimal"}}, "minimal"),
+        ("/v1/messages", {"output_config": {"effort": "max"}}, "max"),
+        ("/v1/messages", {"thinking": {"budget_tokens": 1024}}, None),
+        ("/v1/chat/completions", {"reasoning_effort": "turbo"}, None),
+        ("/v1/responses", {"reasoning": "high"}, None),
+    ],
+)
+@pytest.mark.parametrize("stream", [False, True])
+def test_request_effort_is_reported_and_still_forwarded(
+    cfg, path, body, effort, stream
+):
+    def respond(request):
+        if not stream:
+            return ok_json(request)
+        return httpx.Response(
+            200, content=sse({"usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+        )
+
+    up = Upstream(respond)
+    reports = []
+    model = "claude-x" if path == "/v1/messages" else "test-model"
+    make_client(cfg, up, reports).post(
+        path, json={"model": model, "stream": stream, **body}
+    )
+    (rep,) = reports
+    assert rep.effort == effort
+    sent = json.loads(up.requests[0].content)
+    assert all(sent[key] == value for key, value in body.items())
+
+
 def sse(*events: dict) -> bytes:
     return (
         b"".join(b"data: " + json.dumps(e).encode() + b"\n\n" for e in events)

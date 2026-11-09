@@ -9,6 +9,7 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from protocol.usage_report import normalize_effort
 from src.config.app import CONFIG
 
 from .database import init_db
@@ -437,6 +438,7 @@ def _extract_claude_fields(
         "base_url": metadata.base_url,
         "base_url_provider": metadata.provider,
         "base_url_source": metadata.source,
+        "effort": normalize_effort(_attr(attrs, "effort")),
         "user_id": user_id,
     }
 
@@ -520,6 +522,8 @@ def _extract_opencode_fields(
         "base_url": metadata.base_url,
         "base_url_provider": metadata.provider,
         "base_url_source": metadata.source,
+        # The plugin's variant name; a custom (non-level) name is stored as NULL.
+        "effort": normalize_effort(_attr(attrs, "variant")),
         "user_id": user_id,
         "_tool_info": tool_info,
     }
@@ -708,6 +712,8 @@ def _extract_codex_fields(
         "base_url": metadata.base_url,
         "base_url_provider": metadata.provider,
         "base_url_source": metadata.source,
+        # Absent on the startup prewarm response: NULL, not "default".
+        "effort": normalize_effort(_attr(attrs, "model_reasoning_effort")),
         "user_id": user_id,
         "_tool_info": tool_info,
     }
@@ -955,6 +961,7 @@ _QUEUE_ATTRIBUTES = frozenset(
         "call_id",
         "conversation.id",
         "duration_ms",
+        "effort",
         "event.kind",
         "event.name",
         "event.timestamp",
@@ -964,6 +971,7 @@ _QUEUE_ATTRIBUTES = frozenset(
         "input_tokens",
         "message.id",
         "model",
+        "model_reasoning_effort",
         "output_token_count",
         "output_tokens",
         "prompt.id",
@@ -976,6 +984,7 @@ _QUEUE_ATTRIBUTES = frozenset(
         "tool_name",
         "tool_use_id",
         "ttft_ms",
+        "variant",
     ]
 )
 

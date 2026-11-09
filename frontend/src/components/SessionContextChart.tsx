@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { formatCost, formatLatency, formatNumber, formatTime } from '../utils'
 import { t } from '../i18n'
 import { ChartTooltip, TooltipRow, TooltipTitle } from '../charts/ChartTooltip'
+import type { EffortMix } from '../types'
 
 type ContextPoint = { request: number; id: string; ts: number; model: string; cost_usd: number; latency_ms: number | null; context_tokens: number }
-export type SessionContext = { points: ContextPoint[]; peak_tokens: number; request_count: number }
+export type SessionContext = { points: ContextPoint[]; peak_tokens: number; request_count: number; effort_mix: EffortMix }
 const compact = (value: number) => value >= 1000 ? `${Math.round(value / 1000)}k` : String(value)
 const TIP_WIDTH = 240
 // Half the width of the "Peak 187k" label, which the tooltip must not cover.

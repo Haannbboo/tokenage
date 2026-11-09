@@ -202,6 +202,20 @@ def migrate_database(db_path: str | None = None) -> list[str]:
         applied.append("sessions.project_name")
         insp = inspect(engine)
 
+    # Nullable, no default: a catalog-only change. The lock timeout keeps the
+    # brief exclusive lock from queueing live ingest behind a long transaction.
+    if not any(c["name"] == "effort" for c in insp.get_columns("usage")):
+        with engine.begin() as connection:
+            guard = ""
+            if engine.dialect.name == "postgresql":
+                connection.execute(text("SET LOCAL lock_timeout = '5s'"))
+                guard = "IF NOT EXISTS "
+            connection.execute(
+                text(f"ALTER TABLE usage ADD COLUMN {guard}effort VARCHAR(32)")
+            )
+        applied.append("usage.effort")
+        insp = inspect(engine)
+
     if not any(c["name"] == "picture" for c in insp.get_columns("users")):
         with engine.begin() as connection:
             # Two nodes can migrate at once; SQLite has no IF NOT EXISTS here.

@@ -37,6 +37,7 @@ def build_report(
     latency_ms: int,
     ttft_ms: int | None,
     status: int,
+    effort: Any = None,
 ) -> UsageReport:
     """Raises pydantic.ValidationError if upstream sent unusable values."""
     return UsageReport(
@@ -49,6 +50,7 @@ def build_report(
         latency_ms=latency_ms,
         ttft_ms=ttft_ms,
         status=status,
+        effort=effort,
         base_url=base_url,
         tool_calls=[
             ToolCallReport(

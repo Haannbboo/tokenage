@@ -172,6 +172,8 @@ class Usage(Base):
     ttft_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tool_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cache_creation_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Reasoning effort level from protocol.usage_report.normalize_effort; NULL = unknown.
+    effort: Mapped[str | None] = mapped_column(String(32), nullable=True)
     input_cost_usd: Mapped[Decimal] = mapped_column(
         Numeric(18, 8), nullable=False, default=0, server_default=text("0")
     )

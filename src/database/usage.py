@@ -127,6 +127,7 @@ def merge_duplicate_usage(
     user_id: str,
     device_id: str,
     session: Session,
+    effort: str | None = None,
 ) -> tuple[Usage, bool] | None:
     """Find a same-shaped usage row and avoid inserting a duplicate.
 
@@ -139,9 +140,10 @@ def merge_duplicate_usage(
     vice versa) so a request captured by both never double-counts. The match
     includes the device: identical events from two machines never merge.
 
-    Only `session_id` is merged onto the existing row. OTLP
-    is treated as authoritative for session_id (it carries the agent's real
-    session, while the proxy never has one): an incoming OTLP call can
+    Only `session_id` and `effort` are merged onto the existing row. OTLP
+    is treated as authoritative for both (it carries the agent's real
+    session, which the proxy never has, and the effort the agent applied
+    rather than the one requested): an incoming OTLP call can
     overwrite these fields, an incoming proxy call only fills them in if the
     existing row doesn't already have them. Other fields (tokens, cost,
     latency, status, provider, ...) are left untouched even on a match:
@@ -206,7 +208,12 @@ def merge_duplicate_usage(
     if existing is None:
         return None
 
+    # Effort is not in any rollup, so it is safe to set on a merge.
+    if effort is not None and (is_otlp or existing.effort is None):
+        existing.effort = effort
+
     if is_otlp and session_id is not None and existing.session_id == session_id:
+        session.flush()
         return existing, True
 
     session_id_was_empty = not existing.session_id
@@ -1362,6 +1369,7 @@ def fetch_recent_usage(
             Usage.output_cost_usd,
             Usage.total_cost_usd,
             Usage.status,
+            Usage.effort,
             Usage.device_id,
             Device.device_name.label("device_name"),
             Usage.base_url_id,

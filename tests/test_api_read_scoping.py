@@ -223,6 +223,7 @@ def test_foreign_ids_and_filters_cannot_expand_scope(
             "points": [],
             "peak_tokens": 0,
             "request_count": 0,
+            "effort_mix": [],
         }
         assert client.get("/usage", params={"tool_name": f"{owner}-tool"}).json() == []
         assert client.get(

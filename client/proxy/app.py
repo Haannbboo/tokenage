@@ -26,6 +26,7 @@ from client.proxy.usage import (
     extract_tool_calls,
     find_stream_usage,
     parse_client_source,
+    request_effort,
 )
 
 REQUEST_TIMEOUT_SECONDS = 300
@@ -148,6 +149,7 @@ class ProxyApp:
         path: str,
         started_at: float,
         prompt_length: int,
+        effort: Any,
     ) -> Response:
         """Open an upstream streaming connection, check status, and relay or error."""
         req = self.http.build_request("POST", url, headers=headers, content=body)
@@ -214,6 +216,7 @@ class ProxyApp:
                     latency_ms=int((time.monotonic() - started_at) * 1000),
                     ttft_ms=ttft_ms,
                     status=upstream.status_code,
+                    effort=effort,
                 )
 
         # The background task closes the upstream if the caller disconnects
@@ -242,6 +245,7 @@ class ProxyApp:
         except NoProvider as exc:
             return _detail(str(exc), 404)
         prompt_length = compute_prompt_length(body_json)
+        effort = request_effort(body_json)
 
         if upstream_model != model:
             body_json["model"] = upstream_model
@@ -268,6 +272,7 @@ class ProxyApp:
                 path=path,
                 started_at=started_at,
                 prompt_length=prompt_length,
+                effort=effort,
             )
 
         response = await self.http.post(url, headers=headers, content=body)
@@ -313,6 +318,7 @@ class ProxyApp:
             latency_ms=latency_ms,
             ttft_ms=None,
             status=response.status_code,
+            effort=effort,
         )
         return relayed
 

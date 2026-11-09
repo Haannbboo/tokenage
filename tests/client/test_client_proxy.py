@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import socket
@@ -383,6 +384,33 @@ def test_chat_completions_stream_requests_usage_but_keeps_caller_options(cfg):
     client.post("/v1/chat/completions", json={**body, "stream_options": own})
     sent = [json.loads(r.content)["stream_options"] for r in up.requests]
     assert sent == [{"include_usage": True}, own]
+
+
+def test_stream_ignores_caller_accept_encoding_and_relays_decoded(cfg):
+    # OpenCode (Bun fetch) asks for br/zstd, which httpx can't decode; the
+    # proxy then relayed raw zstd as text/event-stream and parsed no usage.
+    data = sse(
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        {"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 2}},
+    )
+
+    def respond(request):
+        assert not {"br", "zstd"} & {
+            e.strip() for e in request.headers["accept-encoding"].split(",")
+        }
+        return httpx.Response(
+            200, content=gzip.compress(data), headers={"content-encoding": "gzip"}
+        )
+
+    reports = []
+    r = make_client(cfg, Upstream(respond), reports).post(
+        "/v1/chat/completions",
+        json={"model": "test-model", "stream": True},
+        headers={"accept-encoding": "gzip, deflate, br, zstd"},
+    )
+    assert "content-encoding" not in r.headers and r.content == data
+    (rep,) = reports
+    assert (rep.prompt_tokens, rep.completion_tokens) == (4, 2)
 
 
 def test_streaming_upstream_error_is_relayed(cfg):

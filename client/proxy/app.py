@@ -84,10 +84,13 @@ def build_forward_headers(
         # The caller's credential is whatever its SDK insists on sending
         # (often a placeholder), and x-tokenage-token is ours: never forward
         # either; the provider key is the only credential that goes upstream.
+        # accept-encoding is httpx's to set: it decodes the body before we
+        # relay it, and a caller's br/zstd would come back undecoded.
         if k.lower()
         not in {
             "host",
             "content-length",
+            "accept-encoding",
             "authorization",
             "x-api-key",
             "x-tokenage-token",

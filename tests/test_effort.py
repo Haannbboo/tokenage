@@ -144,13 +144,15 @@ def _proxy_report(effort: str | None) -> dict:
 @pytest.mark.parametrize(
     ("variant", "proxy_effort", "expected"),
     [
-        ("max", "low", "max"),  # plugin wins over a different proxy value
+        ("max", "low", "low"),  # proxy reflects the request sent
+        ("default", "high", "high"),  # proxy replaces an unselected variant
         (None, "low", "low"),  # proxy fills an empty effort
+        ("max", None, "max"),  # missing proxy effort preserves the plugin value
         ("my-custom", "high", "high"),  # a custom variant counts as empty
         ("default", None, "default"),
     ],
 )
-def test_opencode_through_proxy_keeps_one_row_and_plugin_effort(
+def test_opencode_through_proxy_keeps_one_row_and_request_effort(
     api_module, fresh_db, monkeypatch, proxy_first, variant, proxy_effort, expected
 ):
     from src.auth.tokens import mint_token
@@ -227,7 +229,7 @@ def effort_rows(fresh_db):
                         # "other" reuses session id s1: the project join must
                         # still exclude it (sessions.session_id is the PK).
                         session_id=session_id,
-                        model="m",
+                        model="selected" if session_id == "s1" and i == 0 else "m",
                         provider="p",
                         endpoint="otlp",
                         ts=TS + i,
@@ -274,10 +276,14 @@ def test_project_effort_mix_joins_sessions_and_is_user_scoped(
         assert detail is None
         return
     assert [(m["effort"], m["requests"]) for m in detail["effort_mix"]] == expected
-    # The device/provider/model EXISTS filter must still apply inside the join.
+    # Match s1 by one model, but include its other model's requests as well.
+    # Correlating the EXISTS to each outer usage row would lose those requests.
     model_filtered = session_project_detail(
         name="orchard",
-        filters=SessionFilters(user_id="me", model="m"),
+        filters=SessionFilters(user_id="me", model="selected"),
         db_path=effort_rows.db_path,
     )
-    assert model_filtered["effort_mix"] == detail["effort_mix"]
+    assert model_filtered["effort_mix"] == [
+        {"effort": "high", "requests": 2},
+        {"effort": None, "requests": 1},
+    ]

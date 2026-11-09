@@ -209,7 +209,13 @@ def merge_duplicate_usage(
         return None
 
     # Effort is not in any rollup, so it is safe to set on a merge.
-    if effort is not None and (is_otlp or existing.effort is None):
+    # Proxy effort reflects the request sent and wins whenever present.
+    # OTLP/plugin effort fills missing values or replaces a stored default.
+    if effort is not None and (
+        not is_otlp
+        or existing.effort is None
+        or (existing.effort == "default" and effort != "default")
+    ):
         existing.effort = effort
 
     if is_otlp and session_id is not None and existing.session_id == session_id:

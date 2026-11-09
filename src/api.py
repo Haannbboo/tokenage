@@ -888,8 +888,8 @@ async def ingest_usage(request: Request):
         raise HTTPException(status_code=422, detail="invalid usage report") from None
     fields = report.model_dump(exclude={"tool_calls", "base_url"})
     if fields["effort"] is None:
-        # ponytail: keeps effort-less reports readable by a not-yet-upgraded
-        # consumer during a rolling deploy; drop once all nodes take `effort`.
+        # Omit absent effort for old consumers. Reports with effort still need
+        # consumers that accept it or tolerate unknown optional fields.
         del fields["effort"]
     if fields["ts"] is None:
         fields["ts"] = time.time_ns() // 1000

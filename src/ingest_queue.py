@@ -8,6 +8,7 @@ redelivers up to one pass (500 events); these rare duplicates are accepted.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import threading
 import time
@@ -21,6 +22,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from .database.errors import TRANSIENT_DB_ERRORS
+from .recorder import record_usage
 from .shared_state import (
     Event,
     QueueFull,
@@ -31,6 +33,7 @@ from .shared_state import (
 )
 
 log = logging.getLogger(__name__)
+_USAGE_FIELDS = frozenset(inspect.signature(record_usage).parameters)
 POLL_SECONDS = 0.25
 # A pass holds the SQLite write lock (and Postgres row locks) until it commits;
 # keep it short so API writers get gaps, well under the 10s lease.
@@ -95,10 +98,13 @@ class Consumer:
                 session=session,
             )
         elif payload["kind"] == "usage":
-            from .recorder import record_usage
-
+            fields = payload["fields"]
+            dropped = fields.keys() - _USAGE_FIELDS
+            if dropped:
+                # New producers may add optional metadata; never log its values.
+                log.warning("Ignoring unknown usage fields: %.512r", sorted(dropped))
             record_usage(
-                **payload["fields"],
+                **{key: value for key, value in fields.items() if key in _USAGE_FIELDS},
                 user_id=payload["user_id"],
                 device_id=payload["device_id"],
                 session=session,

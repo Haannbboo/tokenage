@@ -19,7 +19,7 @@ from typing import Any
 from sqlalchemy import and_, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from ..utils import secs_to_micros
 from .engine import get_engine
@@ -943,6 +943,34 @@ def aggregate_session_projects(
     }
 
 
+def _effort_mix(
+    connection: Any, session_conditions: Sequence[Any] = (), **usage_match: Any
+) -> list[dict]:
+    """Request count per effort level (None = unknown), most requests first.
+
+    *usage_match* filters usage columns by equality; *session_conditions*
+    (from _session_filters) restrict it to matching sessions.
+    """
+    # Aliased so the usage EXISTS inside _session_filters stays uncorrelated.
+    usage = aliased(Usage)
+    query = select(usage.effort, func.count().label("requests")).filter_by(
+        **usage_match
+    )
+    if session_conditions:
+        query = query.join(
+            SessionRecord,
+            and_(
+                SessionRecord.session_id == usage.session_id,
+                SessionRecord.user_id == usage.user_id,
+            ),
+        ).where(*session_conditions)
+    rows = connection.execute(query.group_by(usage.effort)).all()
+    return [
+        {"effort": effort, "requests": requests}
+        for effort, requests in sorted(rows, key=lambda r: (-r[1], r[0] or ""))
+    ]
+
+
 def session_project_detail(
     *,
     name: str,
@@ -977,6 +1005,7 @@ def session_project_detail(
             for combined, payload in ((models, models_json), (tools, tools_json)):
                 for key, value in _numeric_json_map(payload).items():
                     combined[key] = combined.get(key, 0) + value
+        effort_mix = _effort_mix(connection, conditions, user_id=filters.user_id)
     return {
         "key": name,
         "failed_requests": int(totals.failed_requests or 0),
@@ -986,6 +1015,7 @@ def session_project_detail(
             sorted(models.items(), key=lambda item: (-item[1], item[0]))[:5]
         ),
         "tools": dict(sorted(tools.items(), key=lambda item: (-item[1], item[0]))[:5]),
+        "effort_mix": effort_mix,
         "recent_sessions": fetch_sessions(filters=filters, limit=10, db_path=db_path),
     }
 
@@ -1091,6 +1121,7 @@ def aggregate_session_context(
         .subquery()
     )
     with get_engine(db_path).connect() as connection:
+        effort_mix = _effort_mix(connection, session_id=session_id, user_id=user_id)
         rows = connection.execute(
             select(
                 bucketed.c.request,
@@ -1113,7 +1144,12 @@ def aggregate_session_context(
                     Usage.session_id == session_id, Usage.user_id == user_id
                 )
             ).scalar_one()
-        return {"points": [], "peak_tokens": 0, "request_count": count}
+        return {
+            "points": [],
+            "peak_tokens": 0,
+            "request_count": count,
+            "effort_mix": effort_mix,
+        }
     # Each point is the bucket's peak request, so its number, id and details match its value.
     points = [
         {
@@ -1132,4 +1168,5 @@ def aggregate_session_context(
         "points": points,
         "peak_tokens": max(p["context_tokens"] for p in points),
         "request_count": count,
+        "effort_mix": effort_mix,
     }

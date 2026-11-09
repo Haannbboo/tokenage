@@ -887,6 +887,10 @@ async def ingest_usage(request: Request):
         # JSON, UTF-8 and pydantic errors are ValueErrors; deep nesting recurses.
         raise HTTPException(status_code=422, detail="invalid usage report") from None
     fields = report.model_dump(exclude={"tool_calls", "base_url"})
+    if fields["effort"] is None:
+        # Omit absent effort for old consumers. Reports with effort still need
+        # consumers that accept it or tolerate unknown optional fields.
+        del fields["effort"]
     if fields["ts"] is None:
         fields["ts"] = time.time_ns() // 1000
     fields.update(

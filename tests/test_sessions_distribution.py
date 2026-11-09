@@ -599,6 +599,7 @@ def test_session_context_buckets_and_cap(sessions_api):
         "points": [],
         "peak_tokens": 0,
         "request_count": 0,
+        "effort_mix": [],
     }
 
 
@@ -665,7 +666,12 @@ def test_session_context_all_failed_keeps_request_count(sessions_api):
     client, db = sessions_api
     _add_context_rows(db, "allfail", 3, lambda i: 500)
     result = client.get("/sessions/allfail/context").json()
-    assert result == {"points": [], "peak_tokens": 0, "request_count": 3}
+    assert result == {
+        "points": [],
+        "peak_tokens": 0,
+        "request_count": 3,
+        "effort_mix": [{"effort": None, "requests": 3}],
+    }
 
 
 def test_session_context_buckets_rank_only_successful_requests(sessions_api):

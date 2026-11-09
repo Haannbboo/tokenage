@@ -57,6 +57,7 @@ def record_usage(
     base_url: str | None = None,
     base_url_provider: str | None = None,
     base_url_source: str | None = None,
+    effort: str | None = None,
     tool_calls: Sequence[tuple[str, str]] = (),
     session: Session,
 ) -> Usage | None:
@@ -97,6 +98,7 @@ def record_usage(
         status=status,
         ts=usage_ts,
         session_id=session_id,
+        effort=effort,
         user_id=user_id,
         device_id=device_id,
         session=session,
@@ -160,6 +162,7 @@ def record_usage(
         latency_ms=latency_ms,
         ttft_ms=ttft_ms,
         status=status,
+        effort=effort,
         base_url_id=base_url_id,
         price_snapshot_id=snapshot_id,
         **costs,

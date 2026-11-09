@@ -165,10 +165,12 @@ def test_detail_totals_and_recent_session_shape(projects_api):
         "first_started",
         "models",
         "tools",
+        "effort_mix",
         "recent_sessions",
     }
     assert data["models"] == {"model-b": 4, "model-a": 2}
     assert data["tools"] == {"Read": 6, "Bash": 4}
+    assert data["effort_mix"] == [{"effort": None, "requests": 2}]
     assert (
         data["recent_sessions"]
         == client.get(

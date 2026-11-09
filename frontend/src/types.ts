@@ -61,6 +61,7 @@ export type UsageRow = {
   output_cost_usd: number | null
   total_cost_usd: number | null
   status: number | null
+  effort: string | null
   device_id: string | null
   device_name: string | null
   price_snapshot_id: number | null
@@ -259,9 +260,12 @@ export type ProjectSummary = {
 }
 export type ProjectBucket = { key: number; period: string; start: string; end: string; by_project: Record<string, number> }
 export type ProjectsResponse = { projects: ProjectSummary[]; over_time: ProjectBucket[] }
+// Requests per reasoning effort level; effort null = not reported.
+export type EffortMix = { effort: string | null; requests: number }[]
 export type ProjectDetail = {
   key: string
   failed_requests: number
   latency_sum_ms: number; first_started: number
   models: Record<string, number>; tools: Record<string, number>; recent_sessions: SessionSummary[]
+  effort_mix: EffortMix
 }

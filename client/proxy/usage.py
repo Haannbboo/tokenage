@@ -232,3 +232,16 @@ def compute_prompt_length(body_json: dict[str, Any]) -> int:
         if isinstance(item, dict) and item.get("role") == "user":
             total += _content_text_length(item.get("content"))
     return total
+
+
+def request_effort(body_json: dict[str, Any]) -> Any:
+    """The reasoning effort the caller asked for, unnormalized (UsageReport does it).
+
+    OpenAI chat ``reasoning_effort``, OpenAI responses ``reasoning.effort``,
+    Anthropic messages ``output_config.effort``. Absent means provider default.
+    """
+    for key, nested in (("reasoning", "effort"), ("output_config", "effort")):
+        value = body_json.get(key)
+        if isinstance(value, dict) and value.get(nested) is not None:
+            return value[nested]
+    return body_json.get("reasoning_effort")

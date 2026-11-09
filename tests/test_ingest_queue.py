@@ -14,6 +14,48 @@ def _no_pass_deadline(api_module, monkeypatch):
     monkeypatch.setattr("src.ingest_queue.SQLITE_PASS_SECONDS", 3600)
 
 
+@pytest.mark.parametrize("unknown_key", ["future_optional_field", "x" * 2000])
+def test_unknown_usage_fields_preserve_tokens(
+    api_module, fresh_db, caplog, unknown_key
+):
+    from src.ingest_queue import Consumer
+    from src.shared_state import get_shared_state
+
+    store = get_shared_state()
+    store.publish(
+        "user",
+        [
+            {
+                "kind": "usage",
+                "user_id": "user",
+                "device_id": "device",
+                "fields": {
+                    "provider": "test",
+                    "model": "test-model",
+                    "endpoint": "test",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                    unknown_key: "SECRET VALUE",
+                },
+            }
+        ],
+    )
+    with caplog.at_level(logging.WARNING, logger="src.ingest_queue"):
+        assert Consumer(store).drain() == 1
+    with fresh_db.database_module.get_engine().connect() as conn:
+        row = conn.execute(
+            text("SELECT prompt_tokens, completion_tokens, total_tokens FROM usage")
+        ).one()
+    assert tuple(row) == (10, 5, 15)
+    warnings = [r for r in caplog.records if r.name == "src.ingest_queue"]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert unknown_key[:64] in message
+    assert len(message) <= 550
+    assert "SECRET VALUE" not in caplog.text
+
+
 def test_poison_event_does_not_block_200_events(
     api_module, fresh_db, monkeypatch, caplog
 ):

@@ -19,8 +19,16 @@
 }
 
 :80 {
+	# Keep both limits equal to the server's otlp.max_body_bytes ("MB" is
+	# 1,000,000 bytes). Caddy streams bodies without checking Content-Length,
+	# so reject a declared oversized body before dialing: an upstream that
+	# rejects it mid-upload counts as a passive health failure.
+	@too_large expression {http.request.header.Content-Length} != "" && int({http.request.header.Content-Length}) > 2000000
+	respond @too_large 413 {
+		close
+	}
 	request_body {
-		max_size 10MiB
+		max_size 2MB
 	}
 	reverse_proxy {
 		# With keepalive off below, hostnames resolve anew for every request:
@@ -40,9 +48,8 @@
 		lb_try_interval 250ms
 		lb_retry_match expression false
 
-		# Active checks every 5s remove dead upstreams; dial failures already
-		# retry another upstream within lb_try_duration. Passive health is off:
-		# rejecting an oversized request body can look like an upstream failure.
+		fail_duration 10s
+		max_fails 1
 		health_uri /version
 		health_method GET
 		health_interval 5s

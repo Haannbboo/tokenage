@@ -387,6 +387,22 @@ async def auth_google_login(request: Request):
     return response
 
 
+def _mint_google_web_session(
+    email: str, device_name: str, name: str | None, picture: str | None
+) -> str:
+    """Capture the user's epoch and mint/update the session off the event loop."""
+    user = get_or_create_user(email)
+    plaintext_token, user = mint_token(
+        email,
+        kind="web",
+        device_name=device_name,
+        token_epoch=user.token_epoch,
+    )
+    update_user_name(user.id, name)
+    update_user_picture(user.id, picture)
+    return plaintext_token
+
+
 @router.get("/auth/google/callback")
 async def auth_google_callback(request: Request):
     """Complete the Google flow: verify state, exchange the code, set the cookie."""
@@ -452,11 +468,16 @@ async def auth_google_callback(request: Request):
         # browser cannot replay the callback.
         code_response.delete_cookie(OAUTH_STATE_COOKIE_NAME)
         return code_response
-    plaintext_token, user = mint_token(
-        email, kind="web", device_name=_browser_label(request)
-    )
-    update_user_name(user.id, str(claims.get("name") or "").strip() or None)
-    update_user_picture(user.id, picture)
+    try:
+        plaintext_token = await asyncio.to_thread(
+            _mint_google_web_session,
+            email,
+            _browser_label(request),
+            str(claims.get("name") or "").strip() or None,
+            picture,
+        )
+    except MintRefused:
+        return _frontend_redirect(origin, auth_error="oauth_failed")
     response = _frontend_redirect(origin)
     response.set_cookie(
         SESSION_COOKIE_NAME,

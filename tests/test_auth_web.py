@@ -195,6 +195,40 @@ def test_google_callback_happy_path(api_module, monkeypatch, fresh_db):
     assert body["token"] == {"kind": "web", "device_name": "browser"}
 
 
+def test_google_callback_refused_when_revoke_lands_before_the_mint(
+    api_module, monkeypatch, fresh_db
+):
+    from src.auth import tokens
+
+    _enable_auth(monkeypatch)
+    _mock_google_flow(api_module, monkeypatch)
+    client = TestClient(api_module.app)
+    state = _start_login(api_module, monkeypatch, client)
+    original = _routes_module().mint_token
+
+    def revoke_before_mint(email, *args, **kwargs):
+        tokens.revoke_user_tokens(email)
+        return original(email, *args, **kwargs)
+
+    monkeypatch.setattr(_routes_module(), "mint_token", revoke_before_mint)
+    callback = client.get(
+        f"/auth/google/callback?code=the-code&state={state}", follow_redirects=False
+    )
+
+    assert callback.status_code == 302
+    assert callback.headers["location"] == "/?auth_error=oauth_failed"
+    assert _state_cookie_cleared(callback)
+    assert SESSION_COOKIE not in callback.cookies
+    assert SESSION_COOKIE not in client.cookies
+    assert not any(
+        header.startswith(f"{SESSION_COOKIE}=")
+        for header in callback.headers.get_list("set-cookie")
+    )
+    user = tokens.get_or_create_user("a@example.com")
+    assert user.token_epoch == 1
+    assert tokens.list_user_tokens(user.id) == []
+
+
 @pytest.mark.parametrize(
     "invalid",
     [

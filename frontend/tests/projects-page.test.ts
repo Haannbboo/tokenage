@@ -16,7 +16,7 @@ afterEach(() => { cleanup(); state.loading = false; state.error = false; state.d
 function fixture() {
   const project = { key: 'orchard', session_count: 2, total_cost_usd: 6, request_count: 4, prompt_tokens: 60, cached_tokens: 40, cache_creation_tokens: 20, last_active: 2000000, agents: { codex: 1, opencode: 1 } }
   state.data = { projects: [project, { ...project, key: 'grove' }], over_time: [{ key: 1, period: '2026-04-20', start: '2026-04-20', end: '2026-04-21', by_project: { orchard: 2, grove: 1 } }] }
-  state.detail = { key: project.key, failed_requests: 1, first_started: 1000000, latency_sum_ms: 8000, models: { 'model-a': 6 }, tools: { Read: 4 }, recent_sessions: [{ session_id: 'session-one', client_source: 'codex', ended: 2000000, request_count: 4, total_cost_usd: 6 }] }
+  state.detail = { key: project.key, failed_requests: 1, first_started: 1000000, latency_sum_ms: 8000, models: { 'model-a': 6 }, tools: { Read: 4 }, recent_sessions: [{ session_id: 'session-one', client_source: 'codex', ended: 2000000, request_count: 4, total_cost_usd: 6 }], effort_mix: [{ effort: 'high', requests: 3 }, { effort: null, requests: 1 }] }
 }
 function open(path = '/projects') {
   return render(createElement(MemoryRouter, { initialEntries: [path] }, createElement(Routes, null,
@@ -105,4 +105,17 @@ it('keeps the table and drawer mounted during refresh', () => {
   expect(view.container.querySelector('.projects-table')).toBeTruthy()
   expect(view.container.querySelector('.project-tiles')).toBeTruthy()
   expect(screen.queryByText('Loading...')).toBeNull()
+})
+it('shows the effort mix in the project drawer and hides it when nothing reported effort', () => {
+  fixture()
+  let view = open('/projects?project=orchard')
+  expect(screen.getByRole('img', { name: 'high 100%' })).toBeTruthy()
+  expect(view.container.querySelector('.effort-mix .effort-mix-head span')!.textContent).toBe('3 of 4 requests')
+  for (const effort_mix of [[], [{ effort: null, requests: 4 }], undefined]) {
+    view.unmount()
+    state.detail.effort_mix = effort_mix
+    view = open('/projects?project=orchard')
+    expect(view.container.querySelector('.project-tiles')).toBeTruthy()
+    expect(screen.queryByText('Effort')).toBeNull()
+  }
 })

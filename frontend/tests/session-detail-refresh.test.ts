@@ -41,3 +41,19 @@ it('recovers from a failed usage fetch and retains data during a same-session re
   expect(screen.getByText('context chart')).toBeTruthy()
   expect(screen.queryByText('Loading...')).toBeNull()
 })
+
+it('shows the session effort mix under the stats and hides it when nothing reported effort', async () => {
+  let mix: any[] = [{ effort: 'high', requests: 3 }, { effort: null, requests: 1 }]
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ ok: true, json: async () => url.startsWith('/sessions/') ? { peak_tokens: 1, effort_mix: mix } : [] })))
+  const session = { session_id: 'one', request_count: 4, ended: 1, duration_s: 1, total_tokens: 1, total_cost_usd: 0 } as any
+  const view = render(createElement(SessionDetail, { session, onNavigateToLogs: vi.fn() }))
+  expect((await screen.findByRole('img')).getAttribute('aria-label')).toBe('high 100%')
+  expect(view.container.querySelector('.session-stats + .effort-mix')).toBeTruthy()
+  for (const empty of [[], [{ effort: null, requests: 4 }]]) {
+    cleanup()
+    mix = empty
+    render(createElement(SessionDetail, { session: { ...session, session_id: 'two' }, onNavigateToLogs: vi.fn() }))
+    await screen.findByText('context chart')
+    expect(screen.queryByText('Effort')).toBeNull()
+  }
+})

@@ -442,4 +442,9 @@ export const zh: Record<string, string> = {
   'Spend and token usage across all agents.': '所有代理的费用与 Token 用量。',
   'Every agent session with its requests and cost.': '每个代理会话及其请求与费用。',
   'Individual model requests, newest first.': '逐条模型请求，最新在前。',
+  // Reasoning effort
+  'Effort': '推理强度',
+  '{n} requests': '{n} 条请求',
+  '1 request': '1 条请求',
+  '{n} of {total} requests': '{n} / {total} 条请求',
 }

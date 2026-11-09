@@ -9,6 +9,7 @@ import { distinctColors, formatCost, formatDuration, formatNumber, formatModelNa
 import { t } from '../i18n'
 import { expandableRowProps } from '../expandableRow'
 import { SessionContextChart, type SessionContext } from './SessionContextChart'
+import { EffortMixSection } from '../effort'
 
 export function SessionDetail({ session, tz, onNavigateToLogs }: { session: SessionSummary; tz?: string; onNavigateToLogs: (filters: { sessionFilter: string }) => void }) {
   const { showToast } = useApp()
@@ -70,6 +71,7 @@ export function SessionDetail({ session, tz, onNavigateToLogs }: { session: Sess
   const models = session.models?.length ? session.models : session.model ? [session.model] : []
   const stats = [[t('Duration'), formatDuration(Math.round(session.duration_s))], [t('Requests'), formatNumber(session.request_count)], [t('Tokens'), formatNumber(session.total_tokens)], [t('Peak context'), context ? formatNumber(context.peak_tokens) : '—'], [t('Cost'), formatCost(session.total_cost_usd, 2)], [t('Models'), models.length ? <span className="session-models">{models.map(model => <span key={model} className="entity-badge mono tinted" style={{ '--tint': modelColors.get(model) ?? modelColor(model) } as CSSProperties} title={model}>{getModelIcon(model)}<span>{formatModelName(model)}</span></span>)}</span> : '—']] as const
   return <div className="session-detail"><div className="session-stats">{stats.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
+    {context?.effort_mix?.length ? <EffortMixSection mix={context.effort_mix} /> : null}
     {contextError ? <p role="alert">{t('Failed to fetch context size')}</p> : !context ? <p>{t('Loading...')}</p> : <SessionContextChart data={context} tz={tz} hoveredId={hovered} hoveredTs={rows?.find(row => row.id === hovered)?.ts} linkedRange={rows?.length && rows.length < context.request_count ? { from: Math.min(...rows.map(row => row.ts)), to: Math.max(...rows.map(row => row.ts)) } : null} onHover={hoverMark} colorOf={model => modelColors.get(model) ?? modelColor(model)} />}
     {rowsError ? <p role="alert">{t('Failed to fetch interactions')}</p> : !rows ? <p>{t('Loading...')}</p> : rows.length === 0 ? <p>{t('No interactions found.')}</p> : <>
       <SessionLane rows={rows} colors={modelColors} selected={selected} hovered={hovered} onHover={hoverMark} onSelect={selectMark} tz={tz} />

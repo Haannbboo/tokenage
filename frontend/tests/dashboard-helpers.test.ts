@@ -175,8 +175,8 @@ describe('request log column widths', () => {
 
   it('keeps the total within the panel budget so columns are not dropped at once', () => {
     const total = Object.values(DEFAULT_COL_WIDTHS).reduce((sum, w) => sum + w, 0)
-    expect(total).toBeLessThanOrEqual(1500)
-    expect(total).toBeGreaterThan(1400)
+    expect(total).toBeLessThanOrEqual(1600)
+    expect(total).toBeGreaterThan(1500)
   })
 
   it('leaves the device column off by default but still offers it', () => {

@@ -77,3 +77,30 @@ it('clears the chart bucket when the date range or source changes', () => {
   expect(state.bucket).toBeNull()
   state.distribution = null
 })
+
+it('titles the drawer by agent and project, with a copyable id and no header logs button', () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  state.sessions = [{ session_id: 'session-123456789', started: 1000000, ended: 2000000, client_source: 'test', project: 'tokenage', request_count: 1, total_cost_usd: 0 }]
+  const view = render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  fireEvent.click(view.container.querySelector('tr.session-drawer-row')!)
+  const meta = view.container.querySelector('.detail-drawer-meta')!
+  const copy = meta.querySelector('.click-to-copy')!
+  expect(copy.textContent).toBe('session-123456789')
+  expect(screen.getByRole('dialog', { name: 'Test in tokenage' })).toBeTruthy()
+  const items = [...meta.querySelector('.session-drawer-meta')!.children]
+  expect(items).toHaveLength(2)
+  expect(items[0].querySelector('.click-to-copy')).toBe(copy)
+  expect(items[1].textContent).toContain(' → ')
+  expect(meta.textContent).not.toContain('·')
+  fireEvent.click(copy)
+  expect(writeText).toHaveBeenCalledWith('session-123456789')
+  expect(screen.queryByRole('button', { name: /View all in Request Logs/ })).toBeNull()
+})
+
+it('titles a drawer without a project by agent alone', () => {
+  state.sessions = [{ session_id: 'session-2', started: 1000000, ended: 2000000, client_source: 'test', project: null, request_count: 1, total_cost_usd: 0 }]
+  const view = render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  fireEvent.click(view.container.querySelector('tr.session-drawer-row')!)
+  expect(screen.getByRole('dialog', { name: 'Test session' })).toBeTruthy()
+})

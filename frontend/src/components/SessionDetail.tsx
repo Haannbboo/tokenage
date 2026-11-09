@@ -1,11 +1,11 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { SessionSummary, UsageRow } from '../types'
 import type { TimelineTool } from './RequestTimeline'
 import { RequestDetail } from './RequestDetail'
 import { SessionLane } from './SessionLane'
 import { renderRequestCell } from './RequestCell'
 import { useApp } from '../contexts/AppContext'
-import { distinctColors, formatCost, formatDuration, formatNumber, modelColor } from '../utils'
+import { distinctColors, formatCost, formatDuration, formatNumber, formatModelName, getModelIcon, modelColor } from '../utils'
 import { t } from '../i18n'
 import { expandableRowProps } from '../expandableRow'
 import { SessionContextChart, type SessionContext } from './SessionContextChart'
@@ -67,7 +67,8 @@ export function SessionDetail({ session, tz, onNavigateToLogs }: { session: Sess
   const selectMark = (id: string) => { setSelected(id); scrollToRow(id) }
   // One model colour map for the chart and the timeline, over every model either shows.
   const modelColors = useMemo(() => distinctColors([...new Set([...rows?.map(row => row.model) ?? [], ...context?.points?.map(point => point.model) ?? []])].sort(), modelColor), [rows, context])
-  const stats = [[t('Duration'), formatDuration(Math.round(session.duration_s))], [t('Requests'), formatNumber(session.request_count)], [t('Tokens'), formatNumber(session.total_tokens)], [t('Peak context'), context ? formatNumber(context.peak_tokens) : '—'], [t('Cost'), formatCost(session.total_cost_usd, 2)], [t('Models'), session.models?.length ? session.models.join(', ') : session.model || '—']]
+  const models = session.models?.length ? session.models : session.model ? [session.model] : []
+  const stats = [[t('Duration'), formatDuration(Math.round(session.duration_s))], [t('Requests'), formatNumber(session.request_count)], [t('Tokens'), formatNumber(session.total_tokens)], [t('Peak context'), context ? formatNumber(context.peak_tokens) : '—'], [t('Cost'), formatCost(session.total_cost_usd, 2)], [t('Models'), models.length ? <span className="session-models">{models.map(model => <span key={model} className="entity-badge mono tinted" style={{ '--tint': modelColor(model) } as CSSProperties} title={model}>{getModelIcon(model)}<span>{formatModelName(model)}</span></span>)}</span> : '—']] as const
   return <div className="session-detail"><div className="session-stats">{stats.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
     {contextError ? <p role="alert">{t('Failed to fetch context size')}</p> : !context ? <p>{t('Loading...')}</p> : <SessionContextChart data={context} tz={tz} hoveredId={hovered} hoveredTs={rows?.find(row => row.id === hovered)?.ts} linkedRange={rows?.length && rows.length < context.request_count ? { from: Math.min(...rows.map(row => row.ts)), to: Math.max(...rows.map(row => row.ts)) } : null} onHover={hoverMark} colorOf={model => modelColors.get(model) ?? modelColor(model)} />}
     {rowsError ? <p role="alert">{t('Failed to fetch interactions')}</p> : !rows ? <p>{t('Loading...')}</p> : rows.length === 0 ? <p>{t('No interactions found.')}</p> : <>

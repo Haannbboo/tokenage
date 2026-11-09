@@ -1671,8 +1671,9 @@ img[src^="/models/"] { filter: saturate(0.7); }
 .session-tool-extra { display:block; white-space:nowrap; }
 .session-detail { display:grid; gap:14px; padding:14px; background:var(--bg-secondary, var(--tab-toggle-bg)); }
 .session-stats { display:flex; flex-wrap:wrap; gap:20px; }
-.session-stats div { display:grid; gap:3px; }
-.session-stats span { font-size:12px; color:var(--text-secondary); }
+.session-stats > div { display:grid; gap:3px; min-width:0; max-width:100%; }
+.session-stats > div > span { font-size:12px; color:var(--text-secondary); }
+.session-models { display:flex; flex-wrap:wrap; gap:4px; }
 .session-request-breakdown { display:flex; flex-wrap:wrap; gap:8px 18px; padding:12px; color:var(--text-secondary); font-size:12px; }
 .session-lane-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; color:var(--text-secondary); }
 .session-model-legend { display:flex; flex-wrap:wrap; gap:12px; margin:6px 0; font-size:12px; color:var(--text-secondary); }
@@ -1748,6 +1749,10 @@ img[src^="/models/"] { filter: saturate(0.7); }
 .detail-drawer-heading button { flex-shrink: 0; }
 .detail-drawer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
 .detail-drawer-meta { font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+.session-drawer-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-width: 0; }
+.session-drawer-meta > * { min-width: 0; }
+/* The hidden copy icon would otherwise reserve a gap before the next item. */
+.session-drawer-meta .click-to-copy::after { position: absolute; left: 100%; white-space: nowrap; }
 .detail-drawer-body { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 16px 18px 24px; display: grid; gap: 20px; align-content: start; }
 .detail-drawer-body > *, .detail-drawer .session-detail > * { min-width: 0; }
 .project-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }

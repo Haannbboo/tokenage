@@ -320,6 +320,8 @@ export const zh: Record<string, string> = {
   // Sessions tab
   'Sessions': '会话',
   'Session': '会话',
+  '{agent} in {project}': '{project} 中的 {agent}',
+  '{agent} session': '{agent} 会话',
   'Session ID': '会话 ID',
   'All Sessions': '全部会话',
   'Started': '开始时间',

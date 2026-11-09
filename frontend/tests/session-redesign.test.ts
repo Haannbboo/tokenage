@@ -10,6 +10,18 @@ import { SessionDetail } from '../src/components/SessionDetail'
 import type { SessionSummary, UsageRow } from '../src/types'
 vi.mock('../src/contexts/AppContext', () => ({ useApp: () => ({ showToast: vi.fn() }) }))
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+it('renders each session model as a tinted badge', () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => [] })))
+  const view = render(createElement(SessionDetail, { session: { session_id: 'abc', duration_s: 1, request_count: 1, total_tokens: 1, total_cost_usd: 1, models: ['gpt-5', 'claude-opus-4'] } as SessionSummary, onNavigateToLogs: vi.fn() }))
+  const badges = view.container.querySelectorAll<HTMLElement>('.session-models .entity-badge.tinted')
+  expect([...badges].map(b => b.title)).toEqual(['gpt-5', 'claude-opus-4'])
+  expect(badges[0].style.getPropertyValue('--tint')).not.toBe('')
+  cleanup()
+  const empty = render(createElement(SessionDetail, { session: { session_id: 'abc', duration_s: 1, request_count: 0, total_tokens: 0, total_cost_usd: 0 } as SessionSummary, onNavigateToLogs: vi.fn() }))
+  expect(empty.container.querySelector('.session-models')).toBeNull()
+  expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+})
+
 it('places request starts proportionally to real time', () => {
   const rows = [{ id: 'a', ts: 1_000_000, latency_ms: 500 }, { id: 'b', ts: 3_601_000_000, latency_ms: null }] as UsageRow[]
   const real = lanePositions(rows)

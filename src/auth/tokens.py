@@ -125,10 +125,14 @@ def mint_token(
     kind: str = "cli",
     device_name: str | None = None,
     db_path: str | None = None,
+    *,
+    token_epoch: int | None = None,
 ) -> tuple[str, User]:
     """Mint a token for the user with this email, creating the user if new.
 
     Returns the plaintext token (the only time it is available) and the user.
+    With `token_epoch`, the epoch is checked under the user lock (MintRefused
+    on mismatch), so a concurrent revoke either refuses this or revokes it.
     """
     if kind not in TOKEN_KINDS:
         raise ValueError(
@@ -141,6 +145,14 @@ def mint_token(
     engine = get_engine(db_path)
     now = _now_micros()
     with Session(engine, expire_on_commit=False) as session:
+        if token_epoch is not None:
+            _set_auth_statement_timeout(session)
+            _lock_user(session, User.id == user.id)
+            if (
+                session.scalar(select(User.token_epoch).where(User.id == user.id))
+                != token_epoch
+            ):
+                raise MintRefused("invalid or expired link")
         device_id = None
         if kind == "ingest":
             # Ingest tokens are device-bound; an unbound one resolves to nothing.

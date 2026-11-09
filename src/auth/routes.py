@@ -333,12 +333,16 @@ def auth_local_login(request: Request, code: str = ""):
     entry = auth_google.pop_login_code(code)
     if entry is None:
         raise HTTPException(status_code=400, detail="invalid or expired link")
-    # A revoke bumps the owner's epoch: a link issued before it is dead.
-    if int(entry.get("token_epoch") or 0) != get_local_owner().token_epoch:
-        raise HTTPException(status_code=400, detail="invalid or expired link")
-    plaintext_token, _ = mint_token(
-        LOCAL_OWNER_EMAIL, kind="web", device_name=_browser_label(request)
-    )
+    try:
+        # A revoke bumps the owner's epoch: a link issued before it is dead.
+        plaintext_token, _ = mint_token(
+            LOCAL_OWNER_EMAIL,
+            kind="web",
+            device_name=_browser_label(request),
+            token_epoch=int(entry.get("token_epoch") or 0),
+        )
+    except MintRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
     response = _frontend_redirect(_request_frontend_origin(request))
     response.set_cookie(
         SESSION_COOKIE_NAME,

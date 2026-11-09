@@ -562,6 +562,32 @@ def test_token_revoke_revokes_only_the_named_users_tokens(cli_module, capsys):
     assert cli_module.main(["token", "revoke", "--email", " "]) == 2
 
 
+def test_login_link_refused_when_revoke_lands_before_the_mint(
+    cli_module, api_module, fresh_db, capsys, monkeypatch
+):
+    """The link's epoch is checked in the mint transaction, not before it."""
+    from fastapi.testclient import TestClient
+
+    from src.auth import tokens
+
+    assert cli_module.main(["login-link"]) == 0
+    code = capsys.readouterr().out.strip().split("code=", 1)[1]
+
+    original = tokens.get_or_create_user
+
+    def revoke_mid_mint(email, db_path=None):
+        user = original(email, db_path)
+        if sys._getframe(1).f_code.co_name == "mint_token":
+            tokens.revoke_user_tokens(email, db_path)
+        return user
+
+    monkeypatch.setattr(tokens, "get_or_create_user", revoke_mid_mint)
+    client = TestClient(api_module.app)
+    response = client.get(f"/auth/local/login?code={code}", follow_redirects=False)
+    assert response.status_code == 400
+    assert tokens.list_user_tokens(tokens.get_local_owner().id) == []
+
+
 def test_token_revoke_help(cli_module, capsys):
     with pytest.raises(SystemExit) as exc:
         cli_module.main(["token", "revoke", "--help"])

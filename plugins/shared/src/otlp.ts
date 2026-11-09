@@ -15,6 +15,8 @@ export type OtlpPayloadParams = {
   statusCode: number | null
   errorName: string | null
   timestampMs: number
+  // OpenCode/Kilo variant name (the server keeps it when it is an effort level).
+  variant?: unknown
 }
 
 export function buildOtlpPayload(
@@ -67,6 +69,11 @@ export function buildOtlpPayload(
   }
   if (params.cacheCreationTokens != null) {
     attrs.push({ key: "cache_creation_token_count", value: { intValue: params.cacheCreationTokens } })
+  }
+  // Capped: the variant is a user-defined name; the server stores levels only.
+  const variant = typeof params.variant === "string" ? params.variant.trim().slice(0, 64) : ""
+  if (variant) {
+    attrs.push({ key: "variant", value: { stringValue: variant } })
   }
 
   return {

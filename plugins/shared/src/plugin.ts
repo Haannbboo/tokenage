@@ -146,6 +146,7 @@ async function handleMessageUpdated(
         statusCode,
         errorName: errorName(info.error),
         timestampMs,
+        variant: info.variant,
       },
       clientSource,
     )

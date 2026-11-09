@@ -22,6 +22,7 @@ type StepState = {
   sessionId: string
   provider: string
   model: string
+  variant: unknown
   startedAt: number
   firstPartAt: number | null
 }
@@ -119,6 +120,7 @@ function createV2Tracker(
           statusCode,
           errorName: failed ? (typeof error?.type === "string" ? error.type : "error") : null,
           timestampMs: now,
+          variant: step?.variant,
         },
         clientSource,
       )
@@ -169,6 +171,7 @@ function createV2Tracker(
           sessionId: data.sessionID,
           provider: provider || "unknown",
           model: data.model?.id || "unknown",
+          variant: data.model?.variant,
           startedAt: finiteNumber(data.started) ?? created,
           firstPartAt: null,
         })

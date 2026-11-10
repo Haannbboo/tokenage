@@ -9,6 +9,7 @@ logs/
 *.db-wal
 node_modules/
 package-lock.json
+!frontend/package-lock.json
 !plugins/opencode/package-lock.json
 !plugins/kilo/package-lock.json
 

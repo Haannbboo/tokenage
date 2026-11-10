@@ -65,10 +65,13 @@ it('labels the descending ended sort as Last used', () => {
 })
 
 it('clears the chart bucket when the date range or source changes', () => {
-  state.distribution = { over_time: [{ key: 'a', period: '2025-10-22', start: 's', end: 'e', session_count: 1 }], by_agent: [{ key: 'codex', session_count: 1, cost_share: 1 }], by_duration: [], by_cost: [] }
+  state.distribution = { over_time: [{ key: 1, period: '2025-10-22', start: 's', end: 'e', session_count: 1 }], by_agent: [{ key: 'codex', session_count: 1, cost_share: 1 }], by_duration: [{ key: '<1m', session_count: 1 }], by_cost: [] }
   const view = render(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
+  fireEvent.click(view.container.querySelector('.parallel-chart svg')!)
+  expect(state.bucket).toBeNull()
+  expect(view.container.querySelector('.parallel-chart button')).toBeNull()
   fireEvent.click(view.container.querySelector('.session-bar')!)
-  expect(state.bucket?.kind).toBe('time')
+  expect(state.bucket?.kind).toBe('duration')
   state.dateRange = '24h'; view.rerender(createElement(SessionsTab, { onNavigateToLogs: vi.fn() }))
   expect(state.bucket).toBeNull()
   fireEvent.click(view.container.querySelector('.session-stack button')!)

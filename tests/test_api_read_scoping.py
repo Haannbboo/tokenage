@@ -183,11 +183,13 @@ def test_all_read_routes_isolate_data(
     assert {row["session_id"] for row in selector["sessions"]} == expected_sessions
     distribution = read("/sessions/distribution")
     for name, dimension in distribution.items():
-        assert sum(row["session_count"] for row in dimension) == count
-        if name != "over_time":
-            assert sum(row["total_cost_usd"] for row in dimension) == 2 * weight
-        else:
+        if name == "over_time":
+            # The fixture's requests share one 5-minute slot: all run at once.
+            assert max(row["session_count"] for row in dimension) == count
             assert all("total_cost_usd" not in row for row in dimension)
+        else:
+            assert sum(row["session_count"] for row in dimension) == count
+            assert sum(row["total_cost_usd"] for row in dimension) == 2 * weight
     summary = read("/sessions/summary")
     assert summary["session_count"] == count
     assert summary["total_cost_usd"] == 2 * weight

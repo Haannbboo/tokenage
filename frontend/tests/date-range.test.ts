@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DATE_RANGE_OPTIONS, getSinceDate, rangeGranularity, rangePeriodCount } from '../src/dateRange'
+import { DATE_RANGE_OPTIONS, getSinceDate, parallelGranularity, rangeGranularity, rangePeriodCount } from '../src/dateRange'
 
 describe('date range options', () => {
   it('offers the short ranges first and all time last', () => {
@@ -38,6 +38,10 @@ describe('date range options', () => {
     expect(rangeGranularity('7d')).toBe('day')
     expect(rangeGranularity('30d')).toBe('day')
     expect(rangeGranularity('all')).toBe('day')
+  })
+
+  it('plots parallel sessions in finer steps for shorter ranges', () => {
+    expect(DATE_RANGE_OPTIONS.map(o => parallelGranularity(o.value))).toEqual(['5m', '5m', '15m', 'hour', 'day'])
   })
 
   it('gives the trend chart one period per bucket', () => {

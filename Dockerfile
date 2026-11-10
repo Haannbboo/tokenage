@@ -1,7 +1,7 @@
 FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS dashboard
 WORKDIR /build/frontend
-COPY frontend/package.json ./
-RUN npm install --no-package-lock
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 

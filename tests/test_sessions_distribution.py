@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import visitors
 
 TS = 1776420000000000
+HOUR = 3600_000000
 
 
 @pytest.fixture
@@ -255,11 +256,25 @@ def test_time_filter_active_inclusive_end_exclusive_across_bucket_edge(sessions_
                 )
             )
         session.commit()
+    until = edge + 2 * 86400_000000
+    _add_parallel_usage(
+        fresh_db,
+        [],
+        [
+            ("before", edge - 1),
+            ("at", edge),  # same slot as after, a day later than before
+            ("after", edge + 1),
+            ("before", until - 1),
+            ("at", until),  # until is exclusive
+        ],
+    )
     chart = client.get(
         "/sessions/distribution",
         params={"client_source": "edge-agent", "until": "2026-04-20"},
     ).json()
-    assert [r["session_count"] for r in chart["over_time"]] == [1, 3, 1]
+    # Peaks count requests; the list still shows every open session.
+    assert [r["session_count"] for r in chart["over_time"]] == [1, 2, 1]
+    totals = []
     for row in chart["over_time"]:
         page = client.get(
             "/sessions",
@@ -269,11 +284,12 @@ def test_time_filter_active_inclusive_end_exclusive_across_bucket_edge(sessions_
                 "until": row["end"],
             },
         ).json()
-        assert page["total"] == row["session_count"]
+        totals.append(page["total"])
         start = int(datetime.fromisoformat(row["start"]).timestamp() * 1_000_000)
         # Only the first bucket can be clipped.
         first = row is chart["over_time"][0]
         assert start >= row["key"] if first else start == row["key"]
+    assert totals == [1, 3, 1]
     iso_edge = datetime.fromtimestamp(edge / 1_000_000, UTC).isoformat()
     assert (
         client.get(
@@ -308,6 +324,11 @@ def test_partial_bucket_boundaries_round_trip_chart_count(sessions_api):
                 )
             )
         session.commit()
+    _add_parallel_usage(
+        fresh_db,
+        [],
+        [("partial-0", TS + 1), ("partial-1", TS + 1), ("partial-2", TS + 2)],
+    )
     params = {
         "client_source": "partial-agent",
         "since": datetime.fromtimestamp((TS + 1) / 1_000_000, UTC).isoformat(),
@@ -458,6 +479,17 @@ def test_active_range_spanning_buckets_and_ended_boundary(
                 )
             )
         session.commit()
+    _add_parallel_usage(
+        fresh_db,
+        [],
+        [
+            ("ended-before", since - 1),
+            ("ended-at", since),
+            ("spanning", since),  # same slot: 2 at once in the first bucket
+            ("spanning", until - 1),
+            ("starts-at-end", until),  # until is exclusive
+        ],
+    )
     params = {
         "client_source": "spanning-agent",
         "since": datetime.fromtimestamp(since / 1_000_000, UTC).isoformat(),
@@ -482,7 +514,8 @@ def test_active_range_spanning_buckets_and_ended_boundary(
     assert len(chart["over_time"]) >= 3
     assert chart["over_time"][0]["start"] == params["since"]
     assert chart["over_time"][-1]["end"] == params["until"]
-    assert chart["over_time"][0]["session_count"] == 2
+    counts = [row["session_count"] for row in chart["over_time"]]
+    assert counts == [2] + [0] * (len(counts) - 2) + [1]
     for row in chart["over_time"]:
         assert "total_cost_usd" not in row
         assert (
@@ -494,11 +527,222 @@ def test_active_range_spanning_buckets_and_ended_boundary(
                     "until": row["end"],
                 },
             ).json()["total"]
-            == row["session_count"]
+            >= 1
         )
     for dimension in ("by_agent", "by_duration", "by_cost"):
         assert sum(row["session_count"] for row in chart[dimension]) == 2
         assert sum(row["total_cost_usd"] for row in chart[dimension]) == 6
+
+
+def _add_parallel_usage(fresh_db, sessions, usage):
+    """sessions: (id, agent, started, ended); usage: (session_id or None, ts[, model])."""
+    from src.database.models import SessionRecord, Usage
+
+    with Session(fresh_db.database_module.get_engine()) as session:
+        for name, agent, started, ended in sessions:
+            session.add(
+                SessionRecord(
+                    session_id=name,
+                    user_id="test-user",
+                    client_source=agent,
+                    started=started,
+                    ended=ended,
+                    updated_at="now",
+                )
+            )
+        for i, (name, ts, *model) in enumerate(usage):
+            session.add(
+                Usage(
+                    id=f"parallel-{i}",
+                    user_id="test-user",
+                    session_id=name,
+                    provider="test-provider",
+                    model=model[0] if model else "test-model",
+                    endpoint="otlp",
+                    ts=ts,
+                )
+            )
+        session.commit()
+
+
+def _iso(micros):
+    return datetime.fromtimestamp(micros / 1_000_000, UTC).isoformat()
+
+
+def test_over_time_counts_peak_parallel_sessions(sessions_api):
+    client, fresh_db = sessions_api
+    base, minute, hour = 1776470400000000, 60_000000, HOUR
+    _add_parallel_usage(
+        fresh_db,
+        [
+            ("a", "par", base, base + hour),
+            ("b", "par", base, base + hour + 10 * minute),
+            # Open the whole window but idle inside it.
+            ("long", "par", base - 11 * 24 * hour, base + 4 * hour),
+            ("other", "other-agent", base, base + minute),
+        ],
+        [
+            ("a", base + minute),
+            ("b", base + 2 * minute),  # same slot as a: 2 at once
+            ("a", base + 10 * minute),
+            ("a", base + hour),
+            ("b", base + hour + 10 * minute),  # different slot: peak 1
+            ("long", base - 11 * 24 * hour),
+            ("long", base + 3 * hour + minute),  # after until
+            ("other", base + minute),  # filtered out by client_source
+            (None, base + minute),  # no session
+        ],
+    )
+    params = {
+        "client_source": "par",
+        "granularity": "hour",
+        "since": _iso(base),
+        "until": _iso(base + 3 * hour),
+    }
+    rows = client.get("/sessions/distribution", params=params).json()["over_time"]
+    assert [row["session_count"] for row in rows] == [2, 1, 0]
+    # Bar clicks still list every open session, so the list can exceed the bar.
+    last = client.get(
+        "/sessions",
+        params={
+            "client_source": "par",
+            "since": rows[2]["start"],
+            "until": rows[2]["end"],
+        },
+    ).json()
+    assert [row["session_id"] for row in last["sessions"]] == ["long"]
+    unfiltered = client.get(
+        "/sessions/distribution", params=params | {"client_source": ""}
+    ).json()["over_time"]
+    assert [row["session_count"] for row in unfiltered] == [3, 1, 0]
+
+
+def test_over_time_5m_buckets_hold_slot_peaks(sessions_api):
+    client, fresh_db = sessions_api
+    base, minute = 1776470400000000, 60_000000
+    _add_parallel_usage(
+        fresh_db,
+        [("a", "par", base, base + HOUR), ("b", "par", base, base + HOUR)],
+        [
+            ("a", base + minute),
+            ("b", base + 4 * minute),  # same slot: 2 at once
+            ("a", base + 5 * minute),  # next slot: 1
+            ("b", base + 14 * minute),
+        ],
+    )
+    rows = client.get(
+        "/sessions/distribution",
+        params={
+            "client_source": "par",
+            "granularity": "5m",
+            "tz_offset": "+05:45",
+            "since": _iso(base),
+            "until": _iso(base + 15 * minute),
+        },
+    ).json()["over_time"]
+    assert [row["session_count"] for row in rows] == [2, 1, 1]
+    assert [row["period"] for row in rows] == [
+        "2026-04-18 05:45",
+        "2026-04-18 05:50",
+        "2026-04-18 05:55",
+    ]
+
+
+def test_fine_chart_granularity_is_bounded_by_bucket_count(sessions_api):
+    client, _ = sessions_api
+    params = {"granularity": "5m", "since": _iso(TS)}
+    # A stale client window past 48h still loads; only the bucket cap applies.
+    for hours, status in ((49, 200), (5000 * 5 // 60 + 1, 400)):
+        response = client.get(
+            "/sessions/distribution", params=params | {"until": _iso(TS + hours * HOUR)}
+        )
+        assert response.status_code == status
+
+
+def test_over_time_model_filter_counts_matching_slots(sessions_api):
+    client, fresh_db = sessions_api
+    base, minute = 1776470400000000, 60_000000
+    _add_parallel_usage(
+        fresh_db,
+        [("a", "par", base, base + HOUR), ("b", "par", base, base + HOUR)],
+        [
+            ("a", base + minute, "haiku"),
+            ("a", base + 6 * minute, "opus"),
+            ("b", base + 7 * minute, "opus"),
+        ],
+    )
+    params = {
+        "client_source": "par",
+        "granularity": "5m",
+        "since": _iso(base),
+        "until": _iso(base + 15 * minute),
+    }
+
+    def counts(**extra):
+        rows = client.get("/sessions/distribution", params=params | extra).json()
+        return [row["session_count"] for row in rows["over_time"]]
+
+    assert counts() == [1, 2, 0]
+    assert counts(model="haiku") == [1, 0, 0]
+    assert counts(model="opus") == [0, 2, 0]
+
+
+@pytest.mark.parametrize(
+    "zone, expected",
+    [
+        ({"tz_offset": "+00:00"}, [2]),
+        ({"tz_offset": "+05:30"}, [1, 2]),
+        ({"tz": "Asia/Kolkata"}, [1, 2]),
+    ],
+)
+def test_over_time_slots_nest_in_offset_buckets(sessions_api, zone, expected):
+    client, fresh_db = sessions_api
+    base, minute = 1776470400000000, 60_000000
+    _add_parallel_usage(
+        fresh_db,
+        [("a", "par", base, base + minute), ("b", "par", base, base + HOUR)],
+        # 00:29 and 00:30 UTC straddle the +05:30 hour edge but share a UTC hour.
+        [
+            ("a", base + 29 * minute),
+            ("a", base + 30 * minute),
+            ("b", base + 34 * minute),
+        ],
+    )
+    rows = client.get(
+        "/sessions/distribution",
+        params={
+            "client_source": "par",
+            "granularity": "hour",
+            "since": _iso(base),
+            "until": _iso(base + HOUR),
+        }
+        | zone,
+    ).json()["over_time"]
+    assert [row["session_count"] for row in rows] == expected
+
+
+def test_over_time_named_tz_day_edges(sessions_api):
+    client, fresh_db = sessions_api
+    # 18:30 UTC is midnight in Asia/Kolkata.
+    midnight, minute = 1776470400000000 + 18 * HOUR + 30 * 60_000000, 60_000000
+    _add_parallel_usage(
+        fresh_db,
+        [
+            ("a", "par", midnight - minute, midnight + minute),
+            ("b", "par", midnight - minute, midnight + minute),
+        ],
+        [("a", midnight - minute), ("b", midnight - minute), ("a", midnight)],
+    )
+    rows = client.get(
+        "/sessions/distribution",
+        params={
+            "client_source": "par",
+            "tz": "Asia/Kolkata",
+            "since": _iso(midnight - HOUR),
+            "until": _iso(midnight + HOUR),
+        },
+    ).json()["over_time"]
+    assert [row["session_count"] for row in rows] == [2, 1]
 
 
 def test_empty_time_distribution(sessions_api):

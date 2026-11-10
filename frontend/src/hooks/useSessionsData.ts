@@ -1,17 +1,16 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { SessionSummary, SessionDistribution, DateRangeOption, ActiveFilter } from '../types'
-import { getSinceDate, rangeGranularity } from '../dateRange'
+import { getSinceDate, parallelGranularity } from '../dateRange'
 import { appendModels } from '../modelFilter'
 import { getTimezoneOffset, resolveTimezone } from '../utils'
 import { useApp } from '../contexts/AppContext'
 
-export type SessionBucket = { kind: 'agent' | 'duration' | 'cost' | 'time'; key: string; start?: string; end?: string }
+export type SessionBucket = { kind: 'agent' | 'duration' | 'cost'; key: string }
 export function applySessionBucket(params: URLSearchParams, bucket: SessionBucket | null) {
   if (!bucket) return
   if (bucket.kind === 'agent') params.set('client_source', bucket.key)
   if (bucket.kind === 'duration') params.set('duration_bucket', bucket.key)
   if (bucket.kind === 'cost') params.set('cost_bucket', bucket.key)
-  if (bucket.kind === 'time' && bucket.start && bucket.end) { params.set('since', bucket.start); params.set('until', bucket.end) }
 }
 export function sessionFilterQuery(source: string | null, device: string | null, filter: ActiveFilter, since: string | null) {
   const params = new URLSearchParams()
@@ -53,7 +52,7 @@ export function useSessionsData(opts: { activeSource: string | null; dateRange: 
     const controller = new AbortController()
     const params = new URLSearchParams(query)
     if (project !== null) params.set('project', project)
-    params.set('granularity', rangeGranularity(opts.dateRange))
+    params.set('granularity', parallelGranularity(opts.dateRange))
     params.set('tz_offset', getTimezoneOffset(resolveTimezone(timezone)))
     params.set('tz', resolveTimezone(timezone))
     setDistributionLoading(true); setDistributionError(false)

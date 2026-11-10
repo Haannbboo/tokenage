@@ -18,7 +18,17 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, case, func, or_, select, text, update
+from sqlalchemy import (
+    BigInteger,
+    and_,
+    case,
+    func,
+    literal_column,
+    or_,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, aliased
@@ -34,6 +44,7 @@ from .usage import (
     _calendar_grid,
     _format_periods,
     _granularity,
+    _timezone_bucket_start,
     _tz_seconds,
     _usage_filters,
     _zone_offset,
@@ -739,10 +750,10 @@ def aggregate_session_distribution(
     tz: str | None = None,
     db_path: str | None = None,
 ) -> dict[str, Any]:
-    """Count active sessions over time and aggregate lifetime costs by dimension.
+    """Count parallel sessions over time and aggregate lifetime costs by dimension.
 
-    Time buckets and list filters both use ended >= start and started < end.
-    Only timestamps are loaded for the portable linear-time activity sweep.
+    Each time bucket holds the peak number of sessions with a request in the
+    same 5-minute slot.
     """
     conditions = _session_filters(filters)
     dimensions = {
@@ -752,9 +763,14 @@ def aggregate_session_distribution(
     }
     result = {}
     with get_engine(db_path).connect() as connection:
-        timestamps = connection.execute(
-            select(SessionRecord.started, SessionRecord.ended).where(*conditions)
-        ).all()
+        over_time = _active_session_buckets(
+            connection,
+            conditions,
+            filters=filters,
+            granularity=granularity,
+            tz_offset=tz_offset,
+            tz=tz,
+        )
         for name, dimension in dimensions.items():
             query = (
                 select(
@@ -780,9 +796,7 @@ def aggregate_session_distribution(
     total_cost = sum(row["total_cost_usd"] for row in result["by_agent"])
     for row in result["by_agent"]:
         row["cost_share"] = row["total_cost_usd"] / total_cost if total_cost else 0.0
-    result["over_time"] = _active_session_buckets(
-        timestamps, filters=filters, granularity=granularity, tz_offset=tz_offset, tz=tz
-    )
+    result["over_time"] = over_time
     return result
 
 
@@ -1041,21 +1055,33 @@ def session_project_detail(
     }
 
 
+PARALLEL_SLOT_US = 300_000_000
+
+
 def _active_session_buckets(
-    timestamps: Sequence[Any],
+    connection: Any,
+    conditions: Sequence[Any],
     *,
     filters: SessionFilters,
     granularity: str,
     tz_offset: str,
     tz: str | None = None,
 ) -> list[dict[str, Any]]:
-    if not timestamps:
-        return []
-    lower = (
-        int(filters.since)
-        if filters.since is not None
-        else min(row[0] for row in timestamps)
-    )
+    """Peak distinct sessions with usage in any 5-minute slot of each bucket.
+
+    Slots align to the UTC epoch, so they nest inside day, hour, 15m and 5m
+    buckets for offsets that are multiples of 5 minutes (every real UTC
+    offset is a multiple of 15). Only matching usage rows fill a slot.
+    """
+    if filters.since is not None:
+        lower = int(filters.since)
+    else:
+        first_started = connection.execute(
+            select(func.min(SessionRecord.started)).where(*conditions)
+        ).scalar()
+        if first_started is None:
+            return []
+        lower = int(first_started)
     upper = (
         int(filters.until)
         if filters.until is not None
@@ -1070,34 +1096,86 @@ def _active_session_buckets(
     ) * 1_000_000
     grid_start = (lower + offset) // size * size - offset
     count = (upper - grid_start + size - 1) // size
-    if count > MAX_TIME_BUCKETS and not (tz and granularity == "day"):
+    day_zone = tz if granularity == "day" else None
+    if count > MAX_TIME_BUCKETS and not day_zone:
         raise ValueError("Range too long for this granularity")
     edges = (
-        _calendar_grid(lower, upper, tz, MAX_TIME_BUCKETS)
-        if tz and granularity == "day"
+        _calendar_grid(lower, upper, day_zone, MAX_TIME_BUCKETS)
+        if day_zone
         else [grid_start + i * size for i in range(count + 1)]
     )
     count = len(edges) - 1
-    changes = [0] * (count + 1)
-    for started, ended in timestamps:
-        # The outer buckets are clipped; exclude timestamps beyond those edges.
-        if ended < lower or started >= upper:
-            continue
-        first = max(0, bisect_right(edges, started) - 1)
-        last = min(count - 1, bisect_right(edges, ended) - 1)
-        if first <= last:
-            changes[first] += 1
-            changes[last + 1] -= 1
+
+    def integer(value: int) -> Any:
+        # Inline, so Postgres matches the GROUP BY to the SELECT expression.
+        return literal_column(str(value), BigInteger)
+
+    # The usage-level filters replace the session EXISTS: a session counts
+    # only in slots where it has a matching request. client_source stays on
+    # the session, which has one source.
+    session_only = replace(filters, device_id=None, provider=None, model=None)
+    slot = (Usage.ts // integer(PARALLEL_SLOT_US)).label("slot")
+    slots = (
+        select(slot, func.count(Usage.session_id.distinct()).label("live"))
+        .join(
+            SessionRecord,
+            and_(
+                SessionRecord.session_id == Usage.session_id,
+                SessionRecord.user_id == Usage.user_id,
+            ),
+        )
+        .where(
+            *_session_filters(session_only),
+            *_usage_filters(
+                user_id=filters.user_id,
+                device_id=filters.device_id,
+                provider=filters.provider,
+                model=filters.model,
+            ),
+            Usage.ts >= lower,
+            Usage.ts < upper,
+        )
+        .group_by(slot)
+        .subquery()
+    )
+    start = slots.c.slot * integer(PARALLEL_SLOT_US)
+    if day_zone:
+        # The DST-aware local midnight of each slot, keyed back to its edge.
+        bucket = _timezone_bucket_start(
+            86400,
+            day_zone,
+            since=datetime.fromtimestamp(lower / 1_000_000, UTC).isoformat(),
+            until=datetime.fromtimestamp(upper / 1_000_000, UTC).isoformat(),
+            filters=[],
+            db_path=None,
+            raw=True,
+            column=start,
+        )
+        zone, day = ZoneInfo(day_zone), 86_400_000_000
+        index = {
+            (edge + _zone_offset(edge // 1_000_000, zone) * 1_000_000) // day * day: i
+            for i, edge in enumerate(edges[:-1])
+        }
+    else:
+        width = integer(size)
+        bucket = start - ((start - integer(grid_start)) % width + width) % width
+        index = {edge: i for i, edge in enumerate(edges[:-1])}
+    bucket = bucket.label("bucket")
+    peaks = [0] * count
+    for key, live in connection.execute(
+        select(bucket, func.max(slots.c.live)).group_by(bucket)
+    ):
+        i = index.get(int(key))
+        if i is not None:
+            peaks[i] = live
     rows: list[dict[str, Any]] = []
-    active = 0
     for i in range(count):
-        active += changes[i]
         key = edges[i]
         start, end = max(key, lower), min(edges[i + 1], upper)
         rows.append(
             {
                 "key": key,
-                "session_count": active,
+                "session_count": peaks[i],
                 "start": datetime.fromtimestamp(start / 1_000_000, UTC).isoformat(),
                 "end": datetime.fromtimestamp(end / 1_000_000, UTC).isoformat(),
                 "period": key + offset,

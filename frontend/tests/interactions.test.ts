@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createElement } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../src/App'
 
@@ -14,15 +14,10 @@ function mockApi(options: { user?: boolean; total?: number } = {}) {
     if (path === '/usage/count') return Promise.resolve(response({ total }))
     if (path === '/usage/summary' && summaryGate) return summaryGate
     if (path === '/usage') return Promise.resolve(response([{ model: 'test-model', prompt_tokens: 1, completion_tokens: 1, total_cost_usd: 0, latency_ms: 1 }]))
-    if (path === '/devices/status') return Promise.resolve(response({ devices: [{ reported_at: '2026-01-01', status: { detected: {}, agents: {} } }] }))
     return Promise.resolve(response([]))
   })
   vi.stubGlobal('fetch', fetchMock)
   return { fetchMock, setTotal: (value: number) => { total = value }, holdSummary: (gate: Promise<Response>) => { summaryGate = gate } }
-}
-const copyTestCommand = () => {
-  const command = screen.getByText('tokenage claude')
-  fireEvent.click(within(command.parentElement!.parentElement!).getByRole('button', { name: /copy/i }))
 }
 const countCalls = (api: ReturnType<typeof mockApi>, path: string) => api.fetchMock.mock.calls.filter(([url]) => String(url).includes(path)).length
 beforeEach(() => {
@@ -65,52 +60,43 @@ describe('dashboard interactions', () => {
     fireEvent.click(screen.getByRole('button', { name: /all models/i }))
     expect(screen.getByText('test-provider')).toBeTruthy()
   })
-  it('starts verification and stops polling after a first event', async () => {
+  it('checks for a first event from page load and stops once one arrives', async () => {
     const api = mockApi({ total: 0 })
     vi.useFakeTimers()
     await act(async () => { render(createElement(App)) })
-    expect(screen.getByText(/waiting for your first event/i)).toBeTruthy()
+    expect(screen.getByText(/waiting for your first request/i)).toBeTruthy()
     const before = countCalls(api, '/usage/count')
-    copyTestCommand()
-    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     expect(countCalls(api, '/usage/count')).toBeGreaterThan(before)
     api.setTotal(1)
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     expect(countCalls(api, '/usage?limit=1')).toBe(1)
-    expect(screen.getByRole('button', { name: /refresh/i })).toBeTruthy()
+    expect(screen.getByText(/tracking works/i)).toBeTruthy()
     const afterSuccess = countCalls(api, '/usage/count')
-    await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
     expect(countCalls(api, '/usage/count')).toBe(afterSuccess)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /go to dashboard/i })) })
+    expect(screen.getByRole('button', { name: /refresh/i })).toBeTruthy()
   })
-  it('shows timeout guidance and stops polling', async () => {
+  it('keeps checking while the client is being installed', async () => {
     const api = mockApi({ total: 0 })
     vi.useFakeTimers()
     await act(async () => { render(createElement(App)) })
-    expect(screen.getByText(/waiting for your first event/i)).toBeTruthy()
-    copyTestCommand()
-    await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
-    expect(screen.queryByText(/no local agent detected/i)).toBeNull()
-    await act(async () => { await vi.advanceTimersByTimeAsync(46000) })
-    expect(screen.getByText(/no local agent detected/i)).toBeTruthy()
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
+    expect(screen.getByText(/waiting for your first request/i)).toBeTruthy()
     const count = countCalls(api, '/usage/count')
-    await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
-    expect(countCalls(api, '/usage/count')).toBe(count)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(countCalls(api, '/usage/count')).toBeGreaterThan(count)
   })
-  it('stops verification polling on unmount', async () => {
+  it('stops checking on unmount', async () => {
     const api = mockApi({ total: 0 })
     vi.useFakeTimers()
     let view!: ReturnType<typeof render>
     await act(async () => { view = render(createElement(App)) })
-    expect(screen.getByText(/waiting for your first event/i)).toBeTruthy()
-    copyTestCommand()
-    await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    const before = countCalls(api, '/usage/count')
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
-    expect(countCalls(api, '/usage/count')).toBeGreaterThan(before)
+    expect(screen.getByText(/waiting for your first request/i)).toBeTruthy()
     view.unmount()
     const count = countCalls(api, '/usage/count')
-    await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
     expect(countCalls(api, '/usage/count')).toBe(count)
   })
 })

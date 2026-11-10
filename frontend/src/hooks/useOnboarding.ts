@@ -1,124 +1,57 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import type { SetupDiagnostics, UsageRow, OnboardingCopiedCommand } from '../types'
-import { getVerifyTimeoutGuidance } from '../setup-guidance'
-import { getSetupAgentKey } from '../utils'
-import type { LocalAgentInfo } from './useDashboardAgents'
+import { useState, useEffect } from 'react'
+import type { UsageRow } from '../types'
 
-export function useOnboarding(opts: {
-  totalTrackedEvents: number | null
-  onFirstEvent: () => void
-  localAgents: Record<string, LocalAgentInfo> | null
-  setupDiagnostics: SetupDiagnostics | null
-}) {
-  const [verifyPhase, setVerifyPhase] = useState<'idle' | 'polling' | 'success' | 'timeout'>('idle')
+// Installing the client can take minutes, so the check runs until the first
+// request arrives rather than timing out.
+const POLL_MS = 5000
+
+/** First-run guide state: shown while nothing is tracked; checks on its own. */
+export function useOnboarding(totalTrackedEvents: number | null, onFirstEvent: () => void) {
   const [verificationResult, setVerificationResult] = useState<UsageRow | null>(null)
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pollingStartRef = useRef<number>(0)
-  const autoVerifyStartedRef = useRef(false)
-  const [copiedOnboardingCommand, setCopiedOnboardingCommand] = useState<OnboardingCopiedCommand | null>(null)
-
-  const stopVerificationPolling = useCallback(() => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current)
-      pollingRef.current = null
-    }
-  }, [])
-
-  useEffect(() => stopVerificationPolling, [stopVerificationPolling])
-
-  const handleVerifyEvent = useCallback(() => {
-    stopVerificationPolling()
-    setVerifyPhase('polling')
-    setVerificationResult(null)
-    pollingStartRef.current = Date.now()
-
-    const checkForEvent = async () => {
-      try {
-        const countRes = await fetch('/usage/count')
-        if (!countRes.ok) throw new Error('Failed to check')
-        const { total } = await countRes.json()
-
-        if (total > 0) {
-          stopVerificationPolling()
-          setVerifyPhase('success')
-          const usageRes = await fetch('/usage?limit=1')
-          if (usageRes.ok) {
-            const rows = await usageRes.json() as UsageRow[]
-            if (rows.length > 0) {
-              setVerificationResult(rows[0])
-              opts.onFirstEvent()
-            }
-          }
-          return
-        }
-
-        if (Date.now() - pollingStartRef.current >= 45000) {
-          stopVerificationPolling()
-          setVerifyPhase('timeout')
-        }
-      } catch {
-        if (Date.now() - pollingStartRef.current >= 45000) {
-          stopVerificationPolling()
-          setVerifyPhase('timeout')
-        }
-      }
-    }
-
-    void checkForEvent()
-    pollingRef.current = setInterval(checkForEvent, 2000)
-  }, [stopVerificationPolling, opts.onFirstEvent])
-
-  const armOnboardingVerification = useCallback((command: OnboardingCopiedCommand) => {
-    setCopiedOnboardingCommand(command)
-    handleVerifyEvent()
-  }, [handleVerifyEvent])
-
-  const showFirstRunOnboarding = opts.totalTrackedEvents !== null && opts.totalTrackedEvents === 0
+  const [dismissed, setDismissed] = useState(false)
+  const showFirstRunOnboarding = !dismissed && (totalTrackedEvents === 0 || verificationResult !== null)
+  const awaitingFirstEvent = showFirstRunOnboarding && verificationResult === null
 
   useEffect(() => {
-    if (!showFirstRunOnboarding || autoVerifyStartedRef.current) return
-    autoVerifyStartedRef.current = true
-    handleVerifyEvent()
-  }, [showFirstRunOnboarding, handleVerifyEvent])
+    if (!awaitingFirstEvent) return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let inFlight = false
+    let complete = false
+    const check = async () => {
+      clearTimeout(timer)
+      if (stopped || complete || document.hidden || inFlight) return
+      inFlight = true
+      try {
+        const countRes = await fetch('/usage/count')
+        if (countRes.ok && (await countRes.json()).total > 0) {
+          const usageRes = await fetch('/usage?limit=1')
+          const rows = usageRes.ok ? await usageRes.json() as UsageRow[] : []
+          if (rows.length > 0) {
+            complete = true
+            if (!stopped) {
+              setVerificationResult(rows[0])
+              onFirstEvent()
+            }
+            return
+          }
+        }
+      } catch {
+        // Offline or a failed read: try again on the next tick.
+      } finally {
+        inFlight = false
+      }
+      if (!stopped) timer = setTimeout(check, POLL_MS)
+    }
+    const onVisibility = () => { void check() }
+    document.addEventListener('visibilitychange', onVisibility)
+    void check()
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [awaitingFirstEvent, onFirstEvent])
 
-  const foundLocalAgents = opts.localAgents
-    ? Object.entries(opts.localAgents).filter(([, info]) => info.found)
-    : []
-  const foundLocalAgentCount = foundLocalAgents.length
-  const setupLocalAgentTotal = opts.setupDiagnostics
-    ? foundLocalAgents.filter(([name]) => opts.setupDiagnostics?.agents[getSetupAgentKey(name)]).length
-    : foundLocalAgentCount
-  const setupMatchingAgents = opts.setupDiagnostics
-    ? foundLocalAgents.filter(([name]) => opts.setupDiagnostics?.agents[getSetupAgentKey(name)]?.endpoint_matches).length
-    : 0
-  const setupConfiguredAgents = opts.setupDiagnostics
-    ? foundLocalAgents.filter(([name]) => opts.setupDiagnostics?.agents[getSetupAgentKey(name)]?.configured).length
-    : 0
-  const setupSummaryText = opts.setupDiagnostics
-    ? setupLocalAgentTotal > 0
-      ? `${setupMatchingAgents}/${setupLocalAgentTotal}`
-      : 'No local Agent'
-    : 'Unknown'
-  const setupSummaryColor = opts.setupDiagnostics && setupMatchingAgents > 0 ? 'var(--color-green)' : 'var(--text-muted)'
-  const verifyTimeoutGuidance = getVerifyTimeoutGuidance({
-    setupHealthAvailable: opts.setupDiagnostics !== null,
-    localAgentDetectionAvailable: opts.localAgents !== null,
-    localAgentCount: foundLocalAgentCount,
-    setupLocalAgentTotal,
-    configuredAgents: setupConfiguredAgents,
-    matchingAgents: setupMatchingAgents,
-  })
-
-  const resetVerification = useCallback(() => {
-    stopVerificationPolling()
-    setVerifyPhase('idle')
-    setVerificationResult(null)
-  }, [stopVerificationPolling])
-
-  return {
-    verifyPhase, verificationResult, copiedOnboardingCommand,
-    armOnboardingVerification, resetVerification,
-    showFirstRunOnboarding,
-    setupConfiguredAgents, setupSummaryText, setupSummaryColor, verifyTimeoutGuidance,
-  }
+  return { verificationResult, showFirstRunOnboarding, dismissOnboarding: () => setDismissed(true) }
 }

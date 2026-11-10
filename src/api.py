@@ -1282,32 +1282,19 @@ async def reprice_estimated_usage(
     )
 
 
-@app.get("/version")
-async def version():
-    """Return API version information."""
-    return {
-        "name": app.title,
-        "version": get_version(),
-        "commit": await asyncio.to_thread(get_commit),
-        "protocol_min": MIN_SUPPORTED_GENERATION,
-        "protocol_max": MAX_SUPPORTED_GENERATION,
-        # Where clients should point agents. A property of this server's own
-        # config, and not a secret: ingesting still needs a token.
-        "otlp_logs_endpoint": f"{resolve_server_urls(CONFIG)['otlp_url']}/v1/logs",
-    }
-
-
-@app.get("/install.sh")
-async def hosted_installer():
-    """Publish the installer preset to this server: it installs the client."""
-    server_url = resolve_server_urls(CONFIG)["api_url"]
+def _installer_server_url(server_url: str | None = None) -> str | None:
+    """The API origin a served installer is preset to, or None when it cannot
+    serve one (no host, or plain HTTP off localhost)."""
+    server_url = (
+        server_url if server_url is not None else resolve_server_urls(CONFIG)["api_url"]
+    )
     try:
         parsed = urlsplit(server_url)
         _ = parsed.port
         valid = (
             bool(parsed.hostname)
-            and not parsed.username
-            and not parsed.password
+            and parsed.username is None
+            and parsed.password is None
             and not parsed.path
             and not parsed.query
             and not parsed.fragment
@@ -1322,7 +1309,34 @@ async def hosted_installer():
         )
     except ValueError:
         valid = False
-    if not valid:
+    return server_url if valid else None
+
+
+@app.get("/version")
+async def version():
+    """Return API version information."""
+    urls = resolve_server_urls(CONFIG)
+    server_url = _installer_server_url(urls["api_url"])
+    return {
+        "name": app.title,
+        "version": get_version(),
+        "commit": await asyncio.to_thread(get_commit),
+        "protocol_min": MIN_SUPPORTED_GENERATION,
+        "protocol_max": MAX_SUPPORTED_GENERATION,
+        # Where clients should point agents. A property of this server's own
+        # config, and not a secret: ingesting still needs a token.
+        "otlp_logs_endpoint": f"{urls['otlp_url']}/v1/logs",
+        # What the empty dashboard tells a new user to install the client with.
+        "server_url": server_url,
+        "installer_available": server_url is not None,
+    }
+
+
+@app.get("/install.sh")
+async def hosted_installer():
+    """Publish the installer preset to this server: it installs the client."""
+    server_url = _installer_server_url()
+    if server_url is None:
         raise HTTPException(
             503, "configure an HTTPS API origin before client installation"
         )

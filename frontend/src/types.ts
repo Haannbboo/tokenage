@@ -168,15 +168,6 @@ export type SetupAgentHealth = {
   status: 'ready' | 'missing_config' | 'wrong_endpoint' | 'configured' | (string & {})
 }
 
-export type SetupDiagnostics = {
-  agents: Record<string, SetupAgentHealth>
-}
-
-export type OnboardingCopiedCommand = {
-  source: string
-  command: string
-}
-
 export type PricingSource = 'user' | 'server' | 'litellm' | 'openrouter'
 
 export type PricingTier = {

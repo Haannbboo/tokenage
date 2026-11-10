@@ -1935,6 +1935,11 @@ def _timezone_bucket_start(
             ).scalar()
         if start is None:
             start = end
+    # ponytail: scan only 1970..now+1d; pre-1970 / future-dated rows use the
+    # offset at the nearest scanned edge (the CASE else / first arm).
+    ceiling = int(datetime.now(UTC).timestamp()) + 86400
+    start = min(max(start, 0), ceiling)
+    end = max(min(end, ceiling), start)
     initial = _zone_offset(start, zone)
     previous = initial
     changes: list[tuple[int, int]] = []

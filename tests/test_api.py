@@ -1503,3 +1503,31 @@ def test_iana_timezone_is_forwarded(
     assert response.status_code == 200
     assert captured["tz"] == forwarded
     assert captured["tz_offset"] == "+12:00"
+
+
+@pytest.mark.parametrize("path", ["/usage/daily", "/usage/daily-by-dimension"])
+def test_extreme_range_with_dst_zone_is_bounded(
+    api_module, fresh_db, monkeypatch, path
+):
+    from tests.test_database import test_iana_usage_buckets_cross_dst
+
+    test_iana_usage_buckets_cross_dst(fresh_db, None)
+    monkeypatch.setattr(api_module, "_request_user_id", lambda _request: "test-user")
+    response = TestClient(api_module.app).get(
+        path,
+        params={
+            "since": "0001-01-01",
+            "until": "9999-12-31",
+            "tz": "America/New_York",
+            "tz_offset": "-05:00",
+        },
+    )
+    assert response.status_code == 200
+    rows = response.json()
+    assert {row["period"]: row["requests"] for row in rows} == {
+        "2026-10-29": 1,
+        "2026-10-30": 1,
+        "2026-11-01": 1,
+        "2026-11-02": 1,
+    }
+    assert sum(row["total_tokens"] for row in rows) == 80

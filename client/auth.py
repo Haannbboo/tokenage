@@ -16,6 +16,7 @@ import re
 import secrets
 import socket
 import sys
+import threading
 import webbrowser
 from datetime import UTC, datetime
 from pathlib import Path
@@ -346,6 +347,7 @@ def login(
                 "user_id": user.get("id"),
                 "email": user["email"],
                 "device_name": payload.get("device_name"),
+                "device_id": payload.get("device_id"),
                 "cli_token": payload["cli_token"],
                 "ingest_token": token,
                 "otlp_logs_endpoint": endpoint,
@@ -388,13 +390,121 @@ def login(
     return 0
 
 
+_DEVICE_ID = re.compile(r"[A-Za-z0-9_-]+")
+# Per-phase httpx bound (connect 3s, read/write 5s); _LOGOUT_DEADLINE caps the
+# whole revocation, since a server trickling bytes never trips a phase timeout.
+_LOGOUT_TIMEOUT = httpx.Timeout(5, connect=3)
+_LOGOUT_DEADLINE = 10.0
+_UNREACHABLE = "server unavailable or request timed out"
+_REJECTED = "the server rejected the stored token"
+
+
+def _valid_device_id(value: Any) -> bool:
+    return isinstance(value, str) and _DEVICE_ID.fullmatch(value) is not None
+
+
+def _current_device_id(response: httpx.Response) -> str | None:
+    """The device the server says this CLI token belongs to, if exactly one."""
+    if response.status_code != 200:
+        return None
+    try:
+        devices = response.json().get("devices")
+    except (AttributeError, ValueError):
+        return None
+    if not isinstance(devices, list):
+        return None
+    current = [
+        device.get("id")
+        for device in devices
+        if isinstance(device, dict) and device.get("current") is True
+    ]
+    if len(current) == 1 and _valid_device_id(current[0]):
+        return current[0]
+    return None
+
+
+def _revoke(server: str, request: dict[str, Any], device_id: Any) -> str | None:
+    """Revoke this device; None on success, else why it is unconfirmed."""
+    if not _valid_device_id(device_id):
+        # Logins from before credentials stored device_id: ask the server.
+        response = httpx.get(f"{server}/auth/devices", **request)
+        if response.status_code == 401:
+            return _REJECTED
+        device_id = _current_device_id(response)
+        if device_id is None:
+            return "server did not identify this device"
+    response = httpx.post(f"{server}/auth/devices/{device_id}/revoke", **request)
+    if response.status_code in (200, 204):
+        return None
+    if response.status_code == 401:
+        return _REJECTED
+    return f"server returned HTTP {response.status_code}"
+
+
+def _revocation_unconfirmed(reason: str) -> bool:
+    print(
+        f"  warning   device revocation could not be confirmed ({reason}); "
+        "the server-side device may still be active. Revoke it in Settings → Devices.",
+        file=sys.stderr,
+    )
+    return False
+
+
+def _revoke_logout_device(credentials: dict[str, Any]) -> bool:
+    """Best-effort revocation; never include credentials or server errors in output."""
+    server = credentials.get("server_url")
+    token = credentials.get("cli_token")
+    device_id = credentials.get("device_id")
+    if not (
+        isinstance(server, str)
+        and server
+        and isinstance(token, str)
+        and token
+        and token.isascii()
+        and token.isprintable()
+    ):
+        return _revocation_unconfirmed(
+            "stored credentials lack a server URL or CLI token"
+        )
+    try:
+        server = normalize_server_url(server)
+    except ValueError:
+        return _revocation_unconfirmed("stored server URL is invalid")
+    request: dict[str, Any] = {
+        "headers": {"Authorization": f"Bearer {token}"},
+        "timeout": _LOGOUT_TIMEOUT,
+        "follow_redirects": False,
+    }
+    outcome: list[str | None] = []
+
+    def attempt() -> None:
+        try:
+            outcome.append(_revoke(server, request, device_id))
+        except httpx.HTTPError:
+            outcome.append(_UNREACHABLE)
+        except Exception:
+            # Exception text may carry the token or server data; never show it.
+            outcome.append("unexpected error during revocation")
+
+    # ponytail: daemon thread + join is the overall deadline; a request still
+    # running after it is abandoned and dies with the process. Swap for an
+    # async client with a cancel scope if logout ever runs in a long-lived process.
+    thread = threading.Thread(target=attempt, daemon=True)
+    thread.start()
+    thread.join(_LOGOUT_DEADLINE)
+    reason = outcome[0] if outcome else _UNREACHABLE
+    return True if reason is None else _revocation_unconfirmed(reason)
+
+
 def logout(*, keep_agents: bool) -> int:
     from client.setup import disable_agents
 
-    previous = load_credentials() or {}
+    credentials = load_credentials()
+    previous = credentials or {}
     # Captured before the credentials go, so un-wiring knows which collector
     # these agent files were pointing at and leaves anyone else's alone.
     collector = previous.get("otlp_logs_endpoint")
+    revoked = credentials is not None and _revoke_logout_device(credentials)
     if not clear_credentials():
         print("Not signed in; nothing to remove.", file=sys.stderr)
         return 1
@@ -408,7 +518,11 @@ def logout(*, keep_agents: bool) -> int:
         print(
             "  warning   agents still point at the last configured collector"
             + (f" ({display_endpoint(endpoint)})" if endpoint else "")
-            + " and will be rejected",
+            + (
+                " and will be rejected"
+                if revoked
+                else " and may keep reporting until the device is revoked"
+            ),
             file=sys.stderr,
         )
     else:
@@ -424,6 +538,8 @@ def logout(*, keep_agents: bool) -> int:
             )
             return 1
     print(
-        "Signed out. The device stays listed in Settings → Devices until you remove it."
+        "Signed out. This device is revoked on the server."
+        if revoked
+        else "Signed out. The device stays listed in Settings → Devices until you remove it."
     )
     return 0

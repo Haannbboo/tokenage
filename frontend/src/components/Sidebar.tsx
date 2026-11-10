@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { t } from '../i18n/index.ts'
 import { useApp } from '../contexts/AppContext'
 import { useDismiss } from '../hooks/useDismiss'
+import { PHONE_QUERY, useMediaQuery } from '../hooks/useMediaQuery'
 import { useDevices } from '../hooks/useDevices'
 import { useVersion } from '../hooks/useVersion'
 import { Icon, type IconName } from './Icon'
@@ -22,19 +23,8 @@ const WORKSPACE: { to: string; label: string; icon: IconName }[] = [
 ]
 const SETTINGS = { to: '/settings', label: 'Settings', icon: 'settings' as const }
 
-const PHONE_QUERY = '(max-width: 639px)'
 const TABLET_QUERY = '(max-width: 1023px)'
 const COLLAPSED_KEY = 'tokenage-sidebar'
-
-function useMediaQuery(query: string) {
-  const subscribe = useCallback((notify: () => void) => {
-    if (typeof window.matchMedia !== 'function') return () => {}
-    const list = window.matchMedia(query)
-    list.addEventListener('change', notify)
-    return () => list.removeEventListener('change', notify)
-  }, [query])
-  return useSyncExternalStore(subscribe, () => typeof window.matchMedia === 'function' && window.matchMedia(query).matches)
-}
 
 function readCollapsed() {
   try { return localStorage.getItem(COLLAPSED_KEY) === 'collapsed' } catch { return false }

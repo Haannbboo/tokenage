@@ -98,6 +98,7 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
         const summaryUrl = applyFilterParams(new URL('/usage/summary', window.location.origin))
         const dailyUrl = applyFilterParams(new URL('/usage/daily', window.location.origin))
         dailyUrl.searchParams.set('tz_offset', getTimezoneOffset(tz))
+        dailyUrl.searchParams.set('tz', tz)
         dailyUrl.searchParams.set('granularity', rangeGranularity(dateRange))
 
         const heatmapUrl = new URL('/usage/daily', window.location.origin)
@@ -105,6 +106,7 @@ export function useDashboardData({ dateRange: dateRangeOverride, includeDaily = 
         heatmapUrl.searchParams.set('until', new Date().toISOString())
         heatmapUrl.searchParams.set('granularity', 'day')
         heatmapUrl.searchParams.set('tz_offset', getTimezoneOffset(tz))
+        heatmapUrl.searchParams.set('tz', tz)
         if (activeFilter) {
           appendModels(heatmapUrl.searchParams, activeFilter.models)
           if (activeFilter.provider) heatmapUrl.searchParams.set('provider', activeFilter.provider)

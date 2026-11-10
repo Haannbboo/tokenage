@@ -75,3 +75,18 @@ it('changing project after load more returns to page one with only the new proje
   expect(last.searchParams.get('project')).toBe('grove')
   expect(last.searchParams.get('offset')).toBe('0')
 })
+
+it('sends the resolved IANA timezone with session distributions', async () => {
+  context.timezone = 'America/New_York'
+  const urls: URL[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    urls.push(new URL(input, window.location.origin))
+    return { ok: true, json: async () => ({ sessions: [] }) }
+  }))
+  renderHook(() => useSessionsData({ activeSource: null, dateRange: '7d', bucket: null }))
+  await waitFor(() => expect(urls.some(url => url.pathname === '/sessions/distribution')).toBe(true))
+  const params = urls.find(url => url.pathname === '/sessions/distribution')!.searchParams
+  expect(params.get('tz')).toBe('America/New_York')
+  expect(params.has('tz_offset')).toBe(true)
+  context.timezone = 'UTC'
+})

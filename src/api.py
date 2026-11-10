@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
@@ -99,6 +100,18 @@ def _check_date(value: str | None) -> str | None:
     return value
 
 
+def _check_timezone(value: str | None) -> str | None:
+    """A zone this server's tz database lacks falls back to `tz_offset`."""
+    if value is not None:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.debug("Unknown timezone %r; using tz_offset", value)
+            return None
+    return value
+
+
+Timezone = Annotated[str | None, AfterValidator(_check_timezone)]
 DateParam = Annotated[str | None, AfterValidator(_check_date)]
 TzOffset = Annotated[str, Query(pattern=r"^[+-](0[0-9]|1[0-4]):[0-5][0-9]$")]
 Granularity = Literal["day", "hour", "15m"]
@@ -621,6 +634,7 @@ def usage_daily(
     device_id: str | None = None,
     granularity: Granularity = "day",
     tz_offset: TzOffset = "+00:00",
+    tz: Timezone = None,
 ):
     _validate_fine_window(granularity, since, until)
     return aggregate_usage_by_period(
@@ -633,6 +647,7 @@ def usage_daily(
         device_id=device_id,
         granularity=granularity,
         tz_offset=tz_offset,
+        tz=tz,
     )
 
 
@@ -648,6 +663,7 @@ def usage_daily_by_dimension(
     device_id: str | None = None,
     granularity: Granularity = "day",
     tz_offset: TzOffset = "+00:00",
+    tz: Timezone = None,
 ):
     _validate_fine_window(granularity, since, until)
     return aggregate_daily_by_dimension(
@@ -661,6 +677,7 @@ def usage_daily_by_dimension(
         device_id=device_id,
         granularity=granularity,
         tz_offset=tz_offset,
+        tz=tz,
     )
 
 
@@ -740,10 +757,11 @@ def get_sessions_distribution(
     filters: SessionFilters = Depends(_session_query_filters),
     granularity: Granularity = "day",
     tz_offset: TzOffset = "+00:00",
+    tz: Timezone = None,
 ):
     try:
         return aggregate_session_distribution(
-            filters=filters, granularity=granularity, tz_offset=tz_offset
+            filters=filters, granularity=granularity, tz_offset=tz_offset, tz=tz
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
@@ -754,10 +772,11 @@ def get_session_projects(
     filters: SessionFilters = Depends(_session_query_filters),
     granularity: Granularity = "day",
     tz_offset: TzOffset = "+00:00",
+    tz: Timezone = None,
 ):
     try:
         return aggregate_session_projects(
-            filters=filters, granularity=granularity, tz_offset=tz_offset
+            filters=filters, granularity=granularity, tz_offset=tz_offset, tz=tz
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None

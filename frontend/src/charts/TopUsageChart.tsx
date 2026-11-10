@@ -78,7 +78,8 @@ export function TopUsageChart({
   const view = filterParams.view ?? filterParams
   const sourceViewRef = useRef<unknown>(view)
   const deviceViewRef = useRef<unknown>(view)
-  const tzOffset = getTimezoneOffset(resolveTimezone(useApp().timezone))
+  const tz = resolveTimezone(useApp().timezone)
+  const tzOffset = getTimezoneOffset(tz)
 
   // Fetch source summary data when source dimension is selected
   useEffect(() => {
@@ -124,6 +125,7 @@ export function TopUsageChart({
         if (filterParams.device_id) url.searchParams.set('device_id', filterParams.device_id)
         if (filterParams.since) url.searchParams.set('since', filterParams.since)
         url.searchParams.set('tz_offset', tzOffset)
+        url.searchParams.set('tz', tz)
 
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (!res.ok) throw new Error(String(res.status))
@@ -137,7 +139,7 @@ export function TopUsageChart({
     }
     fetchDeviceRows()
     return () => { controller.abort(); setLoading(false) }
-  }, [dimension, filterParams, tzOffset, attempt, view, setReadError])
+  }, [dimension, filterParams, tz, tzOffset, attempt, view, setReadError])
 
   const items: BarItem[] = useMemo(() => {
     if (dimension === 'model') {

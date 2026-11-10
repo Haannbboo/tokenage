@@ -386,3 +386,68 @@ def test_detail_reads_only_extras_without_list_aggregate(projects_api, monkeypat
         == "SELECT sessions.models_json, sessions.tool_calls_json"
     )
     assert "LIMIT" in reads[2]
+
+
+@pytest.mark.parametrize(
+    "zone,since,until,duration",
+    [
+        ("America/New_York", "2026-10-30T04:00:00Z", "2026-11-04T05:00:00Z", 25),
+        ("America/New_York", "2026-03-06T05:00:00Z", "2026-03-11T04:00:00Z", 23),
+        ("Australia/Lord_Howe", "2026-10-02T13:30:00Z", "2026-10-07T13:00:00Z", 23.5),
+    ],
+)
+def test_session_and_project_calendar_grid_tracks_dst(zone, since, until, duration):
+    from collections import namedtuple
+
+    from src.database.sessions import (
+        SessionFilters,
+        _active_session_buckets,
+        _project_time_buckets,
+    )
+    from src.database.usage import _iso_to_micros
+
+    filters = SessionFilters(user_id="test-user", since=since, until=until)
+    lower, upper = _iso_to_micros(since), _iso_to_micros(until)
+    params = dict(filters=filters, granularity="day", tz_offset="+12:00", tz=zone)
+    sessions = _active_session_buckets([(lower, upper)], **params)
+    Row = namedtuple("Row", "name started ended")
+    projects = _project_time_buckets([Row("repo", lower, upper)], **params)
+    assert len(sessions) == len(projects) == 5
+    assert [row["key"] for row in sessions] == [row["key"] for row in projects]
+    assert [row["period"] for row in sessions] == [row["period"] for row in projects]
+    assert all(row["session_count"] == 1 for row in sessions)
+    assert all(row["by_project"] == {"repo": 1} for row in projects)
+    widths = [
+        (
+            datetime.fromisoformat(row["end"]) - datetime.fromisoformat(row["start"])
+        ).total_seconds()
+        / 3600
+        for row in sessions
+    ]
+    assert duration in widths
+
+
+def test_session_and_project_pre_dst_day_differs_from_fixed_offset():
+    from collections import namedtuple
+
+    from src.database.sessions import (
+        SessionFilters,
+        _active_session_buckets,
+        _project_time_buckets,
+    )
+    from src.database.usage import _iso_to_micros
+
+    stamp = _iso_to_micros("2026-10-30T04:30:00Z")
+    filters = SessionFilters(
+        user_id="test-user", since="2026-10-29", until="2026-11-04"
+    )
+    params = dict(filters=filters, granularity="day", tz_offset="-05:00")
+    Row = namedtuple("Row", "name started ended")
+    for aggregate, rows, field in [
+        (_active_session_buckets, [(stamp, stamp)], "session_count"),
+        (_project_time_buckets, [Row("repo", stamp, stamp)], "by_project"),
+    ]:
+        fixed = aggregate(rows, **params)
+        zoned = aggregate(rows, **params, tz="America/New_York")
+        assert [row["period"] for row in fixed if row[field]] == ["2026-10-29"]
+        assert [row["period"] for row in zoned if row[field]] == ["2026-10-30"]

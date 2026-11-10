@@ -174,7 +174,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       timezone, setTimezone,
     }}>
       {children}
-      <div className={`toast-container ${toast.visible ? 'visible' : ''}`}>
+      <div role="status" aria-live="polite" className={`toast-container ${toast.visible ? 'visible' : ''}`}>
         {toast.message}
       </div>
     </AppContext.Provider>

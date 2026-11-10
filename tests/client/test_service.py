@@ -35,6 +35,8 @@ def device_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("TOKENAGE_CLIENT_COMMIT", "a" * 40)
     monkeypatch.delenv("TOKENAGE_ROOT", raising=False)
     monkeypatch.setattr(setup.shutil, "which", lambda name: None)
+    # These tests isolate wiring diagnostics from the login selection policy.
+    monkeypatch.setattr(setup, "agents_to_track", lambda: list(setup.AGENT_MODULES))
     _write_json(
         home / ".tokenage" / "credentials.json",
         {"otlp_logs_endpoint": ENDPOINT},

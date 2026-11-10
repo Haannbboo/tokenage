@@ -5,8 +5,10 @@ import os
 import pty
 import select
 import shlex
+import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import time
 from pathlib import Path
@@ -17,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = REPO_ROOT / "install.sh"
 SHARED_LAUNCHER = REPO_ROOT / "client" / "bin" / "tokenage"
 CLIENT_PYPROJECT = REPO_ROOT / "client" / "pyproject.toml"
+PROMPTS = REPO_ROOT / "client" / "prompts.py"
 COMMIT = "a" * 40
 NEXT_COMMIT = "b" * 40
 # The snapshot interpreter swaps current, lists plugin configs, and runs client
@@ -102,7 +105,11 @@ def _fixture(tmp_path: Path, *, sha: str = COMMIT) -> tuple[Path, Path, Path]:
         "args = sys.argv[1:]\n"
         "url = next(arg for arg in args if arg.startswith('https://'))\n"
         "out = pathlib.Path(args[args.index('-o') + 1])\n"
-        "if 'api.github.com' in url:\n"
+        "with open(os.environ.get('TOKENAGE_FAKE_UV_LOG', str(out.parent / 'curl')) + '.requests', 'a') as log: log.write(url + '\\n')\n"
+        "if url.endswith('/client/prompts.py'):\n"
+        f"    out.write_text(pathlib.Path({str(PROMPTS)!r}).read_text())\n"
+        "    pathlib.Path(os.environ['TOKENAGE_FAKE_UV_LOG'] + '.prompts').write_text(url)\n"
+        "elif 'api.github.com' in url:\n"
         "    if os.environ.get('TOKENAGE_FAKE_API_FAIL') == '1': sys.exit(79)\n"
         f"    out.write_text({json.dumps({'sha': sha})!r})\n"
         "else:\n"
@@ -115,14 +122,17 @@ def _fixture(tmp_path: Path, *, sha: str = COMMIT) -> tuple[Path, Path, Path]:
         "#!/usr/bin/env python3\n"
         "import os, pathlib, sys\n"
         "args = sys.argv[1:]\n"
+        "with open(os.environ['TOKENAGE_FAKE_UV_LOG'], 'a') as log:\n"
+        "    log.write(' '.join(args) + '\\n')\n"
+        "if args[0] == 'run' and os.environ.get('TOKENAGE_FAKE_UV_PYTHON'):\n"
+        "    python = os.environ['TOKENAGE_FAKE_UV_PYTHON']\n"
+        "    os.execv(python, [python, *args[args.index('python') + 1:]])\n"
         "if args[0] == 'venv':\n"
         "    path = pathlib.Path(args[-1]); path.mkdir(parents=True)\n"
         "    bindir = path / 'bin'; bindir.mkdir()\n"
         "    python = bindir / 'python'\n"
         f"    python.write_text({FAKE_PYTHON!r})\n"
         "    python.chmod(0o755)\n"
-        "with open(os.environ['TOKENAGE_FAKE_UV_LOG'], 'a') as log:\n"
-        "    log.write(' '.join(args) + '\\n')\n"
     )
     uv.chmod(0o755)
     return home, bin_dir, archive
@@ -495,6 +505,7 @@ def test_reinstall_checks_protocol_before_replacing_current_symlink(
         "args = sys.argv[1:]\n"
         "url = next(arg for arg in args if arg.startswith('https://'))\n"
         "out = pathlib.Path(args[args.index('-o') + 1])\n"
+        "with open(os.environ.get('TOKENAGE_FAKE_UV_LOG', str(out.parent / 'curl')) + '.requests', 'a') as log: log.write(url + '\\n')\n"
         "if 'api.github.com' in url:\n"
         f"    out.write_text({json.dumps({'sha': NEXT_COMMIT})!r})\n"
         "else:\n"
@@ -604,35 +615,73 @@ def test_login_reads_code_from_tty_when_installer_runs_from_pipe(
         "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
         "TOKENAGE_FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
     }
+    # Enter keeps the component and server defaults.
+    output = _run_in_terminal(script, env, b"\n\nbrowser-code-1234\n")
+    log = (tmp_path / "python.log").read_text()
+    assert "-m client login --server https://host.example tty=yes" in log
+    assert log.index("client client restart --if-running") < log.index("client login")
+    assert "login-input=browser-code-1234" in log
+    assert b"No interactive terminal is available" not in output
+
+
+def _run_in_terminal(
+    script: Path,
+    env: dict,
+    typed: bytes | list[tuple[bytes, bytes]],
+    *args: str,
+    shell: tuple[str, ...] = ("/bin/sh",),
+    expected_returncode: int | None = None,
+) -> bytes:
+    """Run the installer as `curl | sh` does: stdin is the script, a tty is there.
+
+    ``typed`` is written up front, or as (wait for this output, then type) steps.
+    """
     pid, terminal = pty.fork()
     if pid == 0:
         os.execve(
             "/bin/sh",
-            ["/bin/sh", "-c", 'cat "$1" | /bin/sh', "sh", str(script)],
+            [
+                "/bin/sh",
+                "-c",
+                'trap ":" INT; script=$1; shift; cat "$script" | "$@"',
+                "sh",
+                str(script),
+                *shell,
+                "-s",
+                "--",
+                *args,
+            ],
             env,
         )
-    os.write(terminal, b"browser-code-1234\n")
+    steps = [(b"", typed)] if isinstance(typed, bytes) else list(typed)
     output = bytearray()
+    seen = 0  # only output after the last marker can satisfy the next step
     deadline = time.monotonic() + 30
+    status = None
     while time.monotonic() < deadline:
+        if steps and (found := output.find(steps[0][0], seen)) >= 0:
+            seen = found + len(steps[0][0])
+            os.write(terminal, steps.pop(0)[1])
         ready, _, _ = select.select([terminal], [], [], 0.2)
         if ready:
             try:
                 output.extend(os.read(terminal, 4096))
             except OSError:
                 break
-        finished, _ = os.waitpid(pid, os.WNOHANG)
+        finished, child_status = os.waitpid(pid, os.WNOHANG)
         if finished:
+            status = child_status
             break
     else:
         os.kill(pid, 9)
         os.waitpid(pid, 0)
-        raise AssertionError("installer did not finish")
-    log = (tmp_path / "python.log").read_text()
-    assert "-m client login --server https://host.example tty=yes" in log
-    assert log.index("client client restart --if-running") < log.index("client login")
-    assert "login-input=browser-code-1234" in log
-    assert b"No interactive terminal is available" not in output
+        raise AssertionError(f"installer did not finish; output: {bytes(output)!r}")
+    os.close(terminal)
+    if status is None:
+        _, status = os.waitpid(pid, 0)
+    if expected_returncode is not None:
+        assert os.waitstatus_to_exitcode(status) == expected_returncode, bytes(output)
+    return bytes(output)
 
 
 @pytest.mark.parametrize("restart_fails", [False, True])
@@ -719,36 +768,29 @@ def test_updater_reports_agent_configuration_refresh_failure(tmp_path: Path) -> 
     )
 
 
-def test_rejects_unrendered_or_insecure_server_url_before_install(
-    tmp_path: Path,
-) -> None:
+def test_rejects_insecure_server_url_before_install(tmp_path: Path) -> None:
+    home, fake_bin, _ = _fixture(tmp_path)
     script = tmp_path / "install.sh"
-    script.write_text(INSTALLER.read_text())
-    result = subprocess.run(
-        ["/bin/sh", str(script), "--client"],
-        text=True,
-        capture_output=True,
-        env={**os.environ, "HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
-        timeout=10,
-    )
-    assert result.returncode != 0
-    assert "no server URL" in result.stderr
-
     script.write_text(_render_installer(server_url="http://remote.example"))
     result = subprocess.run(
         ["/bin/sh", str(script)],
         text=True,
         capture_output=True,
-        env={**os.environ, "HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        env={**os.environ, "HOME": str(home), "PATH": f"{fake_bin}:/usr/bin:/bin"},
         timeout=10,
     )
     assert result.returncode != 0
     assert "must use HTTPS" in result.stderr
 
 
-def _both_fixture(tmp_path: Path, *, api_port: int = 4123):
+def _both_fixture(tmp_path: Path, *, api_port: int = 4123, server_commit: str = COMMIT):
     """A fake server clone, bootstrap and git next to the client fixtures."""
     home, fake_bin, archive = _fixture(tmp_path)
+    if server_commit != COMMIT:
+        source = tmp_path / "source" / f"tokenage-{server_commit}"
+        _write_snapshot(source)
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(source, arcname=source.name)
     src = home / ".tokenage" / "src"
     (src / ".git").mkdir(parents=True)
     (src / "src" / "scripts").mkdir(parents=True)
@@ -766,7 +808,7 @@ def _both_fixture(tmp_path: Path, *, api_port: int = 4123):
         "#!/bin/sh\n"
         'case "$*" in\n'
         f'  *"remote get-url"*) echo https://github.com/Haannbboo/tokenage.git ;;\n'
-        f"  *rev-parse*) echo {COMMIT} ;;\n"
+        f"  *rev-parse*) echo {server_commit} ;;\n"
         "esac\n"
     )
     git.chmod(0o755)
@@ -792,10 +834,88 @@ def _run_raw(tmp_path: Path, env: dict, *args: str):
     )
 
 
-def test_default_install_is_server_then_client_pointed_at_it(tmp_path: Path) -> None:
+@pytest.mark.parametrize("flags", [[], ["--yes"]])
+def test_unattended_default_installs_both_locally(
+    tmp_path: Path, flags: list[str]
+) -> None:
+    _, env = _both_fixture(tmp_path)
+
+    result = _run_raw(tmp_path, env, *flags)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "app.tokenage.dev" not in result.stdout
+    assert "What do you want to install?" not in result.stdout
+    assert (tmp_path / "python.log.server").exists()
+    log = (tmp_path / "python.log").read_text()
+    assert "check-server --server http://127.0.0.1:4123" in log
+    assert "tokenage login --server http://127.0.0.1:4123" in result.stdout
+
+
+def test_unattended_client_requires_server_url(tmp_path):
+    _, env = _both_fixture(tmp_path)
+    result = _run_raw(tmp_path, env, "--client")
+    assert result.returncode == 1
+    assert "no server URL: set TOKENAGE_SERVER=<url>" in result.stderr
+    assert not (tmp_path / "uv.log.requests").exists()
+
+
+# The fake uv cannot run the shared prompts, so these are the numbered fallback.
+@pytest.mark.parametrize(
+    "args,typed,server,questions",
+    [
+        # Enter keeps both defaults: the client, on the hosted server.
+        ((), b"\n\n", "https://app.tokenage.dev", 2),
+        ((), b"4\n1\nhttps://mine.example/\n", "https://mine.example", 2),
+        ((), b"1\nHTTPS://mine.example/\n", "https://mine.example", 2),
+        ((), b"3\n", "http://127.0.0.1:4123", 1),
+        (("--client",), b"\n", "https://app.tokenage.dev", 1),
+        (("--yes",), b"", "http://127.0.0.1:4123", 0),
+        (("--server", "--client"), b"", "http://127.0.0.1:4123", 0),
+    ],
+)
+def test_terminal_install_asks_what_flags_leave_open(
+    tmp_path: Path, args, typed, server, questions
+) -> None:
+    _, env = _both_fixture(tmp_path)
+
+    output = _run_in_terminal(INSTALLER, env, typed + b"code\n", *args)
+
+    asked = [b"What do you want to install?" in output, b"Server URL [" in output]
+    assert sum(asked) == questions, output.decode(errors="replace")
+    if questions:
+        assert (
+            output.count(
+                b"note: shared installer prompt failed; falling back to numbered questions"
+            )
+            == 1
+        )
+        assert b"Traceback" not in output
+    log = (tmp_path / "python.log").read_text()
+    assert f"-m client login --server {server} tty=yes" in log
+    assert "login-input=code" in log
+    assert (tmp_path / "python.log.server").exists() == server.startswith("http://")
+
+
+def test_update_never_asks_even_with_a_terminal(tmp_path: Path) -> None:
+    home, env = _both_fixture(tmp_path)
+    env["TOKENAGE_SKIP_LOGIN"] = "1"
+    env["TOKENAGE_SERVER"] = "https://host.example"
+
+    output = _run_in_terminal(INSTALLER, env, b"")
+
+    assert b"What do you want to install?" not in output
+    assert b"Server URL [" not in output
+    log = (tmp_path / "python.log").read_text()
+    assert "-P -m client setup" in log
+    assert "login" not in log
+
+
+def test_both_flags_install_the_server_then_a_client_pointed_at_it(
+    tmp_path: Path,
+) -> None:
     home, env = _both_fixture(tmp_path)
 
-    result = _run_raw(tmp_path, env)
+    result = _run_raw(tmp_path, env, "--server", "--client")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "python.log.server").read_text() == "bootstrap \n"
@@ -842,3 +962,258 @@ def test_update_env_pins_commit_without_looking_up_main(tmp_path, monkeypatch):
     result, home, _ = _run_install(tmp_path, sha=NEXT_COMMIT)
     assert result.returncode == 0, result.stdout + result.stderr
     assert (home / ".tokenage" / "current").resolve().name == NEXT_COMMIT
+
+
+@pytest.mark.parametrize(
+    "steps,server",
+    [
+        # Enter keeps both defaults: the client, on the hosted server.
+        (
+            [(b"What do you want to install?", b"\r"), (b"Server URL", b"\r")],
+            "https://app.tokenage.dev",
+        ),
+        (
+            [
+                (b"What do you want to install?", b"\r"),
+                (b"Server URL", b"\x01\x0bhttps://mine.example/\r"),
+            ],
+            "https://mine.example",
+        ),
+        (
+            [(b"What do you want to install?", b"\x1b[B\x1b[B\r")],
+            "http://127.0.0.1:4123",
+        ),
+    ],
+)
+def test_terminal_install_asks_with_the_shared_prompts(tmp_path: Path, steps, server):
+    pytest.importorskip("prompt_toolkit")
+    both = server.startswith("http://")
+    client_commit = NEXT_COMMIT if both else COMMIT
+    home, env = _both_fixture(tmp_path, server_commit=client_commit)
+    env["TOKENAGE_FAKE_UV_PYTHON"] = sys.executable
+    env["TOKENAGE_PYTHON_VERSION"] = "3.12"
+    env["PROMPT_TOOLKIT_NO_CPR"] = "1"
+
+    output = _run_in_terminal(
+        INSTALLER, env, [*steps, (b"Installing: client", b"code\n")]
+    )
+
+    assert b"Answer 1, 2 or 3" not in output and b"Server URL [" not in output
+    assert "◇  What do you want to install?".encode() in output
+    assert (
+        b"Preparing the installer (first run downloads Python and prompt_toolkit)"
+        in output
+    )
+    assert (
+        "run --quiet --no-project --python 3.12 " in (tmp_path / "uv.log").read_text()
+    )
+    assert (tmp_path / "uv.log.prompts").read_text() == (
+        f"https://raw.githubusercontent.com/Haannbboo/tokenage/{COMMIT}/client/prompts.py"
+    )
+    requests = (tmp_path / "uv.log.requests").read_text().splitlines()
+    assert sum("api.github.com" in url for url in requests) == 1
+    assert [url for url in requests if url.endswith(".tar.gz")] == [
+        f"https://github.com/Haannbboo/tokenage/archive/{client_commit}.tar.gz"
+    ]
+    assert (home / ".tokenage" / "current").resolve().name == client_commit
+    log = (tmp_path / "python.log").read_text()
+    assert f"-m client login --server {server} tty=yes" in log
+    assert "login-input=code" in log
+    assert (tmp_path / "python.log.server").exists() == both
+
+
+def test_ctrl_c_in_the_shared_prompts_cancels_the_install(tmp_path: Path) -> None:
+    pytest.importorskip("prompt_toolkit")
+    home, env = _both_fixture(tmp_path)
+    env["TOKENAGE_FAKE_UV_PYTHON"] = sys.executable
+    env["PROMPT_TOOLKIT_NO_CPR"] = "1"
+
+    output = _run_in_terminal(
+        INSTALLER,
+        env,
+        [(b"What do you want to install?", b"\x03")],
+        expected_returncode=130,
+    )
+
+    assert b"Answer 1, 2 or 3" not in output
+    assert b"Installing:" not in output
+    assert not (tmp_path / "python.log").exists()
+
+
+@pytest.mark.parametrize("skip", ["1", "true", "tRUE", "yes", "yEs"])
+def test_skip_login_uses_one_boolean_parser(tmp_path, skip):
+    _, env = _both_fixture(tmp_path)
+    env["TOKENAGE_SKIP_LOGIN"] = skip
+    env["TOKENAGE_SERVER"] = "https://host.example"
+    result = _run_raw(tmp_path, env, "--client")
+    assert result.returncode == 0, result.stderr
+    log = (tmp_path / "python.log").read_text()
+    assert "-m client setup" in log
+    assert "-m client login" not in log
+
+
+def test_mixed_case_no_prompt_skips_questions_with_a_terminal(tmp_path):
+    _, env = _both_fixture(tmp_path)
+    env["TOKENAGE_NO_PROMPT"] = "tRUE"
+    output = _run_in_terminal(INSTALLER, env, b"code\n", expected_returncode=0)
+    assert b"What do you want to install?" not in output
+    assert (
+        "login --server http://127.0.0.1:4123" in (tmp_path / "python.log").read_text()
+    )
+
+
+def test_numbered_server_prompt_reasks_mistyped_url(tmp_path):
+    _, env = _both_fixture(tmp_path)
+    output = _run_in_terminal(
+        INSTALLER,
+        env,
+        [
+            (b"What do you want to install?", b"1\n"),
+            (b"Server URL [", b"app.example.com\n"),
+            (b"Enter an HTTPS URL", b"https://user:pass@mine.example\n"),
+            (b"Enter an HTTPS URL", b"http://LOCALHOST:4123\n"),
+            (b"Installing: client", b"code\n"),
+        ],
+    )
+    assert b"error:" not in output
+    assert (
+        "login --server http://LOCALHOST:4123" in (tmp_path / "python.log").read_text()
+    )
+
+
+@pytest.mark.parametrize("question", ["component", "server"])
+@pytest.mark.parametrize("shell", [("sh",), ("bash", "--posix"), ("busybox", "sh")])
+def test_numbered_prompt_cancels_on_eof(tmp_path, question, shell):
+    executable = shutil.which(shell[0])
+    if executable is None:
+        pytest.skip(f"{shell[0]} is not installed")
+    home, env = _both_fixture(tmp_path)
+    if question == "server":
+        # An invalid default used to loop forever when EOF became an empty
+        # answer and the installer kept trying that same invalid URL.
+        env["TOKENAGE_SERVER"] = "http://remote.example"
+        args = ("--client",)
+        marker = b"Server URL ["
+    else:
+        args = ()
+        marker = b"> "
+    output = _run_in_terminal(
+        INSTALLER, env, [(marker, b"\x04")], *args, shell=(executable, *shell[1:])
+    )
+    assert b"installer input closed; installation cancelled" in output
+    assert b"Installing:" not in output
+    assert not (home / ".tokenage/current").exists()
+
+
+@pytest.mark.parametrize("shell", [("dash",), ("bash", "--posix"), ("busybox", "sh")])
+def test_numbered_prompt_ctrl_c_exits_130(tmp_path, shell):
+    executable = shutil.which(shell[0])
+    if executable is None:
+        pytest.skip(f"{shell[0]} is not installed")
+    _, env = _both_fixture(tmp_path)
+    output = _run_in_terminal(
+        INSTALLER,
+        env,
+        [(b"> ", b"\x03")],
+        shell=(executable, *shell[1:]),
+        expected_returncode=130,
+    )
+    assert b"Installing:" not in output
+
+
+@pytest.mark.parametrize(
+    "url,normalized",
+    [
+        ("HTTPS://host.example", "https://host.example"),
+        ("HTTP://localhost:4567", "http://localhost:4567"),
+        ("HTTP://LOCALHOST:4567", "http://LOCALHOST:4567"),
+        ("HTTP://[::1]:4567", "http://[::1]:4567"),
+    ],
+)
+def test_install_accepts_uppercase_server_scheme(tmp_path, url, normalized):
+    _, env = _both_fixture(tmp_path)
+    env["TOKENAGE_SERVER"] = url
+    result = _run_raw(tmp_path, env, "--client", "--yes")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        f"check-server --server {normalized}" in (tmp_path / "python.log").read_text()
+    )
+
+
+def test_shared_prompt_failure_prints_only_a_note_before_fallback(tmp_path):
+    _, env = _both_fixture(tmp_path)
+    uv = Path(env["PATH"].split(":")[0]) / "uv"
+    uv.write_text(
+        uv.read_text().replace(
+            "args = sys.argv[1:]\n",
+            "args = sys.argv[1:]\nif args[0] == 'run':\n    print('Traceback: noisy prompt failure\\nsecond error line', file=sys.stderr)\n    raise SystemExit(1)\n",
+        )
+    )
+    output = _run_in_terminal(INSTALLER, env, b"1\n\ncode\n")
+    assert (
+        output.count(
+            b"note: shared installer prompt failed; falling back to numbered questions"
+        )
+        == 1
+    )
+    assert b"Traceback" not in output
+    assert b"second error line" not in output
+    assert "login-input=code" in (tmp_path / "python.log").read_text()
+
+
+@pytest.mark.parametrize(
+    "url", ["https://user:pass@mine.example", "https://@mine.example"]
+)
+def test_unattended_installer_rejects_server_userinfo(tmp_path, url):
+    _, env = _both_fixture(tmp_path)
+    env["TOKENAGE_SERVER"] = url
+    result = _run_raw(tmp_path, env, "--client")
+    assert result.returncode == 1
+    assert "without userinfo" in result.stderr
+    assert url not in result.stderr
+    assert not (tmp_path / "python.log").exists()
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [
+        "",
+        "\nhttps://mine.example\n",
+        "client\n",
+        "client\n\n",
+        "client\nhttps\n",
+        "client\nhttps://mine.example:bad\n",
+        "client\nhttps://user@mine.example\n",
+        "both\n",
+        "server\ninvalid\n",
+        "invalid\nhttps://mine.example\n",
+    ],
+)
+def test_invalid_shared_answers_fall_back_to_numbered_questions(tmp_path, answers):
+    _, env = _both_fixture(tmp_path)
+    uv = Path(env["PATH"].split(":")[0]) / "uv"
+    uv.write_text(
+        uv.read_text().replace(
+            "args = sys.argv[1:]\n",
+            "args = sys.argv[1:]\n"
+            "if args[0] == 'run':\n"
+            f"    pathlib.Path(args[args.index('install') + 1]).write_text({answers!r})\n"
+            "    raise SystemExit(0)\n",
+        )
+    )
+    output = _run_in_terminal(
+        INSTALLER,
+        env,
+        [
+            (b"What do you want to install?", b"1\n"),
+            (b"Server URL [", b"https://fallback.example\n"),
+            (b"Installing: client", b"code\n"),
+        ],
+        expected_returncode=0,
+    )
+    assert b"falling back to numbered questions" in output
+    assert (
+        "login --server https://fallback.example"
+        in (tmp_path / "python.log").read_text()
+    )
+    assert not (tmp_path / "python.log.server").exists()

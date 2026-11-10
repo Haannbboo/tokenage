@@ -41,6 +41,7 @@ def _agents(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
             "name": name,
+            "status": agent.get("status"),
             "detected": data["detected"][name]["found"],
             "configured": agent["configured"],
             "endpoint_matches": agent["endpoint_matches"],
@@ -53,7 +54,9 @@ def _agents(data: dict[str, Any]) -> list[dict[str, Any]]:
 def is_healthy(data: dict[str, Any]) -> bool:
     """Exit code is 1 when a detected agent points at the wrong collector."""
     return not any(
-        agent["detected"] and agent["endpoint_matches"] is False
+        agent["detected"]
+        and agent["status"] != "not_tracked"
+        and agent["endpoint_matches"] is False
         for agent in _agents(data)
     )
 
@@ -62,7 +65,9 @@ def _fix_hint(data: dict[str, Any]) -> str | None:
     if not data["account"]["signed_in"]:
         return "run tokenage login --server <url>"
     if any(
-        agent["detected"] and agent["endpoint_matches"] is not True
+        agent["detected"]
+        and agent["status"] != "not_tracked"
+        and agent["endpoint_matches"] is not True
         for agent in _agents(data)
     ):
         return "run tokenage setup"
@@ -93,23 +98,29 @@ def render(data: dict[str, Any]) -> str:
 
     detected = [agent for agent in _agents(data) if agent["detected"]]
     ready = [agent for agent in detected if agent["endpoint_matches"] is True]
-    unknown = [agent for agent in detected if agent["endpoint_matches"] is None]
+    unknown = [
+        agent
+        for agent in detected
+        if agent["endpoint_matches"] is None and agent["status"] != "not_tracked"
+    ]
     wrong = [agent for agent in detected if agent["endpoint_matches"] is False]
+    untracked = [
+        agent["name"] for agent in detected if agent["status"] == "not_tracked"
+    ]
+    agent_details = []
     if not detected:
-        row("agents", "none detected")
+        agent_details.append("none detected")
     elif not ready and not unknown:
-        row("agents", "none wired")
+        agent_details.append("none wired")
     elif ready:
         endpoint = ready[0].get("endpoint") or ""
-        row(
-            "agents",
-            ", ".join(agent["name"] for agent in ready) + f" → {endpoint}",
+        agent_details.append(
+            ", ".join(agent["name"] for agent in ready) + f" → {endpoint}"
         )
     # Configured, but this machine does not know which collector to compare
     # against — it signed in before its server published one.
     if unknown:
-        row(
-            "agents",
+        agent_details.append(
             ", ".join(agent["name"] for agent in unknown)
             + f" → {unknown[0].get('endpoint') or '?'} (target unknown)",
         )
@@ -120,7 +131,13 @@ def render(data: dict[str, Any]) -> str:
                 if agent["configured"]
                 else "needs configuration; run setup to check the file"
             )
-            row("agents", f"{agent['name']} {detail}")
+            agent_details.append(f"{agent['name']} {detail}")
+    if untracked:
+        agent_details.append(
+            ", ".join(untracked) + " not tracked; run tokenage login to choose agents"
+        )
+    for index, detail in enumerate(agent_details):
+        row("agents" if index == 0 else "", detail)
 
     from client.proxy.runtime import proxy_line
 

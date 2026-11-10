@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlencode, urlparse
 
 import httpx
+import yaml
 
 from client.paths import (
     client_commit,
@@ -238,7 +239,16 @@ def discover_collector() -> str | None:
 def login(
     server_arg: str | None, *, device_name_arg: str | None, no_browser: bool
 ) -> int:
-    from client.setup import installed_agents, wire_agents
+    from client import prompts
+    from client.setup import (
+        AGENT_MODULES,
+        agents_to_track,
+        chosen_agents,
+        installed_agents,
+        save_chosen_agents,
+        stop_untracked_agents,
+        wire_agents,
+    )
 
     try:
         raw_server = resolve_server(server_arg)
@@ -366,17 +376,47 @@ def login(
     print(f"Credentials saved to {credentials_path()}")
     print(f"Dashboard: {server}")
     detected = installed_agents()
-    wired = wire_agents(logs_endpoint=endpoint, token=token, agents=detected)
+    default = agents_to_track()
+    chosen = default
+    cancelled = False
+    try:
+        chosen = prompts.multiselect(
+            "Agents to track (space to toggle, enter to confirm)",
+            [(name, AGENT_MODULES[name].LABEL) for name in detected],
+            default,
+        )
+    except KeyboardInterrupt:
+        cancelled = True
+        print(
+            "\nKeeping current choice; run tokenage login again to choose.",
+            file=sys.stderr,
+        )
+    # Enter keeps the offered default; without a saved list, later agents track too.
+    if chosen != default:
+        saved = chosen + [a for a in (chosen_agents() or []) if a not in detected]
+        try:
+            save_chosen_agents(saved)
+        except (OSError, ValueError, yaml.YAMLError):
+            print(
+                "warning: agent choice not saved; using the persisted/default choice for wiring",
+                file=sys.stderr,
+            )
+            chosen = default
+    stop_untracked_agents(chosen, endpoint)
+    wired = wire_agents(logs_endpoint=endpoint, token=token, agents=chosen)
     if wired:
         print("Wired agents: " + ", ".join(wired))
     elif not detected:
         print("No tracked agents detected; nothing to wire.")
+    elif not chosen:
+        print("No agents selected; nothing wired.")
     else:
         print(
             "Signed in, but no detected agents could be wired; run tokenage setup.",
             file=sys.stderr,
         )
-        return 1
+        if not cancelled:
+            return 1
     try:
         from client import service
 

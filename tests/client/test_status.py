@@ -305,3 +305,30 @@ def test_status_shows_live_proxy_url_or_failure_and_ignores_stale(
     service._write_state(state)
     status.run_status(as_json=False)
     assert "proxy" not in capsys.readouterr().out
+
+
+def test_unchosen_agent_is_not_unhealthy_or_given_a_setup_hint(
+    tracker_home, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        setup.shutil,
+        "which",
+        lambda name: f"/bin/{name}" if name in {"claude", "codex"} else None,
+    )
+    _write(
+        tracker_home / ".tokenage/credentials.json",
+        json.dumps(
+            {
+                "cli_token": "test",
+                "server_url": "https://example.com",
+                "otlp_logs_endpoint": "https://example.com/v1/logs",
+            }
+        ),
+    )
+    setup.save_chosen_agents([])
+    assert status.run_status(as_json=False) == 0
+    output = capsys.readouterr().out
+    assert "codex, claude not tracked; run tokenage login to choose agents" in output
+    assert output.count("  agents ") == 1
+    assert "run tokenage setup" not in output
+    assert "target unknown" not in output

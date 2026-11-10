@@ -312,7 +312,8 @@ def test_setup_can_wire_again_after_disable(machine):
     assert setup.read_agent_states(ENDPOINT)["codex"]["status"] == "ready"
 
 
-def test_bare_plugin_entry_reports_not_configured(machine):
+def test_bare_plugin_entry_reports_not_configured(machine, monkeypatch):
+    monkeypatch.setattr(setup, "agents_to_track", lambda: ["opencode"])
     path = machine / ".config" / "opencode" / "opencode.json"
     path.parent.mkdir(parents=True)
     path.write_text(
@@ -408,3 +409,113 @@ def test_setup_does_not_create_client_config(machine: Path) -> None:
     _sign_in(machine)
     assert setup.run_setup(disable=False) == 0
     assert not (machine / ".tokenage" / "client.yaml").exists()
+
+
+def test_setup_wires_only_the_agents_chosen_at_login(machine: Path, capsys) -> None:
+    _sign_in(machine)
+    config = machine / ".tokenage" / "client.yaml"
+    config.write_text("# mine\nagents:\n- claude\nproxy:\n  port: 4500 # kept\n")
+    setup.save_chosen_agents(["claude"])
+    assert (
+        config.read_text() == "# mine\nproxy:\n  port: 4500 # kept\nagents: [claude]\n"
+    )
+    assert config.stat().st_mode & 0o077 == 0
+
+    assert setup.run_setup(disable=False) == 0
+    assert "wired       claude" in capsys.readouterr().out
+    assert not (machine / ".codex" / "config.toml").exists()
+
+    # Nothing chosen: nothing wired, and that is not a failure.
+    setup.save_chosen_agents([])
+    assert setup.chosen_agents() == []
+    assert setup.run_setup(disable=False) == 0
+    assert "run tokenage login to choose" in capsys.readouterr().out
+
+
+def test_saved_choice_only_marks_detected_agents_not_tracked(machine):
+    _sign_in(machine)
+    setup.save_chosen_agents(["claude"])
+
+    states = setup.read_agent_states(ENDPOINT)
+    assert states["codex"]["status"] == "not_tracked"
+    assert states["opencode"]["status"] == "missing_config"
+    assert states["kilo"]["status"] == "missing_config"
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_setup_stops_unselected_agents_only_at_our_collector(machine, capsys, foreign):
+    _sign_in(machine)
+    endpoint = "https://foreign.example/v1/logs" if foreign else ENDPOINT
+    setup.wire_agents(logs_endpoint=endpoint, token="test", agents=["claude"])
+    setup.save_chosen_agents(["codex"])
+    assert setup.run_setup(disable=False) == 0
+    env = json.loads((machine / ".claude/settings.json").read_text()).get("env", {})
+    assert (env.get("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") == endpoint) is foreign
+    if not foreign:
+        assert "stopped tracking: claude" in capsys.readouterr().out
+    assert setup.read_agent_states(ENDPOINT)["claude"]["status"] == "not_tracked"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{agents: [claude], proxy: {port: 1}}\n",
+        "{proxy: {port: 1}}\n",
+        "---\nproxy:\n  port: 1\n...\n",
+    ],
+)
+def test_save_choice_refuses_unsafe_yaml_splices(machine, text):
+    _sign_in(machine)
+    path = machine / ".tokenage/client.yaml"
+    path.write_text(text)
+    with pytest.raises(ValueError):
+        setup.save_chosen_agents(["codex"])
+    assert path.read_text() == text
+
+
+def test_save_choice_refuses_symlinks_and_replaces_atomically(machine, monkeypatch):
+    _sign_in(machine)
+    path = machine / ".tokenage/client.yaml"
+    target = machine / "private.yaml"
+    target.write_text("proxy: {port: 1}\n")
+    path.symlink_to(target)
+    with pytest.raises(ValueError):
+        setup.save_chosen_agents([])
+    assert target.read_text() == "proxy: {port: 1}\n"
+    path.unlink()
+    path.write_text("proxy: {port: 1}\n")
+
+    def fail_replace(source, destination):
+        assert Path(source).parent == path.parent
+        assert Path(source).stat().st_mode & 0o777 == 0o600
+        raise OSError("interrupted")
+
+    monkeypatch.setattr(setup.os, "replace", fail_replace)
+    with pytest.raises(OSError):
+        setup.save_chosen_agents([])
+    assert path.read_text() == "proxy: {port: 1}\n"
+    assert list(path.parent.glob(".client-*")) == []
+
+
+@pytest.mark.parametrize("wired", [False, True])
+def test_health_without_saved_choice_preserves_off_path_agent_state(
+    machine, monkeypatch, wired
+):
+    if wired:
+        setup.wire_agents(logs_endpoint=ENDPOINT, token="test", agents=["claude"])
+    monkeypatch.setattr(setup.shutil, "which", lambda name: None)
+    assert setup.chosen_agents() is None
+    state = setup.read_agent_states(ENDPOINT)["claude"]
+    assert state["status"] == ("ready" if wired else "missing_config")
+    assert state["endpoint_matches"] is wired
+
+
+@pytest.mark.parametrize("endpoint", [None, "https://other.example/v1/logs"])
+def test_stop_untracked_agents_is_quiet_without_our_endpoint(machine, capsys, endpoint):
+    if endpoint:
+        setup.wire_agents(logs_endpoint=endpoint, token="test", agents=["claude"])
+    capsys.readouterr()
+    setup.stop_untracked_agents([], ENDPOINT)
+    setup.stop_untracked_agents([], ENDPOINT)
+    output = capsys.readouterr()
+    assert output.out == output.err == ""

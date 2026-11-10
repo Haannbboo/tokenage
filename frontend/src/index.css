@@ -62,6 +62,14 @@
   --heat-2: oklch(0.84 0.110 152);
   --heat-3: oklch(0.73 0.155 152);
   --heat-4: oklch(0.60 0.160 152);
+  /* Reasoning effort, colour-coded per level like Claude Code's effort indicator.
+     Each colour is text on --card-bg, so every one (and every gradient stop) keeps 4.5:1. */
+  --effort-none: oklch(0.55 0.000 0);
+  --effort-low: oklch(0.555 0.125 62);
+  --effort-medium: oklch(0.53 0.135 150);
+  --effort-high: oklch(0.54 0.130 272);
+  --effort-xhigh: oklch(0.52 0.200 302);
+  --effort-max-gradient: linear-gradient(90deg, oklch(0.56 0.200 355), oklch(0.52 0.200 302), oklch(0.54 0.170 260));
   /* Daily Activity: a wider less-to-more ramp than --heat-*, so heavy days stand out. */
   --activity-1: oklch(0.95 0.040 152);
   --activity-2: oklch(0.84 0.110 152);
@@ -170,6 +178,12 @@
   --heat-2: oklch(0.47 0.110 152);
   --heat-3: oklch(0.62 0.150 152);
   --heat-4: oklch(0.78 0.165 152);
+  --effort-none: oklch(0.66 0.000 0);
+  --effort-low: oklch(0.83 0.150 82);
+  --effort-medium: oklch(0.78 0.160 150);
+  --effort-high: oklch(0.77 0.110 275);
+  --effort-xhigh: oklch(0.72 0.160 302);
+  --effort-max-gradient: linear-gradient(90deg, oklch(0.75 0.160 355), oklch(0.72 0.160 302), oklch(0.73 0.140 255));
   --activity-1: oklch(0.29 0.045 152);
   --activity-2: oklch(0.42 0.100 152);
   --activity-3: oklch(0.61 0.160 152);

@@ -233,6 +233,8 @@ export function LogsPage() {
         return <td><div className="skeleton" style={{ width: 90, height: 14 }} /></td>
       case 'model':
         return <td><div className="skeleton" style={{ width: 120, height: 24, borderRadius: 6 }} /></td>
+      case 'effort':
+        return <td><div className="skeleton" style={{ width: 70, height: 14 }} /></td>
       case 'provider':
         return <td><div className="skeleton" style={{ width: 70, height: 20, borderRadius: 4 }} /></td>
       case 'source':

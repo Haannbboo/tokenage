@@ -2,6 +2,7 @@ import type { UsageRow } from '../types'
 import { ClickToCopy } from './CopyButton'
 import { RequestTimeline, type TimelineTool } from './RequestTimeline'
 import { t } from '../i18n'
+import { EffortLevel } from '../effort'
 import { formatLatency, formatNumber, value, getSourceIcon } from '../utils'
 
 export function RequestDetail({ row, toolCalls, showToast }: { row: UsageRow; toolCalls: TimelineTool[] | null; showToast: (message: string) => void }) {
@@ -32,6 +33,12 @@ export function RequestDetail({ row, toolCalls, showToast }: { row: UsageRow; to
                               {row.client_source || '—'}
                             </span>
                           </div>
+                          {row.effort && (
+                            <div className="detail-group">
+                              <span className="detail-label">{t('Effort')}</span>
+                              <span className="detail-value"><EffortLevel effort={row.effort} /></span>
+                            </div>
+                          )}
                           <div className="detail-group">
                             <span className="detail-label">{t('Latency')}</span>
                             <span className="detail-value">{formatLatency(row.latency_ms)}</span>

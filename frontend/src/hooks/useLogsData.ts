@@ -19,6 +19,7 @@ import { useApp } from '../contexts/AppContext'
 export const DEFAULT_COL_WIDTHS: Record<RequestLogColumnId, number> = {
   time: 112,
   model: 135,
+  effort: 95,
   provider: 112,
   source: 88,
   device: 95,

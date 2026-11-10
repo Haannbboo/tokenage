@@ -6,6 +6,7 @@ import { Drawer } from '../components/Drawer'
 import { useProjectsData } from '../hooks/useProjectsData'
 import { costPerSession, detailSearch, projectAverageLatency, projectSessionsUrl, projectStackMaximum, projectBuckets } from '../projectState'
 import { t } from '../i18n'
+import { EffortMixSection } from '../effort'
 import { cacheHitRate, distinctColors, formatCost, formatNumber, formatTime, getAgentDisplayName, getSourceIcon, modelColor, PALETTE, resolveTimezone, shortSessionId, sourceColor, toolColor } from '../utils'
 import type { DateRangeOption, ProjectDetail, ProjectSummary } from '../types'
 
@@ -33,6 +34,7 @@ function ProjectContents({ data, tz, dateRange }: { data: ProjectDrawerData; tz:
   ]
   return <>
     <div className="project-tiles">{tiles.map(([label, value]) => <div key={label}><span>{t(label)}</span><strong>{value}</strong></div>)}</div>
+    {data.effort_mix?.length ? <EffortMixSection mix={data.effort_mix} /> : null}
     <section className="project-breakdown"><h3>{t('Recent sessions')}</h3><div className="project-table-scroll"><table className="table project-recent-table"><thead><tr>{['Session', 'Agent', 'Last used', 'Requests', 'Cost'].map(label => <th key={label}>{t(label)}</th>)}</tr></thead>
       <tbody>{data.recent_sessions.map(session => {
         const open = () => navigate(projectSessionsUrl(data.key, dateRange, session.session_id))

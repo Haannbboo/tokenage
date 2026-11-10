@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react'
 import type { UsageRow } from '../types'
 import type { RequestLogColumnId } from '../hooks/useRequestLogColumns'
 import { t } from '../i18n'
+import { EffortLevel } from '../effort'
 import { formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime, value, getProviderIcon, getModelIcon, getSourceIcon, shortSessionId, ToolBadge, formatModelName, formatProviderName, modelColor, providerColor } from '../utils'
 
 type RequestCellOptions = { tz?: string; colWidths: { model: number; device: number }; hoveredSession: string | null; setSessionFilter: (id: string) => void; recalculatingId: string | null; handleRecalculateCost: (id: string) => Promise<void>; stopToolPropagation?: boolean }
@@ -29,6 +30,8 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
             </div>
           </td>
         )
+      case 'effort':
+        return <td>{row.effort && <EffortLevel effort={row.effort} />}</td>
       case 'provider':
         return (
           <td style={{ padding: '8px' }}>

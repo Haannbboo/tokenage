@@ -5,6 +5,7 @@ const REQUEST_LOG_COLUMN_KEY = 'tokenage-request-log-columns'
 export type RequestLogColumnId =
   | 'time'
   | 'model'
+  | 'effort'
   | 'provider'
   | 'source'
   | 'device'
@@ -24,6 +25,7 @@ type RequestLogColumn = {
 export const REQUEST_LOG_COLUMNS: RequestLogColumn[] = [
   { id: 'time', label: 'Time' },
   { id: 'model', label: 'Model' },
+  { id: 'effort', label: 'Effort' },
   { id: 'provider', label: 'Provider' },
   { id: 'source', label: 'Source' },
   { id: 'device', label: 'Device' },
@@ -36,7 +38,10 @@ export const REQUEST_LOG_COLUMNS: RequestLogColumn[] = [
   { id: 'status', label: 'Status' },
 ]
 
-export const DEFAULT_REQUEST_LOG_COLUMNS = REQUEST_LOG_COLUMNS.map(({ id }) => id).filter((id) => id !== 'device')
+const REQUEST_LOG_COLUMN_IDS = REQUEST_LOG_COLUMNS.map(({ id }) => id)
+export const DEFAULT_REQUEST_LOG_COLUMNS = REQUEST_LOG_COLUMN_IDS.filter((id) => id !== 'device')
+// Preferences saved before knownColumnIds was stored knew every column but these.
+const LEGACY_NEW_COLUMN_IDS: RequestLogColumnId[] = ['effort']
 
 function normalizeRequestLogColumnIds(columnIds: unknown, fallback = DEFAULT_REQUEST_LOG_COLUMNS): RequestLogColumnId[] {
   if (!Array.isArray(columnIds)) return fallback
@@ -66,7 +71,14 @@ function readStoredRequestLogColumns(): RequestLogColumnPreferences {
     const parsed = JSON.parse(raw)
     // Older preferences stored just the enabled column IDs, and later also
     // pinnedColumnIds, which kept columns from width-based hiding (now gone).
-    return { visibleColumnIds: normalizeRequestLogColumnIds(Array.isArray(parsed) ? parsed : parsed?.visibleColumnIds) }
+    const visibleColumnIds = normalizeRequestLogColumnIds(Array.isArray(parsed) ? parsed : parsed?.visibleColumnIds)
+    // A column added since the preferences were saved gets its default
+    // visibility; columns the user saw and hid stay hidden.
+    const knownColumnIds: unknown[] = Array.isArray(parsed?.knownColumnIds)
+      ? parsed.knownColumnIds
+      : REQUEST_LOG_COLUMN_IDS.filter(id => !LEGACY_NEW_COLUMN_IDS.includes(id))
+    const newColumnIds = DEFAULT_REQUEST_LOG_COLUMNS.filter(id => !knownColumnIds.includes(id))
+    return { visibleColumnIds: normalizeRequestLogColumnIds([...visibleColumnIds, ...newColumnIds]) }
   } catch {
     return DEFAULT_COLUMN_PREFERENCES
   }
@@ -86,7 +98,7 @@ export function useRequestLogColumns() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(REQUEST_LOG_COLUMN_KEY, JSON.stringify(preferences))
+      localStorage.setItem(REQUEST_LOG_COLUMN_KEY, JSON.stringify({ ...preferences, knownColumnIds: REQUEST_LOG_COLUMN_IDS }))
     } catch {
       // Ignore persistence failures.
     }
@@ -97,7 +109,7 @@ export function useRequestLogColumns() {
   }, [])
 
   const showAllColumns = useCallback(() => {
-    setPreferences({ visibleColumnIds: REQUEST_LOG_COLUMNS.map(({ id }) => id) })
+    setPreferences({ visibleColumnIds: REQUEST_LOG_COLUMN_IDS })
   }, [])
 
   const visibleColumns = useMemo(

@@ -289,16 +289,29 @@ describe('Request Logs table', () => {
     defaults.unmount()
     localStorage.setItem('tokenage-request-log-columns', JSON.stringify(['time', 'device']))
     const saved = renderHook(() => useRequestLogColumns())
-    expect(saved.result.current.visibleColumnIds).toEqual(['time', 'device'])
+    expect(saved.result.current.visibleColumnIds).toEqual(['time', 'effort', 'device'])
+  })
+
+  it('shows a column added since the preferences were saved, and keeps it hidden once the user hides it', () => {
+    const key = 'tokenage-request-log-columns'
+    const old = DEFAULT_REQUEST_LOG_COLUMNS.filter(id => id !== 'effort' && id !== 'speed')
+    localStorage.setItem(key, JSON.stringify({ visibleColumnIds: old }))
+    const first = renderHook(() => useRequestLogColumns())
+    expect(first.result.current.visibleColumnIds).toContain('effort')
+    expect(first.result.current.visibleColumnIds).not.toContain('speed')
+    act(() => first.result.current.setColumnVisible('effort', false))
+    first.unmount()
+    const reloaded = renderHook(() => useRequestLogColumns())
+    expect(reloaded.result.current.visibleColumnIds).toEqual(old)
   })
 
   it('loads saved columns and ignores the pins older versions stored', () => {
     const key = 'tokenage-request-log-columns'
     localStorage.setItem(key, JSON.stringify({ visibleColumnIds: ['time', 'device'], pinnedColumnIds: ['device', 'speed', 'unknown'] }))
     const saved = renderHook(() => useRequestLogColumns())
-    expect(saved.result.current.visibleColumnIds).toEqual(['time', 'device'])
+    expect(saved.result.current.visibleColumnIds).toEqual(['time', 'effort', 'device'])
     act(() => saved.result.current.setColumnVisible('speed', true))
-    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ visibleColumnIds: ['time', 'device', 'speed'] })
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ visibleColumnIds: ['time', 'effort', 'device', 'speed'], knownColumnIds: REQUEST_LOG_COLUMNS.map(c => c.id) })
     act(() => saved.result.current.resetColumns())
     expect(saved.result.current.visibleColumnIds).not.toContain('device')
   })

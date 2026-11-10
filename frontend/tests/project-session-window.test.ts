@@ -18,7 +18,7 @@ it('carries the Projects window into Sessions and opens a session older than 24 
     requests.push(url)
     const data = url.pathname === '/auth/me' ? { provider: 'google', user: { id: 'u', email: 'u@example.com' } }
       : url.pathname === '/sessions/projects' ? { projects: [project], over_time: [] }
-      : url.pathname === '/sessions/projects/detail' ? { key: project.key, failed_requests: 0, first_started: session.started, latency_sum_ms: 1000, models: {}, tools: {}, recent_sessions: [session] }
+      : url.pathname === '/sessions/projects/detail' ? { key: project.key, failed_requests: 0, first_started: session.started, latency_sum_ms: 1000, models: {}, tools: {}, recent_sessions: [session], effort_mix: [] }
       : url.pathname === '/sessions' ? { sessions: Date.parse(url.searchParams.get('since')!) * 1000 <= ended ? [session] : [], total: 1 }
       : url.pathname === '/sessions/distribution' ? { over_time: [], by_agent: [], by_cost: [], by_duration: [] }
       : []

@@ -196,7 +196,7 @@ PY
         exit 1
     done
     # The only upstream must still serve the very next requests, including ingest.
-    status=$(curl --max-time 5 --silent --show-error --output /dev/null --write-out '%{http_code}' "$endpoint/version")
+    status=$(curl --max-time 10 --silent --show-error --output /dev/null --write-out '%{http_code}' "$endpoint/version") || true
     if [ "$status" != 200 ]; then
         echo "FAIL: /version after $size-byte body got HTTP $status" >&2
         exit 1

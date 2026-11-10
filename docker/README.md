@@ -101,11 +101,10 @@ with a 2-second timeout; one failed check removes the node, one successful check
 it. Passive checks exclude a node for the full 10-second `fail_duration` after one
 failed request, even if active checks pass during that time. The
 example uses a 1-second dial timeout and a 60-second response header timeout.
-Caddy rejects bodies over 2 MB with 413, equal to the server's default
-`otlp.max_body_bytes` (2,000,000 bytes). A body whose `Content-Length` is too
-large is rejected before any node is contacted, so it never counts as a failed
-request. An oversized chunked body (no `Content-Length`) is still streamed to a
-node, and its 413 can take that node out for `fail_duration`. If you raise `otlp.max_body_bytes`, raise both
+The body limit is 2 MB, equal to the server's default `otlp.max_body_bytes`
+(2,000,000 bytes). A body over 2 MB with a `Content-Length` gets 413 before any
+node is contacted. Caddy only limits bodies without `Content-Length` (chunked)
+mid-stream, and the client gets an error. If you raise `otlp.max_body_bytes`, raise both
 `2000000` in the `@too_large` matcher and `request_body` `max_size` to the same value.
 Responses flush immediately, including streams.
 

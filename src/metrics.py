@@ -264,7 +264,10 @@ class MetricsMiddleware:
                 response = Response(body, headers={"content-type": CONTENT_TYPE_LATEST})
             else:
                 response = Response(status_code=404)
-            return await response(scope, receive, send)
+            # Outside the app's body drain, so it needs its own (POST /metrics).
+            from .api import BodySizeLimitMiddleware
+
+            return await BodySizeLimitMiddleware(response)(scope, receive, send)
 
         route = INGEST_ROUTES.get(path.rstrip("/"))
         if route is None or scope["type"] != "http":

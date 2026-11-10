@@ -2302,6 +2302,14 @@ def test_body_too_large_returns_413(otlp_module, monkeypatch, fresh_db):
     assert len(captured) == 0
 
 
+@pytest.mark.parametrize("body", [b'{"a":', b"\xff", b"[" * 200_000])
+def test_invalid_json_returns_400(otlp_module, monkeypatch, fresh_db, body):
+    """A truncated or undecodable body is the client's error, not a 500."""
+    monkeypatch.setitem(otlp_module.CONFIG.get("auth", {}), "provider", "local")
+    response = _authed_client(otlp_module, fresh_db).post("/v1/logs", content=body)
+    assert response.status_code == 400
+
+
 def test_record_count_cap_limits_db_work_per_request(
     otlp_module, monkeypatch, fresh_db
 ):

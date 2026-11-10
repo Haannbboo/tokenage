@@ -295,17 +295,22 @@ class BodySizeLimitMiddleware:
         too_large_response = JSONResponse(
             status_code=413, content={"detail": "request body too large"}
         )
-        declared = dict(scope["headers"]).get(b"content-length", b"")
+        headers = dict(scope["headers"])
+        declared = headers.get(b"content-length", b"")
         if declared.isdigit() and int(declared) > max_body:
             await too_large_response(scope, receive, send)
             return
         received = 0
         too_large = False
         started = False
+        # Expect: 100-continue clients are drained too: the first receive()
+        # sends 100 Continue, and a proxy may forward the header with the body.
+        body_done = not declared and b"transfer-encoding" not in headers
 
         async def capped_receive():
-            nonlocal received, too_large
+            nonlocal received, too_large, body_done
             message = await receive()
+            body_done = not message.get("more_body", False)
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > max_body:
@@ -317,6 +322,14 @@ class BodySizeLimitMiddleware:
 
         async def guarded_send(message):
             nonlocal started
+            if message["type"] == "http.response.start":
+                # Read the rest of the body (at most max_body) before replying
+                # early, e.g. 401 before the body is parsed. Closing with an
+                # upload still unread resets the connection, and a proxy in
+                # front counts that as a failure of this node. Draining after
+                # the reply is too late: the server stops delivering the body.
+                while not body_done and not too_large:
+                    await capped_receive()
             if too_large:
                 return  # the 413 below replaces whatever the app answers
             started = True
@@ -326,6 +339,9 @@ class BodySizeLimitMiddleware:
             await self.app(scope, capped_receive, guarded_send)
         except Exception:
             if not too_large:
+                # The 500 that follows is sent outside this middleware.
+                while not body_done and not too_large:
+                    await capped_receive()
                 raise
         if too_large and not started:
             await too_large_response(scope, receive, send)

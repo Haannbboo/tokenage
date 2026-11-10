@@ -89,6 +89,20 @@ with get_engine().connect() as connection:
     assert connection.execute(text("SELECT COUNT(*) FROM usage WHERE model = 'docker-smoke-model'")).scalar_one() == 1
 PY
 }
+upstream_still_serves() {
+    # Caddy's admin API (localhost inside the container) must show no passive
+    # health failure, and the only upstream must still serve /version and ingest.
+    "${compose[@]}" exec -T caddy wget -qO- http://localhost:2019/reverse_proxy/upstreams |
+        python3 -c 'import json, sys; u = json.load(sys.stdin); assert u and all(x["fails"] == 0 for x in u), (sys.argv[1], u)' "$1"
+    status=$(curl --max-time 10 --silent --show-error --output /dev/null --write-out '%{http_code}' "$endpoint/version") || true
+    if [ "$status" != 200 ]; then
+        echo "FAIL: /version after $1 got HTTP $status" >&2
+        exit 1
+    fi
+    curl --max-time 10 --fail --silent --show-error --output /dev/null -H @"$scratch/headers" \
+        -H 'Content-Type: application/json' \
+        --data-binary "${SMOKE_RECORD/docker-smoke-model/docker-after-oversized-model}" "$endpoint/otlp/v1/logs"
+}
 write_config
 cat >> "$scratch/config.yaml" <<'YAML'
   url: postgresql+psycopg://tokenage:smoke-only@postgres:5432/tokenage
@@ -155,9 +169,20 @@ for directive in (
     "fail_duration 10s",
     "max_fails 1",
     "flush_interval -1",
+    "protocols h1",
+    "read_body 30s",
+    "read_body_idle -1s",
+    "@read_full_body vars {http.request.body} tokenage-unused-sentinel",
+    "respond @read_full_body 413",
+    "header_up -Expect",
 ):
     assert directive in active, f"Missing required directive: {directive}"
 assert "trusted_proxies" not in active
+# Shorten the read deadline so the stalled-upload probes finish quickly.
+assert active.count("read_body 30s") == 1 and config.count("read_body 30s") == 1
+config = config.replace("read_body 30s", "read_body 3s")
+assert "read_body 3s" in config and "read_body 30s" not in config
+path.write_text(config)
 PYCONFIG
 "${compose[@]}" --profile caddy up -d caddy
 wait_ready caddy 80
@@ -173,9 +198,13 @@ echo 'PASS: Caddy + Redis + Postgres OTLP ingest and auth isolation'
     --email smoke@example.test --kind ingest --name docker-probes > "$scratch/token"
 printf 'x-tokenage-token: %s\n' "$(tail -n 1 "$scratch/token")" > "$scratch/headers"
 # Bodies over the 2 MB limit get Caddy's 413 before any upstream is dialed, so
-# they never count as passive health failures.
-for size in 2000001 5000000; do
-    python3 - "$scratch/oversized.json" "$SMOKE_RECORD" "$size" <<'PY'
+# they never count as passive health failures: declared sizes from headers,
+# chunked bodies once Caddy has read 2 MB of them.
+for framing in length chunked; do
+  framing_header=()
+  [ "$framing" = chunked ] && framing_header=(-H 'Transfer-Encoding: chunked')
+  for size in 2000001 5000000; do
+    python3 - "$scratch/oversized.json" "${SMOKE_RECORD/docker-smoke-model/docker-oversized-body-model}" "$size" <<'PY'
 import sys
 from pathlib import Path
 record = sys.argv[2].encode()
@@ -186,27 +215,108 @@ PY
     for attempt in 1 2 3 4 5; do
         curl_exit=0
         status=$(curl --max-time 30 --silent --show-error --output /dev/null --write-out '%{http_code}' \
-            -H @"$scratch/headers" -H 'Content-Type: application/json' \
+            -H @"$scratch/headers" -H 'Content-Type: application/json' ${framing_header[@]+"${framing_header[@]}"} \
             --data-binary @"$scratch/oversized.json" "$endpoint/otlp/v1/logs") || curl_exit=$?
         case "$status:$curl_exit" in
             413:0|413:18|413:55|413:56) break ;;
-            000:55|000:56) [ "$attempt" -lt 5 ] && continue ;;
+            000:55|000:56) if [ "$attempt" -lt 5 ]; then continue; fi ;;
         esac
-        echo "FAIL: $size-byte body got HTTP $status, curl exit $curl_exit" >&2
+        echo "FAIL: $framing $size-byte body got HTTP $status, curl exit $curl_exit" >&2
         exit 1
     done
     # The only upstream must still serve the very next requests, including ingest.
-    status=$(curl --max-time 10 --silent --show-error --output /dev/null --write-out '%{http_code}' "$endpoint/version") || true
-    if [ "$status" != 200 ]; then
-        echo "FAIL: /version after $size-byte body got HTTP $status" >&2
-        exit 1
-    fi
-    curl --max-time 10 --fail --silent --show-error --output /dev/null -H @"$scratch/headers" \
-        -H 'Content-Type: application/json' \
-        --data-binary "${SMOKE_RECORD/docker-smoke-model/docker-after-oversized-model}" "$endpoint/otlp/v1/logs"
+    upstream_still_serves "$framing $size-byte body"
+  done
 done
 rm -f "$scratch/oversized.json"
 echo 'PASS: Caddy rejects bodies over 2 MB without taking the upstream out'
+# Broken chunk framing: Caddy forwards only the bytes read before the error.
+# With the token, the node itself rejects the truncated JSON with 400.
+python3 - "$endpoint" "$scratch/headers" <<'PY'
+import socket, sys, urllib.parse
+url = urllib.parse.urlsplit(sys.argv[1])
+token_header = open(sys.argv[2], "rb").read().strip()
+with socket.create_connection((url.hostname, url.port), timeout=15) as s:
+    s.sendall(b'POST /otlp/v1/logs HTTP/1.1\r\nHost: smoke\r\nContent-Type: application/json\r\n'
+              + token_header + b'\r\nTransfer-Encoding: chunked\r\n\r\n5\r\n{"a":\r\nZZ\r\n\r\n')
+    reply = s.recv(64)
+assert reply.split(b"\r\n")[0].split()[1] == b"400", reply
+PY
+upstream_still_serves 'broken chunk framing'
+# A stalled upload gets an answer at read_body (3s here), before any upstream
+# is contacted: Caddy answers 499 (client gone) or closes the connection. Covers
+# a chunked body and a Content-Length body stalled 100 KB before its end.
+for framing in chunked length; do
+    python3 - "$endpoint" "$framing" <<'PY'
+import socket, sys, time, urllib.parse
+url = urllib.parse.urlsplit(sys.argv[1])
+head = b'POST /otlp/v1/logs HTTP/1.1\r\nHost: smoke\r\nContent-Type: application/json\r\n'
+if sys.argv[2] == "chunked":
+    request = head + b'Transfer-Encoding: chunked\r\n\r\n10\r\n{"resourceLogs"'
+else:
+    request = head + b'Content-Length: 2000000\r\n\r\n' + b" " * 1_900_000
+started = time.monotonic()
+with socket.create_connection((url.hostname, url.port), timeout=15) as s:
+    s.sendall(request)
+    try:
+        reply = s.recv(64)
+    except ConnectionResetError:
+        reply = b""
+elapsed = time.monotonic() - started
+assert elapsed < 10, f"{sys.argv[2]} upload stalled for {elapsed:.1f}s without a reply"
+assert reply == b"" or reply.split(b"\r\n")[0].split()[1] in (b"408", b"499"), reply
+PY
+    upstream_still_serves "stalled $framing upload"
+done
+# Cleartext HTTP/2 is off: the prior-knowledge preface gets no HTTP/2 reply.
+python3 - "$endpoint" <<'PY'
+import socket, sys, urllib.parse
+url = urllib.parse.urlsplit(sys.argv[1])
+with socket.create_connection((url.hostname, url.port), timeout=15) as s:
+    s.sendall(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + b"\x00\x00\x00\x04\x00\x00\x00\x00\x00")
+    try:
+        reply = s.recv(64)
+    except ConnectionResetError:
+        reply = b""
+assert reply == b"" or reply.startswith(b"HTTP/1.1 "), reply
+PY
+upstream_still_serves 'HTTP/2 prior-knowledge preface'
+# The node answers tokenless POSTs before parsing them (401), and POST /metrics
+# with 404; it must still read the rest of a large body first so the
+# connection closes cleanly. curl sends Expect: 100-continue for this size, so
+# probe with and without it. Timing-dependent: the unit test is the real guard.
+head -c 1900000 /dev/zero | tr '\0' ' ' > "$scratch/large.json"
+for probe in "/otlp/v1/logs 401 Expect:" "/otlp/v1/logs 401 X-Smoke: 1" "/metrics 404 Expect:"; do
+    read -r path expected header <<<"$probe"
+    for _ in $(seq 20); do
+        status=$(curl --max-time 30 --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            -H "$header" -H 'Content-Type: application/json' --data-binary @"$scratch/large.json" "$endpoint$path") || true
+        if [ "$status" != "$expected" ]; then
+            echo "FAIL: tokenless 1.9 MB POST $path ($header) got HTTP $status" >&2
+            exit 1
+        fi
+    done
+    upstream_still_serves "tokenless 1.9 MB POSTs to $path ($header)"
+done
+rm -f "$scratch/large.json"
+# A small chunked ingest body reaches the API intact.
+curl --max-time 10 --fail --silent --show-error --output /dev/null -H @"$scratch/headers" \
+    -H 'Content-Type: application/json' -H 'Transfer-Encoding: chunked' \
+    --data-binary "${SMOKE_RECORD/docker-smoke-model/docker-chunked-model}" "$endpoint/otlp/v1/logs"
+"${compose[@]}" exec -T tokenage python - <<'PY'
+import time
+from sqlalchemy import text
+from src.database import get_engine
+for _ in range(60):
+    with get_engine().connect() as connection:
+        count = connection.execute(text("SELECT COUNT(*) FROM usage WHERE model = 'docker-chunked-model' AND prompt_tokens = 10 AND completion_tokens = 5")).scalar_one()
+    if count == 1:
+        break
+    time.sleep(1)
+else:
+    raise SystemExit("Chunked ingest did not land exactly once")
+PY
+echo 'PASS: Caddy reads chunked bodies before proxying; failed reads never reach the upstream'
 # Installer origin is operator-configured, never taken from request headers.
 curl --max-time 5 --fail --silent -H 'Host: other.example.test' "$endpoint/install.sh" |
     python3 -c "import sys; assert 'TOKENAGE_INSTALL_SERVER=https://smoke.example.test\n' in sys.stdin.read()"
@@ -369,8 +479,9 @@ if ! grep -q '"uri":"/otlp/v1/logs"' "$scratch/caddy.log" || ! grep -q 'code=RED
     echo 'FAIL: Caddy did not log the failed requests with redaction' >&2
     exit 1
 fi
-if grep -q -F -e "$token" -e smoke-login-code -e smoke-login-state "$scratch/caddy.log"; then
-    echo 'FAIL: Caddy logged an ingest token or sign-in code' >&2
+if grep -q -F -e "$token" -e smoke-login-code -e smoke-login-state -e docker-oversized-body-model \
+    -e docker-chunked-model "$scratch/caddy.log"; then
+    echo 'FAIL: Caddy logged an ingest token, sign-in code or request body' >&2
     exit 1
 fi
-echo 'PASS: Caddy error logs omit ingest tokens and sign-in codes'
+echo 'PASS: Caddy error logs omit ingest tokens, sign-in codes and request bodies'

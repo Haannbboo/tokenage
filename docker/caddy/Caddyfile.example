@@ -3,6 +3,22 @@
 	auto_https off
 	# No saved config or certificate state is needed for this HTTP-only proxy.
 	persist_config off
+	servers {
+		# TLS terminates in front of Caddy, so this listener only needs
+		# HTTP/1.1. The default also accepts cleartext HTTP/2 on :80, where the
+		# Content-Length checks below behave differently.
+		protocols h1
+		timeouts {
+			# Bodies are read in full before proxying (see :80). read_body caps
+			# that read at 30s from the start of the request: 2 MB in 30s needs
+			# about 70 KB/s, and a slower or stalled upload gets 499 without
+			# contacting a node. read_body_idle -1s keeps this a single deadline:
+			# Caddy's idle reader (default 1m) clears it when it fires, so a
+			# Content-Length upload stalled close to its end would stay open.
+			read_body 30s
+			read_body_idle -1s
+		}
+	}
 	# Error logs include request headers and the URI. Caddy redacts Authorization
 	# and Cookie itself; drop ingest tokens and one-time sign-in values too.
 	# A site-level access log bypasses this: give it the same format filter.
@@ -20,9 +36,7 @@
 
 :80 {
 	# Keep both limits equal to the server's otlp.max_body_bytes ("MB" is
-	# 1,000,000 bytes). Caddy streams bodies without checking Content-Length,
-	# so reject a declared oversized body before dialing: an upstream that
-	# rejects it mid-upload counts as a passive health failure.
+	# 1,000,000 bytes). Reject a declared oversized body before reading it.
 	@too_large expression {http.request.header.Content-Length} != "" && int({http.request.header.Content-Length}) > 2000000
 	respond @too_large 413 {
 		close
@@ -30,6 +44,21 @@
 	request_body {
 		max_size 2MB
 	}
+	# Read every body in full, in memory, before reverse_proxy picks a node:
+	# a body that fails mid-upload to a node counts as a passive health
+	# failure. Evaluating {http.request.body} reads the body; over max_size
+	# this matcher's own error is the 413, an upload unfinished at read_body
+	# gets 499, and broken chunk framing forwards only the bytes read before
+	# it, which JSON parsing rejects. Keep it unconditional so every route's
+	# body is read first; bodyless requests cost nothing. Only a body equal to
+	# the sentinel matches, so the respond line below just ends that route.
+	# Never reference {http.request.body} anywhere else: a reference before
+	# request_body reads the body without the 2 MB limit, and a later one
+	# sees an empty body.
+	# https://github.com/caddyserver/caddy/blob/v2.11.7/modules/caddyhttp/replacer.go#L445-L472
+	# https://github.com/caddyserver/caddy/blob/v2.11.7/modules/caddyhttp/vars.go#L201-L210
+	@read_full_body vars {http.request.body} tokenage-unused-sentinel
+	respond @read_full_body 413
 	reverse_proxy {
 		# With keepalive off below, hostnames resolve anew for every request:
 		# replacing a container needs no reload, including for ingest POSTs.
@@ -73,6 +102,9 @@
 		# Defaults flush SSE/unknown-length responses immediately; make this
 		# explicit for every response (also finishes work if a client disconnects).
 		flush_interval -1
+		# The body is already read in full, so nodes never need to send
+		# 100 Continue. Caddy would forward Expect and send the body anyway.
+		header_up -Expect
 		# Host passes through. Caddy sets X-Forwarded-For/Proto/Host itself.
 		# Do not add trusted_proxies: client-supplied values must be ignored.
 	}

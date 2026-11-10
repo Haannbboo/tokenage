@@ -527,7 +527,8 @@ def _build_frontend() -> None:
             raise die(
                 "Frontend build failed.",
                 "If you see 'Cannot find native binding', clean and retry:",
-                "  rm -rf frontend/node_modules && npm ci --prefix frontend",
+                "  rm -rf frontend/node_modules && npm ci --prefix frontend && "
+                "bash src/scripts/bootstrap.sh",
             )
     ok("Frontend built")
 

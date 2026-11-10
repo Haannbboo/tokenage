@@ -11,10 +11,12 @@ import os
 import sys
 from pathlib import Path
 
+from client.prompts import is_terminal
+
 DONE, FAILED, SKIPPED = 0, 1, 2
 
-_GRAY = "\033[38;2;102;102;102m" if sys.stdout.isatty() else ""
-_RESET = "\033[0m" if sys.stdout.isatty() else ""
+_GRAY = "\033[38;2;102;102;102m" if is_terminal(sys.stdout) else ""
+_RESET = "\033[0m" if is_terminal(sys.stdout) else ""
 
 
 def info(msg: str) -> None:

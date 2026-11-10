@@ -16,6 +16,7 @@
 # the default answer to the URL prompt. In unattended runs without component
 # flags, a preset URL selects the client and no preset installs both locally.
 # An unattended --client needs a server URL.
+# Pin the client with --client-version X.Y.Z or TOKENAGE_CLIENT_VERSION=X.Y.Z.
 #
 # The server is a git clone in ~/.tokenage/src. The client is its own snapshot and
 # virtualenv under ~/.tokenage/versions with a `current` link, even on the machine
@@ -32,6 +33,8 @@ TOKENAGE_INSTALL_COMMIT=${TOKENAGE_INSTALL_COMMIT:-__TOKENAGE_INSTALL_COMMIT__}
 REPOSITORY=Haannbboo/tokenage
 BRANCH=${TOKENAGE_BRANCH:-main}
 PYTHON_VERSION=${TOKENAGE_PYTHON_VERSION:-3.13}
+CLIENT_VERSION=${TOKENAGE_CLIENT_VERSION:-}
+CLIENT_VERSION_SET=0
 
 say() {
   printf 'tokenage: %s\n' "$*"
@@ -64,16 +67,27 @@ while [ "$#" -gt 0 ]; do
     --client) WANT_CLIENT=1; shift ;;
     --server) WANT_SERVER=1; shift ;;
     --yes) ASSUME_YES=1; shift ;;
+    --client-version)
+      [ "$#" -ge 2 ] || fail '--client-version requires a version'
+      case "$2" in -*) fail '--client-version requires a version' ;; esac
+      CLIENT_VERSION=$2
+      CLIENT_VERSION_SET=1
+      shift 2
+      ;;
     *) fail "unknown option: $1" ;;
   esac
 done
-# Ask only with a terminal for both the question and the answer; stdin is the
-# script itself under `curl | sh`. The same opt-outs as client/prompts.py.
 is_true() {
   case "$1" in 1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]) return 0 ;; *) return 1 ;; esac
 }
 SKIP_LOGIN=0
 if is_true "${TOKENAGE_SKIP_LOGIN:-}"; then SKIP_LOGIN=1; fi
+CLIENT_PINNED=0
+if [ "$CLIENT_VERSION_SET" = 1 ] || [ -n "$CLIENT_VERSION" ]; then
+  CLIENT_PINNED=1
+fi
+# Ask only with a terminal for both the question and the answer; stdin is the
+# script itself under `curl | sh`. The same opt-outs as client/prompts.py.
 ASK=1
 [ "$ASSUME_YES" = 0 ] || { ASK=0; TOKENAGE_YES=1; export TOKENAGE_YES; }
 for opt_out in "${TOKENAGE_YES:-}" "${TOKENAGE_NO_PROMPT:-}" "${TOKENAGE_SKIP_LOGIN:-}"; do
@@ -86,6 +100,21 @@ fi
 for command_name in curl tar sed awk mktemp mkdir mv ln rm cp chmod readlink cat grep uname tr head find; do
   command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: $command_name"
 done
+
+# Server-only installs ignore even invalid pins.
+validate_client_version() {
+  [ "$CLIENT_PINNED" = 1 ] || return 0
+  [ -n "$CLIENT_VERSION" ] || fail '--client-version requires a version'
+  case "$CLIENT_VERSION" in *'
+'*) fail 'invalid client version; expected MAJOR.MINOR.PATCH' ;; esac
+  if ! printf '%s\n' "$CLIENT_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    fail 'invalid client version; expected MAJOR.MINOR.PATCH'
+  fi
+}
+# Explicit client flags and unattended defaults guarantee a client install.
+if [ "$WANT_CLIENT" = 1 ] || [ "$ASK:$WANT_SERVER" = 0:0 ]; then
+  validate_client_version
+fi
 
 TMP_ROOT=${TMPDIR:-/tmp}
 WORK_DIR=$(mktemp -d "$TMP_ROOT/tokenage-install.XXXXXX") || fail 'could not create temporary directory'
@@ -112,16 +141,40 @@ ensure_uv() {
 }
 
 resolve_client_commit() {
-  if [ -n "$TOKENAGE_INSTALL_COMMIT" ]; then
+  if [ "$CLIENT_PINNED" = 1 ] && [ -s "$WORK_DIR/resolve-error" ]; then
+    cat "$WORK_DIR/resolve-error" >&2
+    exit 1
+  fi
+  if [ "$CLIENT_PINNED" = 0 ] &&
+    [ -n "$TOKENAGE_INSTALL_COMMIT" ]; then
     COMMIT=$TOKENAGE_INSTALL_COMMIT
   elif [ -f "$WORK_DIR/resolved-commit" ]; then
     COMMIT=$(cat "$WORK_DIR/resolved-commit")
     return
   else
-    say 'Resolving the latest client source...'
-    curl -fsSL -H 'Accept: application/vnd.github+json' \
-      "https://api.github.com/repos/$REPOSITORY/commits/$BRANCH" \
-      -o "$WORK_DIR/commit.json" || fail 'could not resolve the latest GitHub commit'
+    if [ "$CLIENT_PINNED" = 1 ]; then
+      say "Resolving client $CLIENT_VERSION..."
+      status=$(curl -sSL --connect-timeout 10 --max-time 30 -D "$WORK_DIR/commit.headers" -w '%{http_code}' -H 'Accept: application/vnd.github+json' \
+        "https://api.github.com/repos/$REPOSITORY/commits/refs/tags/client-v$CLIENT_VERSION" \
+        -o "$WORK_DIR/commit.json") || fail 'could not resolve client version: offline/DNS, TLS or network failure'
+      case "$status" in
+        200) ;;
+        404|422) fail "client version $CLIENT_VERSION not found" ;;
+        429) fail "could not resolve client version: GitHub rate limit (HTTP $status)" ;;
+        403)
+          if grep -Eiq '^x-ratelimit-remaining:[[:space:]]*0[[:space:]]*$' "$WORK_DIR/commit.headers"; then
+            fail 'could not resolve client version: GitHub rate limit (HTTP 403)'
+          fi
+          fail 'could not resolve client version: HTTP 403'
+          ;;
+        *) fail "could not resolve client version: HTTP $status" ;;
+      esac
+    else
+      say 'Resolving the latest client source...'
+      curl -fsSL -H 'Accept: application/vnd.github+json' \
+        "https://api.github.com/repos/$REPOSITORY/commits/$BRANCH" \
+        -o "$WORK_DIR/commit.json" || fail 'could not resolve the latest GitHub commit'
+    fi
     COMMIT=$(sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([a-fA-F0-9]\{40\}\)".*/\1/p' "$WORK_DIR/commit.json" | awk 'length($0) == 40 { print; exit }')
   fi
   case "$COMMIT" in
@@ -170,7 +223,9 @@ valid_server_url() {
   esac
 }
 ask_clack() {
-  (resolve_client_commit) >/dev/null 2>&1 || return 1
+  if ! (resolve_client_commit) 2>"$WORK_DIR/resolve-error"; then
+    return 1
+  fi
   COMMIT=$(cat "$WORK_DIR/resolved-commit")
   ensure_uv || return 1
   mkdir "$WORK_DIR/prompt" || return 1
@@ -218,6 +273,8 @@ if [ "$WANT_CLIENT$WANT_SERVER" = 00 ]; then
   WANT_CLIENT=1
   [ -n "$SERVER_URL" ] || WANT_SERVER=1
 fi
+# The component answer is now final; validate before any server work.
+if [ "$WANT_CLIENT" = 1 ]; then validate_client_version; fi
 # The both-install's client uses the server it installs (set below).
 if [ "$WANT_CLIENT$WANT_SERVER" = 10 ]; then
   if [ "$ASK" = 1 ]; then
@@ -272,10 +329,17 @@ if [ "$WANT_SERVER" = 1 ]; then
     git clone --branch "$BRANCH" "https://github.com/$REPOSITORY.git" "$INSTALL_DIR"
   fi
   bash "$INSTALL_DIR/src/scripts/bootstrap.sh"
-  # Same version on both sides of a both-install.
-  [ -n "$TOKENAGE_INSTALL_COMMIT" ] || TOKENAGE_INSTALL_COMMIT=$(git -C "$INSTALL_DIR" rev-parse HEAD)
+  # An unpinned both-install uses the server checkout for the client.
+  if [ "$WANT_CLIENT:$CLIENT_PINNED" = 1:0 ] && [ -z "$TOKENAGE_INSTALL_COMMIT" ]; then
+    TOKENAGE_INSTALL_COMMIT=$(git -C "$INSTALL_DIR" rev-parse HEAD)
+  fi
 fi
-[ "$WANT_CLIENT" = 1 ] || exit 0
+if [ "$WANT_CLIENT" = 0 ]; then
+  if [ "$CLIENT_PINNED" = 1 ]; then
+    say 'Ignoring client version for a server-only install.'
+  fi
+  exit 0
+fi
 
 resolve_client_commit
 
@@ -330,6 +394,11 @@ if [ ! -x "$VERSION_DIR/.venv/bin/python" ]; then
   [ -d "$SOURCE_DIR/client" ] || fail 'source snapshot does not contain the client package'
   [ -f "$SOURCE_DIR/client/pyproject.toml" ] || fail 'client runtime requirements are missing'
 
+  if [ "$CLIENT_PINNED" = 1 ]; then
+    snapshot_version=$(cat "$SOURCE_DIR/client/VERSION" 2>/dev/null) || fail 'source snapshot is missing client/VERSION'
+    [ "$snapshot_version" = "$CLIENT_VERSION" ] || fail "client tag VERSION mismatch: requested $CLIENT_VERSION, snapshot has $snapshot_version"
+  fi
+
   STAGING_CANDIDATE=$VERSIONS_DIR/.install-$COMMIT-$$
   [ ! -e "$VERSION_DIR" ] || fail 'an incomplete version directory already exists; remove it and retry'
   mkdir "$STAGING_CANDIDATE" || fail 'could not create staging directory'
@@ -343,6 +412,9 @@ if [ ! -x "$VERSION_DIR/.venv/bin/python" ]; then
     -r "$STAGING_DIR/client/pyproject.toml"
   mv "$STAGING_DIR" "$VERSION_DIR"
   STAGING_DIR=
+elif [ "$CLIENT_PINNED" = 1 ]; then
+  snapshot_version=$(cat "$VERSION_DIR/client/VERSION" 2>/dev/null) || fail 'source snapshot is missing client/VERSION'
+  [ "$snapshot_version" = "$CLIENT_VERSION" ] || fail "client tag VERSION mismatch: requested $CLIENT_VERSION, snapshot has $snapshot_version"
 fi
 
 [ -x "$VERSION_DIR/.venv/bin/python" ] || fail 'client Python environment is incomplete'

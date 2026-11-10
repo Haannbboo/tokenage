@@ -133,6 +133,10 @@ tokenage login
 # Update the client to the latest release
 tokenage update
 
+# Switch to a specific client release (older ones too), or pick from a list
+tokenage update --version 0.1.28
+tokenage update --list
+
 # Everything else
 tokenage --help
 ```

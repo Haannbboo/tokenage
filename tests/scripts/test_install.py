@@ -59,6 +59,7 @@ if 'restart' in args and os.environ.get('TOKENAGE_FAKE_RESTART_FAIL') == '1':
 def _write_snapshot(source: Path) -> None:
     """The minimum a real client-only snapshot contains for the installer."""
     (source / "client").mkdir(parents=True)
+    (source / "client" / "VERSION").write_text("0.1.28\n")
     (source / "client" / "pyproject.toml").write_text(CLIENT_PYPROJECT.read_text())
     (source / "client" / "bin").mkdir()
     # The installer copies the shared launcher out of the snapshot.
@@ -105,12 +106,15 @@ def _fixture(tmp_path: Path, *, sha: str = COMMIT) -> tuple[Path, Path, Path]:
         "args = sys.argv[1:]\n"
         "url = next(arg for arg in args if arg.startswith('https://'))\n"
         "out = pathlib.Path(args[args.index('-o') + 1])\n"
+        "with open(os.environ.get('TOKENAGE_FAKE_UV_LOG', str(out.parent / 'curl')) + '.curl-args', 'a') as log: log.write(' '.join(args) + '\\n')\n"
         "with open(os.environ.get('TOKENAGE_FAKE_UV_LOG', str(out.parent / 'curl')) + '.requests', 'a') as log: log.write(url + '\\n')\n"
         "if url.endswith('/client/prompts.py'):\n"
         f"    out.write_text(pathlib.Path({str(PROMPTS)!r}).read_text())\n"
         "    pathlib.Path(os.environ['TOKENAGE_FAKE_UV_LOG'] + '.prompts').write_text(url)\n"
         "elif 'api.github.com' in url:\n"
         "    if os.environ.get('TOKENAGE_FAKE_API_FAIL') == '1': sys.exit(79)\n"
+        "    if '-D' in args: pathlib.Path(args[args.index('-D') + 1]).write_text(os.environ.get('TOKENAGE_FAKE_API_HEADERS', ''))\n"
+        "    if '-w' in args: print(os.environ.get('TOKENAGE_FAKE_API_STATUS', '200'), end='')\n"
         f"    out.write_text({json.dumps({'sha': sha})!r})\n"
         "else:\n"
         "    out.write_bytes(pathlib.Path(os.environ['TOKENAGE_FIXTURE_ARCHIVE']).read_bytes())\n"
@@ -505,6 +509,7 @@ def test_reinstall_checks_protocol_before_replacing_current_symlink(
         "args = sys.argv[1:]\n"
         "url = next(arg for arg in args if arg.startswith('https://'))\n"
         "out = pathlib.Path(args[args.index('-o') + 1])\n"
+        "with open(os.environ.get('TOKENAGE_FAKE_UV_LOG', str(out.parent / 'curl')) + '.curl-args', 'a') as log: log.write(' '.join(args) + '\\n')\n"
         "with open(os.environ.get('TOKENAGE_FAKE_UV_LOG', str(out.parent / 'curl')) + '.requests', 'a') as log: log.write(url + '\\n')\n"
         "if 'api.github.com' in url:\n"
         f"    out.write_text({json.dumps({'sha': NEXT_COMMIT})!r})\n"
@@ -783,11 +788,18 @@ def test_rejects_insecure_server_url_before_install(tmp_path: Path) -> None:
     assert "must use HTTPS" in result.stderr
 
 
-def _both_fixture(tmp_path: Path, *, api_port: int = 4123, server_commit: str = COMMIT):
+def _both_fixture(
+    tmp_path: Path,
+    *,
+    api_port: int = 4123,
+    server_commit: str = COMMIT,
+    snapshot_commit: str | None = None,
+):
     """A fake server clone, bootstrap and git next to the client fixtures."""
     home, fake_bin, archive = _fixture(tmp_path)
-    if server_commit != COMMIT:
-        source = tmp_path / "source" / f"tokenage-{server_commit}"
+    snapshot_commit = snapshot_commit or server_commit
+    if snapshot_commit != COMMIT:
+        source = tmp_path / "source" / f"tokenage-{snapshot_commit}"
         _write_snapshot(source)
         with tarfile.open(archive, "w:gz") as tar:
             tar.add(source, arcname=source.name)
@@ -1217,3 +1229,309 @@ def test_invalid_shared_answers_fall_back_to_numbered_questions(tmp_path, answer
         in (tmp_path / "python.log").read_text()
     )
     assert not (tmp_path / "python.log.server").exists()
+
+
+@pytest.mark.parametrize(
+    "via,shell",
+    [
+        (via, shell)
+        for via in ("env", "flag")
+        for shell in (("dash",), ("bash", "--posix"), ("busybox", "sh"))
+    ],
+)
+def test_version_resolves_tag_and_reuses_snapshot(via, shell, tmp_path):
+    executable = shutil.which(shell[0])
+    if executable is None:
+        pytest.skip(f"{shell[0]} is not installed")
+    home, fake_bin, archive = _fixture(tmp_path)
+    script = tmp_path / "install.sh"
+    # Even a served preview pin is overridden by an explicit release.
+    script.write_text(_render_installer(commit=NEXT_COMMIT))
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "TOKENAGE_HOME": str(home / ".tokenage"),
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "TOKENAGE_FIXTURE_ARCHIVE": str(archive),
+        "TOKENAGE_FAKE_UV_LOG": str(tmp_path / "uv.log"),
+        "TOKENAGE_FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
+        "TOKENAGE_SKIP_LOGIN": "1",
+    }
+    command = [executable, *shell[1:], str(script)]
+    if via == "env":
+        env["TOKENAGE_CLIENT_VERSION"] = "0.1.28"
+    else:
+        env["TOKENAGE_CLIENT_VERSION"] = "0.1.26"
+        command += ["--client-version", "0.1.28"]
+    for _ in range(2):
+        result = subprocess.run(
+            command, env=env, capture_output=True, text=True, timeout=30
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+    urls = (tmp_path / "uv.log.requests").read_text().splitlines()
+    assert (
+        urls.count(
+            "https://api.github.com/repos/Haannbboo/tokenage/commits/refs/tags/client-v0.1.28"
+        )
+        == 2
+    )
+    assert sum("archive/" in u for u in urls) == 1
+    assert (tmp_path / "uv.log").read_text().count("pip install") == 1
+    current = home / ".tokenage/current"
+    assert current.resolve().name == COMMIT
+    # A failed compatibility check on a cached selection cannot switch current.
+    previous = home / ".tokenage/versions" / NEXT_COMMIT
+    previous.mkdir()
+    current.unlink()
+    current.symlink_to(previous)
+    env["TOKENAGE_FAKE_PROTOCOL_FAIL"] = "1"
+    result = subprocess.run(
+        command, env=env, capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode != 0
+    assert current.resolve() == previous
+
+
+@pytest.mark.parametrize("interactive", [False, True])
+def test_both_install_uses_release_instead_of_server_commit(tmp_path, interactive):
+    home, env = _both_fixture(
+        tmp_path, server_commit=NEXT_COMMIT, snapshot_commit=COMMIT
+    )
+    env["TOKENAGE_CLIENT_VERSION"] = "0.1.28"
+    if interactive:
+        pytest.importorskip("prompt_toolkit")
+        env["TOKENAGE_FAKE_UV_PYTHON"] = sys.executable
+        env["PROMPT_TOOLKIT_NO_CPR"] = "1"
+        output = _run_in_terminal(
+            INSTALLER,
+            env,
+            [
+                (b"What do you want to install?", b"\x1b[B\x1b[B\r"),
+                (b"Installing: client", b"code\n"),
+            ],
+            expected_returncode=0,
+        )
+        assert b"falling back" not in output
+        assert output.count(b"Resolving client 0.1.28...") == 1
+        assert (tmp_path / "uv.log.prompts").read_text() == (
+            f"https://raw.githubusercontent.com/Haannbboo/tokenage/{COMMIT}/client/prompts.py"
+        )
+    else:
+        result = _run_raw(tmp_path, env)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not (tmp_path / "uv.log.prompts").exists()
+    requests = (tmp_path / "uv.log.requests").read_text().splitlines()
+    assert [url for url in requests if "api.github.com" in url] == [
+        "https://api.github.com/repos/Haannbboo/tokenage/commits/refs/tags/client-v0.1.28"
+    ]
+    assert (tmp_path / "python.log.server").exists()
+    assert (
+        "check-server --server http://127.0.0.1:4123"
+        in (tmp_path / "python.log").read_text()
+    )
+    assert (home / ".tokenage/current").resolve().name == COMMIT
+
+
+@pytest.mark.parametrize("interactive", [False, True])
+@pytest.mark.parametrize("version", ["0.1.26", "bad", "0.1.999", ""])
+@pytest.mark.parametrize("via", ["env", "flag"])
+def test_server_only_ignores_client_version(tmp_path, version, via, interactive):
+    home, env = _both_fixture(tmp_path)
+    env["TOKENAGE_CLIENT_VERSION"] = version
+    env["TOKENAGE_FAKE_API_FAIL"] = "1"
+    flags = [] if interactive else ["--server"]
+    if via == "flag":
+        flags += ["--client-version", version]
+    if interactive:
+        output = _run_in_terminal(
+            INSTALLER, env, [(b"> ", b"2\n")], *flags, expected_returncode=0
+        ).decode()
+    else:
+        result = _run_raw(tmp_path, env, *flags)
+        assert result.returncode == 0, result.stderr
+        output = result.stdout
+    assert (tmp_path / "python.log.server").exists()
+    assert ("Ignoring client version for a server-only install." in output) == (
+        via == "flag" or bool(version)
+    )
+    assert not (home / ".tokenage/current").exists()
+
+
+@pytest.mark.parametrize(
+    "status,reason",
+    [
+        ("404", "not found"),
+        ("422", "not found"),
+        ("403", "HTTP 403"),
+        ("429", "rate limit"),
+        ("500", "HTTP 500"),
+        ("network", "network failure"),
+    ],
+)
+@pytest.mark.parametrize(
+    "version", ["0.1.999", "0.1.28", "0.1.26", "0.0.999", "0.1.27"]
+)
+@pytest.mark.parametrize("via", ["env", "flag"])
+def test_version_lookup_errors(tmp_path, status, reason, version, via):
+    home, env = _both_fixture(tmp_path)
+    env["TOKENAGE_SERVER"] = "https://host.example"
+    env["TOKENAGE_FAKE_API_STATUS"] = status
+    flags = ["--client"]
+    if via == "env":
+        env["TOKENAGE_CLIENT_VERSION"] = version
+    else:
+        flags += ["--client-version", version]
+    if status == "network":
+        env["TOKENAGE_FAKE_API_FAIL"] = "1"
+    result = _run_raw(tmp_path, env, *flags)
+    assert result.returncode != 0
+    assert reason in result.stderr
+    if status not in {"404", "422"}:
+        assert "not found" not in result.stderr
+    assert "Downloading" not in result.stdout
+    assert not (tmp_path / "uv.log").exists()
+    assert not (tmp_path / "python.log.server").exists()
+    assert not (home / ".tokenage/current").exists()
+
+
+def test_client_version_cannot_consume_next_flag(tmp_path):
+    _, env = _both_fixture(tmp_path)
+    result = _run_raw(tmp_path, env, "--client-version", "--yes")
+    assert result.returncode == 1
+    assert "requires a version" in result.stderr
+    assert "Installing:" not in result.stdout
+
+
+def test_mismatched_snapshot_version_cannot_replace_current(tmp_path):
+    home, env = _both_fixture(tmp_path, snapshot_commit=COMMIT)
+    env.update(TOKENAGE_CLIENT_VERSION="0.1.29", TOKENAGE_SERVER="https://host.example")
+    result = _run_raw(tmp_path, env, "--client")
+    assert result.returncode == 1
+    assert "VERSION mismatch: requested 0.1.29, snapshot has 0.1.28" in result.stderr
+    assert not (home / ".tokenage/current").exists()
+
+
+def test_rate_limit_requires_zero_remaining(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKENAGE_CLIENT_VERSION", "0.1.28")
+    monkeypatch.setenv("TOKENAGE_FAKE_API_STATUS", "403")
+    monkeypatch.setenv(
+        "TOKENAGE_FAKE_API_HEADERS", "HTTP/2 403\r\nX-RateLimit-Remaining: 0\r\n"
+    )
+    result, _, _ = _run_install(tmp_path)
+    assert result.returncode == 1
+    assert "GitHub rate limit (HTTP 403)" in result.stderr
+
+
+def test_interactive_release_failure_is_cached_and_visible(tmp_path):
+    _, env = _both_fixture(tmp_path)
+    env.update(TOKENAGE_CLIENT_VERSION="0.1.28", TOKENAGE_FAKE_API_STATUS="403")
+    output = _run_in_terminal(
+        INSTALLER,
+        env,
+        [(b"> ", b"1\n"), (b"Server URL [", b"https://host.example\n")],
+        expected_returncode=1,
+    )
+    assert output.count(b"Resolving client 0.1.28...") == 1
+    assert output.count(b"could not resolve client version: HTTP 403") == 1
+    assert (tmp_path / "uv.log.requests").read_text().count("api.github.com") == 1
+    curl_args = (tmp_path / "uv.log.curl-args").read_text()
+    assert "--connect-timeout 10 --max-time 30" in curl_args
+
+
+@pytest.mark.parametrize("version", ["bad", ""])
+@pytest.mark.parametrize("answer", [b"1\n", b"3\n"])
+def test_interactive_client_validates_after_component_answer(tmp_path, version, answer):
+    _, env = _both_fixture(tmp_path)
+    env["TOKENAGE_FAKE_API_FAIL"] = "1"
+    output = _run_in_terminal(
+        INSTALLER,
+        env,
+        [(b"> ", answer)],
+        "--client-version",
+        version,
+        expected_returncode=1,
+    )
+    assert b"error:" in output
+    assert b"Installing:" not in output
+    assert not (tmp_path / "python.log.server").exists()
+
+
+@pytest.mark.parametrize("missing", ["awk", "grep"])
+def test_required_commands_checked_before_client_version(tmp_path, missing):
+    bin_dir = tmp_path / "minimal-bin"
+    bin_dir.mkdir()
+    for name in "curl tar sed awk mktemp mkdir mv ln rm cp chmod readlink cat grep uname tr head find".split():
+        if name != missing:
+            (bin_dir / name).symlink_to(shutil.which(name))
+    result = subprocess.run(
+        ["/bin/dash", str(INSTALLER), "--client", "--client-version", "0.1.28"],
+        env={**os.environ, "HOME": str(tmp_path), "PATH": str(bin_dir)},
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 1
+    assert f"required command not found: {missing}" in result.stderr
+    assert "invalid client version" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "via,version",
+    [
+        (via, version)
+        for version in ["bad", "garbage", "0.1.28\nbad", "0.1.28\n", "1.2.3.4", ""]
+        for via in ("env", "flag")
+        if version or via == "flag"
+    ],
+)
+@pytest.mark.parametrize("flags", [[], ["--client"], ["--server", "--client"]])
+def test_invalid_version_precedes_server_and_download(tmp_path, via, version, flags):
+    _, env = _both_fixture(tmp_path)
+    if via == "env":
+        env["TOKENAGE_CLIENT_VERSION"] = version
+    else:
+        flags = [*flags, "--client-version", version]
+    result = _run_raw(tmp_path, env, *flags)
+    assert result.returncode == 1
+    assert (
+        "invalid client version" in result.stderr
+        or "requires a version" in result.stderr
+    )
+    assert "Installing:" not in result.stdout
+    assert "Downloading" not in result.stdout
+    assert not (tmp_path / "python.log.server").exists()
+    assert not (tmp_path / "uv.log").exists()
+    assert not (tmp_path / "uv.log.requests").exists()
+
+
+@pytest.mark.parametrize("shell", [("dash",), ("bash", "--posix"), ("busybox", "sh")])
+def test_mismatched_cached_snapshot_cannot_replace_current(tmp_path, shell):
+    executable = shutil.which(shell[0])
+    if executable is None:
+        pytest.skip(f"{shell[0]} is not installed")
+    home, env = _both_fixture(tmp_path, snapshot_commit=COMMIT)
+    env.update(TOKENAGE_CLIENT_VERSION="0.1.28", TOKENAGE_SERVER="https://host.example")
+    cached = home / ".tokenage/versions" / COMMIT
+    _write_snapshot(cached)
+    (cached / "client/VERSION").write_text("0.1.27\n")
+    python = cached / ".venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_text(FAKE_PYTHON)
+    python.chmod(0o755)
+    previous = home / ".tokenage/versions" / NEXT_COMMIT
+    previous.mkdir()
+    current = home / ".tokenage/current"
+    current.symlink_to(previous)
+
+    result = subprocess.run(
+        [executable, *shell[1:], str(INSTALLER), "--client"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 1
+    assert "VERSION mismatch: requested 0.1.28, snapshot has 0.1.27" in result.stderr
+    assert current.resolve() == previous
+    assert "archive/" not in (tmp_path / "uv.log.requests").read_text()

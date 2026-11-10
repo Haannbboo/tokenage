@@ -135,3 +135,15 @@ def test_installer_exits_when_invalid_default_cannot_be_corrected(
     assert error.value.code == 1
     assert capsys.readouterr().out.count("Enter an HTTPS URL") == 1
     assert not out.exists()
+
+
+@pytest.mark.parametrize("stream", ["stdin", "stdout"])
+@pytest.mark.parametrize("closed", [False, True])
+def test_missing_and_closed_streams_are_noninteractive(stream, closed, monkeypatch):
+    import io
+
+    handle = io.StringIO()
+    handle.close()
+    monkeypatch.setattr(sys, stream, handle if closed else None)
+    assert not prompts.interactive()
+    assert prompts.select("Pick", [(1, "one")], 1) == 1

@@ -101,6 +101,11 @@ with a 2-second timeout; one failed check removes the node, one successful check
 it. Passive checks exclude a node for the full 10-second `fail_duration` after one
 failed request, even if active checks pass during that time. The
 example uses a 1-second dial timeout and a 60-second response header timeout.
+The body limit is 2 MB, equal to the server's default `otlp.max_body_bytes`
+(2,000,000 bytes). A body over 2 MB with a `Content-Length` gets 413 before any
+node is contacted. Caddy only limits bodies without `Content-Length` (chunked)
+mid-stream, and the client gets an error. If you raise `otlp.max_body_bytes`, raise both
+`2000000` in the `@too_large` matcher and `request_body` `max_size` to the same value.
 Responses flush immediately, including streams.
 
 Retries wait up to 5 seconds for an available node. In Caddy 2.11.7, dial failures
@@ -182,7 +187,7 @@ From the repository root, build locally: `docker build --build-arg GIT_COMMIT="$
 Run `TOKENAGE_SMOKE_IMAGE=tokenage:local ./docker/smoke.sh` for isolated functional
 checks (Postgres ingest, SQLite persistence, Caddy + Redis ingest, atomic config
 saves/reloads, active health removal, and abrupt-stop POST failover).
-The checks also cover the 10 MiB body limit and an ingest POST after container
+The checks also cover the 2 MB body limit and an ingest POST after container
 replacement without a proxy reload. Sent-POST no-replay behavior was verified
 against the pinned Caddy source; the smoke test does not simulate a connection
 reset after sending a POST.

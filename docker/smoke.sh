@@ -147,7 +147,8 @@ assert "lb_retry_match expression false" in active, "Sent requests must never be
 assert "keepalive off" in active, "Transport retries must not bypass the retry matcher"
 assert "health_uri /version" in active and "health_interval 5s" in active
 for directive in (
-    "max_size 10MiB",
+    "max_size 2MB",
+    "int({http.request.header.Content-Length}) > 2000000",
     "dial_timeout 1s",
     "response_header_timeout 60s",
     "lb_policy least_conn",
@@ -171,29 +172,41 @@ echo 'PASS: Caddy + Redis + Postgres OTLP ingest and auth isolation'
 "${compose[@]}" exec -T tokenage python -m src.cli token create \
     --email smoke@example.test --kind ingest --name docker-probes > "$scratch/token"
 printf 'x-tokenage-token: %s\n' "$(tail -n 1 "$scratch/token")" > "$scratch/headers"
-python3 - "$scratch/oversized.json" "$SMOKE_RECORD" <<'PY'
+# Bodies over the 2 MB limit get Caddy's 413 before any upstream is dialed, so
+# they never count as passive health failures.
+for size in 2000001 5000000; do
+    python3 - "$scratch/oversized.json" "$SMOKE_RECORD" "$size" <<'PY'
 import sys
 from pathlib import Path
-Path(sys.argv[1]).write_bytes(b" " * (10 * 1024 * 1024) + sys.argv[2].encode())
+record = sys.argv[2].encode()
+Path(sys.argv[1]).write_bytes(b" " * (int(sys.argv[3]) - len(record)) + record)
 PY
-# Caddy may reset the connection mid-upload once it has rejected the body, so
-# curl can exit 55 or 56 without reading the 413, or 18 after reading it. When
-# the API's own cap answers first, Caddy can see the upstream close and return
-# 502. Retry the resets and 502s: only a 413 passes.
-for attempt in 1 2 3 4 5; do
-    curl_exit=0
-    status=$(curl --max-time 30 --silent --show-error --output /dev/null --write-out '%{http_code}' \
-        -H @"$scratch/headers" -H 'Content-Type: application/json' \
-        --data-binary @"$scratch/oversized.json" "$endpoint/otlp/v1/logs") || curl_exit=$?
-    case "$status:$curl_exit" in
-        413:0|413:18|413:55|413:56) break ;;
-        000:55|000:56|502:0) [ "$attempt" -lt 5 ] && continue ;;
-    esac
-    echo "FAIL: oversized body got HTTP $status, curl exit $curl_exit" >&2
-    exit 1
+    # Caddy answers without reading the body and closes, so curl can exit 55 or
+    # 56 without reading the 413, or 18 after reading it. Retry only the resets.
+    for attempt in 1 2 3 4 5; do
+        curl_exit=0
+        status=$(curl --max-time 30 --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            -H @"$scratch/headers" -H 'Content-Type: application/json' \
+            --data-binary @"$scratch/oversized.json" "$endpoint/otlp/v1/logs") || curl_exit=$?
+        case "$status:$curl_exit" in
+            413:0|413:18|413:55|413:56) break ;;
+            000:55|000:56) [ "$attempt" -lt 5 ] && continue ;;
+        esac
+        echo "FAIL: $size-byte body got HTTP $status, curl exit $curl_exit" >&2
+        exit 1
+    done
+    # The only upstream must still serve the very next requests, including ingest.
+    status=$(curl --max-time 10 --silent --show-error --output /dev/null --write-out '%{http_code}' "$endpoint/version") || true
+    if [ "$status" != 200 ]; then
+        echo "FAIL: /version after $size-byte body got HTTP $status" >&2
+        exit 1
+    fi
+    curl --max-time 10 --fail --silent --show-error --output /dev/null -H @"$scratch/headers" \
+        -H 'Content-Type: application/json' \
+        --data-binary "${SMOKE_RECORD/docker-smoke-model/docker-after-oversized-model}" "$endpoint/otlp/v1/logs"
 done
 rm -f "$scratch/oversized.json"
-echo 'PASS: Caddy rejects ingest bodies larger than 10 MiB'
+echo 'PASS: Caddy rejects bodies over 2 MB without taking the upstream out'
 # Installer origin is operator-configured, never taken from request headers.
 curl --max-time 5 --fail --silent -H 'Host: other.example.test' "$endpoint/install.sh" |
     python3 -c "import sys; assert 'TOKENAGE_INSTALL_SERVER=https://smoke.example.test\n' in sys.stdin.read()"

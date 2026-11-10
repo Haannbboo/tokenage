@@ -212,7 +212,7 @@ jobs:
           node-version: "22"
 
       - name: Install frontend dependencies
-        run: npm install --no-package-lock
+        run: npm ci
 
       - name: Run frontend tests
         run: npm test

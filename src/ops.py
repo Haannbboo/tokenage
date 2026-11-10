@@ -511,7 +511,7 @@ def _build_frontend() -> None:
         note(
             "Node.js not found: skipping the frontend build; no dashboard until you run"
         )
-        note("  cd frontend && npm install && npm run build")
+        note("  cd frontend && npm ci && npm run build")
         return
     version = _run([node, "-v"], capture_output=True).stdout.strip().lstrip("v")
     if int(version.split(".")[0] or 0) < 18:
@@ -522,13 +522,12 @@ def _build_frontend() -> None:
     if not frontend.is_dir():
         return
     note(f"Building frontend (Node {version})...")
-    for cmd in ([npm, "install", "--ignore-scripts"], [npm, "run", "build"]):
+    for cmd in ([npm, "ci", "--ignore-scripts"], [npm, "run", "build"]):
         if _run(cmd, cwd=frontend).returncode:
             raise die(
                 "Frontend build failed.",
                 "If you see 'Cannot find native binding', clean and retry:",
-                "  rm -rf frontend/node_modules frontend/package-lock.json && "
-                "bash src/scripts/bootstrap.sh",
+                "  rm -rf frontend/node_modules && npm ci --prefix frontend",
             )
     ok("Frontend built")
 

@@ -29,7 +29,10 @@ export const zh: Record<string, string> = {
   'Cache cost': '缓存费用',
   'Cache write cost': '缓存写入费用',
 
-  'Active sessions': '活跃会话',
+  'Parallel sessions': '并行会话',
+  '1 session': '1 个会话',
+  '{n} sessions': '{n} 个会话',
+  'Parallel sessions: peak {n} at once at {time}': '并行会话：{time} 峰值同时 {n} 个',
   'By agent': '按代理',
   'By project': '按项目',
   'Project': '项目',

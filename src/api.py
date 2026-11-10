@@ -115,6 +115,8 @@ Timezone = Annotated[str | None, AfterValidator(_check_timezone)]
 DateParam = Annotated[str | None, AfterValidator(_check_date)]
 TzOffset = Annotated[str, Query(pattern=r"^[+-](0[0-9]|1[0-4]):[0-5][0-9]$")]
 Granularity = Literal["day", "hour", "15m"]
+# The sessions chart plots finer steps over short windows.
+SessionGranularity = Literal["day", "hour", "15m", "5m"]
 Dimension = Literal["model", "provider", "client_source", "device"]
 
 AUTH_GATE_LOGIN_REQUIRED = {"detail": "login required"}
@@ -755,7 +757,7 @@ def get_sessions_summary(filters: SessionFilters = Depends(_session_query_filter
 @app.get("/sessions/distribution")
 def get_sessions_distribution(
     filters: SessionFilters = Depends(_session_query_filters),
-    granularity: Granularity = "day",
+    granularity: SessionGranularity = "day",
     tz_offset: TzOffset = "+00:00",
     tz: Timezone = None,
 ):

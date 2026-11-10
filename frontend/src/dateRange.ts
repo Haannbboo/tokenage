@@ -32,6 +32,17 @@ export function rangeGranularity(option: DateRangeOption): PeriodGranularity {
   return 'day'
 }
 
+/**
+ * The plotted step of the parallel sessions chart. Each point is the peak
+ * 5-minute slot within its step, so a finer step only adds detail.
+ */
+export function parallelGranularity(option: DateRangeOption): PeriodGranularity | '5m' {
+  if (option === '5h' || option === '24h') return '5m'
+  if (option === '7d') return '15m'
+  if (option === '30d') return 'hour'
+  return 'day'
+}
+
 /** How many periods the trend chart shows; open ended for all time. */
 export function rangePeriodCount(option: DateRangeOption): number | undefined {
   if (option === '24h') return 24

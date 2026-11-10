@@ -90,3 +90,14 @@ it('sends the resolved IANA timezone with session distributions', async () => {
   expect(params.has('tz_offset')).toBe(true)
   context.timezone = 'UTC'
 })
+
+it('asks for 5-minute steps on the 24h range', async () => {
+  const urls: URL[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    urls.push(new URL(input, window.location.origin))
+    return { ok: true, json: async () => ({ sessions: [] }) }
+  }))
+  renderHook(() => useSessionsData({ activeSource: null, dateRange: '24h', bucket: null }))
+  await waitFor(() => expect(urls.some(url => url.pathname === '/sessions/distribution')).toBe(true))
+  expect(urls.find(url => url.pathname === '/sessions/distribution')!.searchParams.get('granularity')).toBe('5m')
+})

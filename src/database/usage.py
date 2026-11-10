@@ -1851,6 +1851,8 @@ def _granularity(granularity: str) -> tuple[int, str]:
         return 3600, "%Y-%m-%d %H:00"
     if granularity == "15m":
         return 900, "%Y-%m-%d %H:%M"
+    if granularity == "5m":
+        return 300, "%Y-%m-%d %H:%M"
     return 86400, "%Y-%m-%d"
 
 
@@ -1896,6 +1898,7 @@ def _timezone_bucket_start(
     filters: list[Any],
     db_path: str | None,
     raw: bool,
+    column: Any = None,
 ) -> Any:
     """Portable SQL using the IANA offset valid at each row's UTC timestamp.
 
@@ -1907,13 +1910,15 @@ def _timezone_bucket_start(
     ponytail: on the hourly rollup a half-hour offset or transition shifts
     whole UTC hours, so a request within 30 min of a local bucket edge can land
     in the neighbouring bucket, as with `_bucket_start`; raw rows only when
-    `raw` asks for them (short windows, sub-hour buckets).
+    `raw` asks for them (short windows, sub-hour buckets). `column` overrides
+    the time column (in the units `raw` implies).
     """
 
     def integer(value: int) -> Any:
         return literal_column(str(value), BigInteger)
 
-    column = Usage.ts if raw else UsageHourly.hour
+    if column is None:
+        column = Usage.ts if raw else UsageHourly.hour
     scale = 1_000_000 if raw else 1
     width = integer(size * scale)
     fixed = _fixed_offset(tz)

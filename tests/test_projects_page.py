@@ -1,6 +1,6 @@
 """Project API totals, portable activity buckets, filters and ownership."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -10,6 +10,50 @@ from sqlalchemy.orm import Session
 DAY = 86400_000000
 START = int(datetime(2026, 4, 20, tzinfo=UTC).timestamp() * 1_000_000)
 WINDOW = {"since": str(START / 1_000_000), "until": str((START + 3 * DAY) / 1_000_000)}
+
+
+def _micros(iso):
+    return (datetime.fromisoformat(iso) - datetime(1970, 1, 1, tzinfo=UTC)) // (
+        timedelta(microseconds=1)
+    )
+
+
+def _add_session(fresh_db, stamps):
+    """One session with a request at each stamp."""
+    from src.database.models import SessionRecord, Usage
+
+    with Session(fresh_db.database_module.get_engine()) as db:
+        db.add(
+            SessionRecord(
+                session_id="s",
+                user_id="test-user",
+                started=min(stamps),
+                ended=max(stamps),
+                updated_at="now",
+            )
+        )
+        for i, ts in enumerate(stamps):
+            db.add(
+                Usage(
+                    id=f"u{i}",
+                    user_id="test-user",
+                    session_id="s",
+                    provider="test-provider",
+                    model="test-model",
+                    endpoint="otlp",
+                    ts=ts,
+                )
+            )
+        db.commit()
+
+
+def _parallel_buckets(fresh_db, *, filters, **params):
+    from src.database.sessions import _active_session_buckets, _session_filters
+
+    with fresh_db.database_module.get_engine().connect() as connection:
+        return _active_session_buckets(
+            connection, _session_filters(filters), filters=filters, **params
+        )
 
 
 @pytest.fixture
@@ -108,7 +152,8 @@ def test_activity_uses_overlap_and_shared_window(projects_api):
         params={**WINDOW, "granularity": "hour", "tz_offset": "+05:30"},
     ).json()
     assert len(hourly["over_time"]) == 73
-    # Every stack equals the sum of the two project-specific distribution reads.
+    # Same grid as the project's distribution read; parallel peaks never exceed
+    # the sessions open in a bucket.
     for name in ["orchard", "grove"]:
         distribution = client.get(
             "/sessions/distribution",
@@ -119,9 +164,14 @@ def test_activity_uses_overlap_and_shared_window(projects_api):
                 "tz_offset": "+05:30",
             },
         ).json()
-        assert [b["by_project"].get(name, 0) for b in hourly["over_time"]] == [
-            b["session_count"] for b in distribution["over_time"]
+        grid = ("key", "start", "end", "period")
+        assert [[b[k] for k in grid] for b in hourly["over_time"]] == [
+            [b[k] for k in grid] for b in distribution["over_time"]
         ]
+        assert all(
+            parallel["session_count"] <= open_["by_project"].get(name, 0)
+            for parallel, open_ in zip(distribution["over_time"], hourly["over_time"])
+        )
 
 
 @pytest.mark.parametrize(
@@ -302,7 +352,6 @@ def test_sparse_single_sweep_matches_per_project(granularity, offset, monkeypatc
     import src.database.sessions as module
 
     Timestamp = namedtuple("Timestamp", "project_name started ended")
-    Pair = namedtuple("Pair", "started ended")
     rng = Random(12)
     rows = []
     for i in range(60):
@@ -315,15 +364,6 @@ def test_sparse_single_sweep_matches_per_project(granularity, offset, monkeypatc
         Timestamp("span", START - DAY, START + 4 * DAY),
     ]
     filters = module.SessionFilters(user_id="u", **WINDOW)
-    expected = {
-        name: module._active_session_buckets(
-            [Pair(row.started, row.ended) for row in rows if row.project_name == name],
-            filters=filters,
-            granularity=granularity,
-            tz_offset=offset,
-        )
-        for name in {row.project_name for row in rows}
-    }
     calls = []
     original = module._granularity
     monkeypatch.setattr(
@@ -341,13 +381,14 @@ def test_sparse_single_sweep_matches_per_project(granularity, offset, monkeypatc
     assert all(
         value > 0 for bucket in buckets for value in bucket["by_project"].values()
     )
-    for name, old in expected.items():
-        assert [bucket["by_project"].get(name, 0) for bucket in buckets] == [
-            bucket["session_count"] for bucket in old
-        ]
-        assert [(b["key"], b["start"], b["end"], b["period"]) for b in buckets] == [
-            (b["key"], b["start"], b["end"], b["period"]) for b in old
-        ]
+    # Same predicate as the session list: ended >= start and started < end.
+    for bucket in buckets:
+        start, end = (_micros(bucket[edge]) for edge in ("start", "end"))
+        expected: dict[str, int] = {}
+        for row in rows:
+            if row.ended >= start and row.started < end:
+                expected[row.project_name] = expected.get(row.project_name, 0) + 1
+        assert bucket["by_project"] == expected
 
 
 def test_detail_reads_only_extras_without_list_aggregate(projects_api, monkeypatch):
@@ -396,22 +437,22 @@ def test_detail_reads_only_extras_without_list_aggregate(projects_api, monkeypat
         ("Australia/Lord_Howe", "2026-10-02T13:30:00Z", "2026-10-07T13:00:00Z", 23.5),
     ],
 )
-def test_session_and_project_calendar_grid_tracks_dst(zone, since, until, duration):
+def test_session_and_project_calendar_grid_tracks_dst(
+    fresh_db, zone, since, until, duration
+):
     from collections import namedtuple
 
-    from src.database.sessions import (
-        SessionFilters,
-        _active_session_buckets,
-        _project_time_buckets,
-    )
+    from src.database.sessions import SessionFilters, _project_time_buckets
     from src.database.usage import _iso_to_micros
 
     filters = SessionFilters(user_id="test-user", since=since, until=until)
     lower, upper = _iso_to_micros(since), _iso_to_micros(until)
     params = dict(filters=filters, granularity="day", tz_offset="+12:00", tz=zone)
-    sessions = _active_session_buckets([(lower, upper)], **params)
     Row = namedtuple("Row", "name started ended")
     projects = _project_time_buckets([Row("repo", lower, upper)], **params)
+    # One request at the start of every day keeps the session live in each.
+    _add_session(fresh_db, [_micros(row["start"]) for row in projects])
+    sessions = _parallel_buckets(fresh_db, **params)
     assert len(sessions) == len(projects) == 5
     assert [row["key"] for row in sessions] == [row["key"] for row in projects]
     assert [row["period"] for row in sessions] == [row["period"] for row in projects]
@@ -427,14 +468,10 @@ def test_session_and_project_calendar_grid_tracks_dst(zone, since, until, durati
     assert duration in widths
 
 
-def test_session_and_project_pre_dst_day_differs_from_fixed_offset():
+def test_session_and_project_pre_dst_day_differs_from_fixed_offset(fresh_db):
     from collections import namedtuple
 
-    from src.database.sessions import (
-        SessionFilters,
-        _active_session_buckets,
-        _project_time_buckets,
-    )
+    from src.database.sessions import SessionFilters, _project_time_buckets
     from src.database.usage import _iso_to_micros
 
     stamp = _iso_to_micros("2026-10-30T04:30:00Z")
@@ -443,11 +480,15 @@ def test_session_and_project_pre_dst_day_differs_from_fixed_offset():
     )
     params = dict(filters=filters, granularity="day", tz_offset="-05:00")
     Row = namedtuple("Row", "name started ended")
-    for aggregate, rows, field in [
-        (_active_session_buckets, [(stamp, stamp)], "session_count"),
-        (_project_time_buckets, [Row("repo", stamp, stamp)], "by_project"),
+    _add_session(fresh_db, [stamp])
+    for aggregate, field in [
+        (lambda **kw: _parallel_buckets(fresh_db, **kw), "session_count"),
+        (
+            lambda **kw: _project_time_buckets([Row("repo", stamp, stamp)], **kw),
+            "by_project",
+        ),
     ]:
-        fixed = aggregate(rows, **params)
-        zoned = aggregate(rows, **params, tz="America/New_York")
+        fixed = aggregate(**params)
+        zoned = aggregate(**params, tz="America/New_York")
         assert [row["period"] for row in fixed if row[field]] == ["2026-10-29"]
         assert [row["period"] for row in zoned if row[field]] == ["2026-10-30"]

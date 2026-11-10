@@ -29,11 +29,9 @@ it('places request starts proportionally to real time', () => {
   expect(real.marks[1].width).toBe(0)
   expect(real.marks[1].x).toBe(3_600_500)
 })
-it('maps dashboard and clicked time filters to API parameters', () => {
+it('maps dashboard and clicked chart filters to API parameters', () => {
   const p = sessionFilterQuery('codex', 'device', { provider: 'openai', models: ['a', 'b'] }, 'old')
-  applySessionBucket(p, { kind: 'time', key: '123', start: 'start', end: 'end' })
-  expect(p.getAll('model')).toEqual(['a', 'b']); expect(p.get('provider')).toBe('openai')
-  expect(p.get('since')).toBe('start'); expect(p.get('until')).toBe('end'); expect(p.has('key')).toBe(false)
+  expect(p.getAll('model')).toEqual(['a', 'b']); expect(p.get('provider')).toBe('openai'); expect(p.get('since')).toBe('old')
   applySessionBucket(p, { kind: 'duration', key: '1-10m' }); expect(p.get('duration_bucket')).toBe('1-10m')
 })
 it('opens all session requests in logs from the latest 30', async () => {

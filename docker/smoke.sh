@@ -90,9 +90,10 @@ with get_engine().connect() as connection:
 PY
 }
 upstream_still_serves() {
-    # Caddy's admin API (localhost inside the container) must show no passive
-    # health failure, and the only upstream must still serve /version and ingest.
-    "${compose[@]}" exec -T caddy wget -qO- http://localhost:2019/reverse_proxy/upstreams |
+    # Caddy's admin API must show no passive health failure, and the only
+    # upstream must still serve /version and ingest. The admin API listens on
+    # 127.0.0.1 inside the container; busybox wget may resolve localhost to ::1.
+    "${compose[@]}" exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams |
         python3 -c 'import json, sys; u = json.load(sys.stdin); assert u and all(x["fails"] == 0 for x in u), (sys.argv[1], u)' "$1"
     status=$(curl --max-time 10 --silent --show-error --output /dev/null --write-out '%{http_code}' "$endpoint/version") || true
     if [ "$status" != 200 ]; then

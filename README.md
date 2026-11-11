@@ -13,8 +13,8 @@ Real-time, privacy-first usage and cost tracking for your coding agents.
 
 <a href="https://tokenage.dev/demo/" target="_blank">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/overview-dark.jpg">
-    <img src="docs/assets/screenshots/overview-light.jpg" alt="tokenage dashboard: cost, tokens, requests, cache hit rate and speed. Click to open the live demo.">
+    <source media="(prefers-color-scheme: dark)" srcset="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/overview-dark.jpg">
+    <img src="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/overview-light.jpg" alt="tokenage dashboard: cost, tokens, requests, cache hit rate and speed. Click to open the live demo.">
   </picture>
 </a>
 
@@ -41,10 +41,10 @@ Dashboard: https://app.tokenage.dev/
 
 ## What you get
 
-<a href="docs/assets/screenshots/sessions-light.jpg" target="_blank">
+<a href="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/sessions-light.jpg" target="_blank">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/sessions-dark.jpg">
-    <img src="docs/assets/screenshots/sessions-light.jpg" alt="Sessions page">
+    <source media="(prefers-color-scheme: dark)" srcset="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/sessions-dark.jpg">
+    <img src="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/sessions-light.jpg" alt="Sessions page">
   </picture>
 </a>
 
@@ -53,19 +53,19 @@ Dashboard: https://app.tokenage.dev/
 <table>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/assets/screenshots/logs-light.jpg" target="_blank">
+      <a href="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/logs-light.jpg" target="_blank">
         <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/logs-dark.jpg">
-          <img src="docs/assets/screenshots/logs-light.jpg" alt="Request logs">
+          <source media="(prefers-color-scheme: dark)" srcset="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/logs-dark.jpg">
+          <img src="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/logs-light.jpg" alt="Request logs">
         </picture>
       </a>
       <br><b>Request logs.</b> Each request with model, tokens, cache, latency and reasoning effort.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/assets/screenshots/projects-light.jpg" target="_blank">
+      <a href="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/projects-light.jpg" target="_blank">
         <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/projects-dark.jpg">
-          <img src="docs/assets/screenshots/projects-light.jpg" alt="Projects">
+          <source media="(prefers-color-scheme: dark)" srcset="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/projects-dark.jpg">
+          <img src="https://cdn.jsdelivr.net/gh/Haannbboo/tokenage@main/docs/assets/screenshots/projects-light.jpg" alt="Projects">
         </picture>
       </a>
       <br><b>Projects.</b> Spend per repository, across every agent and device.

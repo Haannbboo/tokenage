@@ -91,6 +91,8 @@ Dashboard: https://app.tokenage.dev/
 
 <sub>➖ The agent doesn't report it. Captured through each agent's built-in OpenTelemetry export (Claude Code, Codex) or the tokenage plugin (OpenCode, Kilo); `tokenage login` sets it up.</sub>
 
+<sub>🔒 Holds as long as the agents' own prompt logging stays off, which is their default and what `tokenage login` expects. If you've turned it on yourself (`OTEL_LOG_USER_PROMPTS` for Claude Code, `log_user_prompt` for Codex), the agent sends prompt text too; tokenage drops it on arrival and never stores it, but turn it off to keep prompts on your machine.</sub>
+
 ## How it works
 
 <picture>
@@ -107,8 +109,8 @@ Dashboard: https://app.tokenage.dev/
 | Setup | Command |
 |---|---|
 | One machine (server + client) | `curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh \| sh`, then pick **Both** |
-| Docker, SQLite | `cd docker && docker compose up -d` |
-| Docker, bundled Postgres | `cd docker && docker compose --profile postgres up -d` |
+| Docker, SQLite | `cd docker && cp ../src/config/config.example.yaml config.yaml && docker compose up -d` |
+| Docker, bundled Postgres | Same, but uncomment the bundled `db.url` in `config.yaml`, then `docker compose --profile postgres up -d` |
 
 Config, TLS and scaling out: [docker/README.md](docker/README.md).
 
@@ -123,10 +125,6 @@ tokenage login
 
 # Update the client to the latest release
 tokenage update
-
-# Pick a specific client release
-tokenage update --list
-tokenage update --version 0.1.28
 
 # Everything else
 tokenage --help

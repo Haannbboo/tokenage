@@ -1027,7 +1027,11 @@ async def receive_logs(request: Request):
     # Auth + rate limit + body cap — all before any record is parsed.
     user_id, device_id = await resolve_ingest_request_async(request)
 
-    body = await _read_capped_json(request)
+    try:
+        body = await _read_capped_json(request)
+    except (ValueError, RecursionError):
+        # JSON and UTF-8 errors are ValueErrors; deep nesting recurses.
+        raise HTTPException(status_code=400, detail="invalid JSON") from None
 
     max_records = CONFIG.get("otlp", {}).get("max_records_per_request", 1_000)
     records = list(_iter_log_records(body))

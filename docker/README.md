@@ -103,9 +103,27 @@ failed request, even if active checks pass during that time. The
 example uses a 1-second dial timeout and a 60-second response header timeout.
 The body limit is 2 MB, equal to the server's default `otlp.max_body_bytes`
 (2,000,000 bytes). A body over 2 MB with a `Content-Length` gets 413 before any
-node is contacted. Caddy only limits bodies without `Content-Length` (chunked)
-mid-stream, and the client gets an error. If you raise `otlp.max_body_bytes`, raise both
-`2000000` in the `@too_large` matcher and `request_body` `max_size` to the same value.
+node is contacted. Caddy reads every remaining body in full, up to that limit,
+before it picks a node, so a failed upload never counts against a node: a chunked
+body over 2 MB gets 413, and an upload still unfinished after `read_body` (30
+seconds from the start of the request) gets 499 without contacting a node. Broken
+chunk framing forwards only the bytes read before it, which JSON parsing rejects.
+`read_body_idle -1s` keeps `read_body` a single deadline; without it, an upload that
+stalls close to its declared end can stay open. The listener serves HTTP/1.1 only
+(`protocols h1`): TLS terminates in front of Caddy, and the default would also
+accept cleartext HTTP/2 on port 80. Nodes receive a body only once it has fully
+arrived (`header_up -Expect`: they never need to send 100 Continue). A node reply
+sent before the body is read (for example 401 before parsing, or a 500) still
+waits for the rest of the body, up to `otlp.max_body_bytes`, so the connection
+closes cleanly. The node's own 413 does not, so keep its limit equal to Caddy's.
+Each in-flight 2 MB upload uses about 3.5 MB of Caddy's memory (measured), and
+Caddy has no built-in cap on concurrent uploads. `compose.yml` sets no memory limit,
+since the right size depends on your traffic: give the Caddy container one and set
+`GOMEMLIMIT` to about 80% of it, so the Go runtime collects garbage before the limit
+is reached. Never reference `{http.request.body}` anywhere else in
+the config: a reference before `request_body` reads the body without the size limit.
+If you change `otlp.max_body_bytes`, set both `2000000` in the `@too_large` matcher
+and `request_body` `max_size` to the same value, and raise `read_body` for slow uploads.
 Responses flush immediately, including streams.
 
 Retries wait up to 5 seconds for an available node. In Caddy 2.11.7, dial failures
@@ -185,9 +203,10 @@ Set `TOKENAGE_VERSION` to pin an image; tags include the server version,
 older version pins eventually expire. Set `TOKENAGE_PORT` / `CADDY_PORT` for host ports.
 From the repository root, build locally: `docker build --build-arg GIT_COMMIT="$(git rev-parse HEAD)" -t tokenage:local .`.
 Run `TOKENAGE_SMOKE_IMAGE=tokenage:local ./docker/smoke.sh` for isolated functional
-checks (Postgres ingest, SQLite persistence, Caddy + Redis ingest, atomic config
+checks (Postgres ingest, SQLite persistence, Caddy + Redis ingest, body limits, atomic config
 saves/reloads, active health removal, and abrupt-stop POST failover).
-The checks also cover the 2 MB body limit and an ingest POST after container
+The checks also cover the 2 MB body limit, stalled and malformed uploads, early
+replies to large bodies, HTTP/1.1-only serving, and an ingest POST after container
 replacement without a proxy reload. Sent-POST no-replay behavior was verified
 against the pinned Caddy source; the smoke test does not simulate a connection
 reset after sending a POST.

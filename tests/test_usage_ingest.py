@@ -230,6 +230,73 @@ def test_oversized_chunked_body_rejected_before_validation(
     )
 
 
+CHUNKED = [(b"transfer-encoding", b"chunked")]
+EXPECT = [(b"content-length", b"192"), (b"expect", b"100-continue")]
+
+
+@pytest.mark.parametrize(
+    "path,headers",
+    [
+        ("/otlp/v1/logs", CHUNKED),
+        ("/otlp/v1/logs", EXPECT),
+        ("/ingest/v1/usage", CHUNKED),
+        ("/no-such-route", CHUNKED),
+        ("/metrics", CHUNKED),
+        ("/ingest/v1/usage", "raises"),
+    ],
+)
+def test_early_reply_reads_the_whole_body_first(
+    api_module, fresh_db, monkeypatch, path, headers
+):
+    """A reply sent before the body is read must not leave the upload unread:
+    the server would reset the connection and a proxy would count that against
+    the node."""
+    import asyncio
+
+    if headers == "raises":
+        # An unhandled error: Starlette's outermost 500 handler replies.
+        def fail(request):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(api_module, "resolve_ingest_request_async", fail)
+        headers = CHUNKED
+
+    events: list[str] = []
+    messages = [
+        {"type": "http.request", "body": b"x" * 64, "more_body": more}
+        for more in (True, True, False)
+    ]
+
+    async def receive():
+        if not messages:
+            await asyncio.sleep(3600)  # the client sends nothing more
+        events.append("body")
+        return messages.pop(0)
+
+    async def send(message):
+        events.append(message["type"])
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": ("203.0.113.1", 50000),
+        "server": ("localhost", 80),
+    }
+    try:
+        asyncio.run(asyncio.wait_for(api_module.app(scope, receive, send), 10))
+    except RuntimeError as error:
+        assert str(error) == "boom"  # re-raised after the 500 is sent
+    assert events[:4] == ["body", "body", "body", "http.response.start"]
+
+
 def test_ingest_usage_openapi_documents_the_request_body(api_module):
     from protocol.usage_report import UsageReport
 

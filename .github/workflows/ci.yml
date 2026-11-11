@@ -1,9 +1,8 @@
 name: CI
 
 "on":
-  # Docs-only changes skip CI; no status check is required on main.
+  # Docs-only PRs report skipped jobs; docs-only pushes skip the workflow.
   pull_request:
-    paths-ignore: ["**.md", "docs/**"]
   push:
     branches: [main]
     paths-ignore: ["**.md", "docs/**"]
@@ -33,16 +32,22 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
         run: |
-          # Pushes to main, CI changes and anything that cannot be diffed run everything.
+          # Pushes to main that reach this step run everything (docs-only pushes skip CI).
+          # CI changes and anything that cannot be diffed also run everything.
           if [ "$EVENT" != "pull_request" ] \
-            || ! files=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null) \
-            || printf '%s\n' "$files" | grep -qx '\.github/workflows/ci\.yml'; then
+            || ! files=$(git diff --name-only --no-renames "origin/${BASE_REF}...HEAD" 2>/dev/null) \
+            || [[ $'\n'"$files"$'\n' == *$'\n.github/workflows/ci.yml\n'* ]]; then
             printf 'backend=true\nfrontend=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           frontend=false; backend=false
-          printf '%s\n' "$files" | grep -q '^frontend/' && frontend=true
-          printf '%s\n' "$files" | grep -vE '^frontend/|\.md$|^docs/' | grep -q . && backend=true
+          while IFS= read -r f; do
+            case "$f" in
+              frontend/*) frontend=true ;;
+              *.md|docs/*) ;;
+              *) backend=true ;;
+            esac
+          done <<< "$files"
           echo "backend=$backend frontend=$frontend"
           printf 'backend=%s\nfrontend=%s\n' "$backend" "$frontend" >> "$GITHUB_OUTPUT"
 

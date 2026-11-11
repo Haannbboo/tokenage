@@ -253,14 +253,30 @@ if [ "$ASK" = 1 ] && [ "$WANT_SERVER" = 0 ]; then
     printf '%s\n' 'note: shared installer prompt failed; falling back to numbered questions' >&2
   fi
 fi
+# Shells defer a trapped SIGINT until a pending read returns. The reader must
+# be a child with default INT handling so it exits promptly, while the parent's
+# INT trap still exits 130 and runs cleanup. Print the prompt in the child too,
+# once its signal handling is ready.
+read_answer() {
+  (
+    trap - INT
+    printf '%s' "$1"
+    read -r answer </dev/tty || exit 1
+    printf '%s\n' "$answer" >"$WORK_DIR/answer"
+  ) || {
+    rc=$?
+    [ "$rc" = 130 ] || fail 'installer input closed; installation cancelled'
+    exit 130
+  }
+  answer=$(cat "$WORK_DIR/answer")
+}
 if [ "$WANT_CLIENT$WANT_SERVER" = 00 ] && [ "$ASK" = 1 ]; then
   printf '\ntokenage installer\n\nWhat do you want to install?\n'
   printf '  1) Client - track the agents on this machine      [default]\n'
   printf '  2) Server - host your own dashboard and collector\n'
   printf '  3) Both   - your own server + a client signed in to it\n'
   while :; do
-    printf '> '
-    read -r answer </dev/tty || fail 'installer input closed; installation cancelled'
+    read_answer '> '
     case "$answer" in
       ''|1) WANT_CLIENT=1; break ;;
       2) WANT_SERVER=1; break ;;
@@ -280,8 +296,7 @@ if [ "$WANT_CLIENT$WANT_SERVER" = 10 ]; then
   if [ "$ASK" = 1 ]; then
     SERVER_URL=${SERVER_URL:-$HOSTED_SERVER}
     while :; do
-      printf 'Server URL [%s]: ' "$SERVER_URL"
-      read -r answer </dev/tty || fail 'installer input closed; installation cancelled'
+      read_answer "Server URL [$SERVER_URL]: "
       candidate=${answer:-$SERVER_URL}
       if valid_server_url "$candidate"; then SERVER_URL=$candidate; break; fi
       printf 'Enter an HTTPS URL (HTTP is allowed for localhost).\n'

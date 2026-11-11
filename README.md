@@ -91,7 +91,7 @@ Dashboard: https://app.tokenage.dev/
 
 <sub>➖ The agent doesn't report it. Captured through each agent's built-in OpenTelemetry export (Claude Code, Codex) or the tokenage plugin (OpenCode, Kilo); `tokenage login` sets it up.</sub>
 
-<sub>🔒 Holds as long as the agents' own content logging (prompt or response text) stays off, which is their default and what `tokenage login` expects. If you've turned it on yourself (for example `OTEL_LOG_USER_PROMPTS` or response logging in Claude Code, `log_user_prompt` in Codex), the agent sends that text too; tokenage drops it on arrival and never stores it, but turn it off to keep it on your machine.</sub>
+<sub>🔒 Holds as long as the agents' own content logging stays off, which is their default and what `tokenage login` expects. If you've turned any of it on yourself (in Claude Code, for example, `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_TOOL_DETAILS`, `OTEL_LOG_RAW_API_BODIES` or response logging; in Codex, `log_user_prompt`), the agent also sends that content: prompts, responses, tool arguments or request bodies. tokenage keeps only usage fields and drops the rest on arrival, but turn those settings off to keep that content on your machine.</sub>
 
 ## How it works
 

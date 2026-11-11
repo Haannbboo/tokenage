@@ -31,6 +31,9 @@ todo.md
 docs/*
 !docs/README_CN.md
 !docs/adr/
+!docs/assets/
+# Static site (landing + frozen demo), deployed by hand, never committed
+site/
 .dev-env.json
 
 # Plugin build outputs

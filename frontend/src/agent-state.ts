@@ -26,6 +26,8 @@ export function agentVerdict(row: AgentRow): AgentVerdict {
     return { tone: 'badge-neutral', label: 'Not installed', endpoints: false }
   }
   switch (status) {
+    case 'not_tracked':
+      return { tone: 'badge-neutral', label: 'Not tracked', endpoints: false }
     case 'ready':
       if (health?.endpoint_matches === false) return { tone: 'badge-error', label: 'Wrong endpoint', endpoints: true }
       return { tone: 'badge-success', label: 'Ready', endpoints: false }

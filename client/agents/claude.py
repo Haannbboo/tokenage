@@ -11,6 +11,8 @@ from client.agents import DONE, FAILED, SKIPPED, write_private
 from client.agents import info as _info
 from client.hooks import update_session_hooks
 
+LABEL = "Claude Code"
+
 
 def load_settings(path: Path) -> dict[str, Any]:
     try:

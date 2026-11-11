@@ -1,7 +1,6 @@
 import { useApp } from '../contexts/AppContext'
 import { useDashboardData } from '../hooks/useDashboardData'
 import { useOnboarding } from '../hooks/useOnboarding'
-import { useDashboardAgents } from '../hooks/useDashboardAgents'
 import { ModelSelector } from '../ModelSelector'
 import { DeviceSelect } from '../components/DeviceSelect'
 import { DateRangeFilter, PageHeader, RefreshButton, SourceFilter } from '../components/PageHeader'
@@ -12,11 +11,10 @@ type Props = {
 
 export function DashboardPage({ onNavigateToLogs }: Props) {
   const {
-    theme, error, requestUsageRefresh,
+    theme, requestUsageRefresh,
     activeFilter, setActiveFilter, activeSource, setActiveSource, activeDevice, setActiveDevice,
     dateRange, setDateRange,
   } = useApp()
-  const { localAgents, setupDiagnostics } = useDashboardAgents()
 
   // Dashboard data hook
   const {
@@ -25,29 +23,14 @@ export function DashboardPage({ onNavigateToLogs }: Props) {
     providerColors, dashboardFilterParams, totals,
   } = useDashboardData()
 
-  // Onboarding hook
-  const {
-    verifyPhase,
-    verificationResult,
-    copiedOnboardingCommand,
-    armOnboardingVerification,
-    resetVerification,
-    showFirstRunOnboarding,
-    setupConfiguredAgents,
-    setupSummaryText,
-    setupSummaryColor,
-    verifyTimeoutGuidance,
-  } = useOnboarding({
-    totalTrackedEvents,
-    onFirstEvent: requestUsageRefresh,
-    localAgents,
-    setupDiagnostics,
-  })
+  const { verificationResult, showFirstRunOnboarding, dismissOnboarding } = useOnboarding(
+    totalTrackedEvents, requestUsageRefresh,
+  )
 
   return (
     <>
       <PageHeader title="Dashboard" description="Spend and token usage across all agents.">
-        {totalTrackedEvents !== 0 && <>
+        {!showFirstRunOnboarding && <>
           <DateRangeFilter value={dateRange} onChange={setDateRange} />
           <ModelSelector
             activeFilter={activeFilter}
@@ -78,19 +61,8 @@ export function DashboardPage({ onNavigateToLogs }: Props) {
         dashboardFilterParams={dashboardFilterParams}
         totals={totals}
         showFirstRunOnboarding={showFirstRunOnboarding}
-        verifyPhase={verifyPhase}
         verificationResult={verificationResult}
-        copiedOnboardingCommand={copiedOnboardingCommand}
-        armOnboardingVerification={armOnboardingVerification}
-        resetVerification={resetVerification}
-        setupConfiguredAgents={setupConfiguredAgents}
-        setupSummaryText={setupSummaryText}
-        setupSummaryColor={setupSummaryColor}
-        verifyTimeoutGuidance={verifyTimeoutGuidance}
-        setupDiagnostics={setupDiagnostics}
-        localAgents={localAgents}
-        sources={sources}
-        error={error}
+        onFinishOnboarding={dismissOnboarding}
         onNavigateToLogs={onNavigateToLogs}
       />
     </>

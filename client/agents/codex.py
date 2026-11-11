@@ -20,6 +20,8 @@ from client.agents import (
 )
 from client.hooks import update_session_hooks
 
+LABEL = "Codex"
+
 
 def update_existing_otel_config(
     content: str, endpoint: str, token: str | None = None

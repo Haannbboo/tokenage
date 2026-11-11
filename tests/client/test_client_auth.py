@@ -923,3 +923,142 @@ def test_wire_agents_warns_when_an_agent_is_not_wired(monkeypatch, capsys):
     _fake_agents(monkeypatch, code=1)
     assert setup.wire_agents(logs_endpoint="https://x/v1/logs", token=None) == []
     assert "wiring codex failed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "tty,keys,expected",
+    [
+        (True, " \r", ["claude"]),  # uncheck Codex, keep Claude Code
+        (True, " \x1b[B \r", []),
+        (False, "", ["codex", "claude"]),  # no terminal: every detected agent
+    ],
+)
+def test_login_wires_only_the_agents_picked(monkeypatch, capsys, tty, keys, expected):
+    import sys
+
+    from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    for name in ("TOKENAGE_YES", "TOKENAGE_NO_PROMPT", "TOKENAGE_SKIP_LOGIN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: tty)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: tty)
+    wired = []
+    monkeypatch.setattr(
+        setup, "wire_agents", lambda **kw: wired.append(kw["agents"]) or kw["agents"]
+    )
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+    ):
+        pipe.send_text(keys)
+        code, _, _ = _run_login(
+            monkeypatch, inputs=["code"], agents=["codex", "claude"]
+        )
+    assert code == 0
+    assert wired == [expected]
+    if not expected:
+        assert "No agents selected" in capsys.readouterr().out
+    # A pick is remembered for setup and update; a default is not.
+    assert setup.chosen_agents() == (expected if tty else None)
+
+
+def test_login_picker_starts_from_the_saved_choice(monkeypatch):
+    import sys
+
+    from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    for name in ("TOKENAGE_YES", "TOKENAGE_NO_PROMPT", "TOKENAGE_SKIP_LOGIN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    setup.save_chosen_agents(["claude"])
+    wired = []
+    monkeypatch.setattr(
+        setup, "wire_agents", lambda **kw: wired.append(kw["agents"]) or kw["agents"]
+    )
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+    ):
+        pipe.send_text(" \r")  # check Codex too
+        code, _, _ = _run_login(
+            monkeypatch, inputs=["code"], agents=["codex", "claude"]
+        )
+    assert code == 0
+    assert wired == [["codex", "claude"]]
+    assert setup.chosen_agents() == ["codex", "claude"]
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_login_keeps_default_without_freezing_later_agents(monkeypatch, capsys, cancel):
+    from client import prompts, service
+
+    started = []
+    monkeypatch.setattr(service, "start", lambda: started.append(True) or 0)
+
+    def pick(*args):
+        if cancel:
+            raise KeyboardInterrupt
+        return args[2]
+
+    monkeypatch.setattr(prompts, "multiselect", pick)
+    monkeypatch.setattr(prompts, "interactive", lambda **kw: True)
+    monkeypatch.setattr(prompts, "text", lambda *args, **kw: "code")
+    monkeypatch.setattr(setup, "wire_agents", lambda **kw: kw["agents"])
+    code, _, _ = _run_login(monkeypatch, inputs=["code"], agents=["codex"])
+    assert code == 0
+    assert started == [True]
+    assert setup.chosen_agents() is None
+    if cancel:
+        assert "run tokenage login again to choose" in capsys.readouterr().err
+
+
+def test_login_retains_absent_saved_agents_and_stops_unselected(monkeypatch):
+    from client import prompts
+
+    setup.save_chosen_agents(["claude", "kilo"])
+    monkeypatch.setattr(prompts, "multiselect", lambda *a: ["codex"])
+    settings = Path(setup.agent_targets()["claude"])
+    setup.AGENT_MODULES["claude"].configure(
+        str(settings), EXCHANGE_PAYLOAD["otlp"]["logs_endpoint"], "test"
+    )
+    monkeypatch.setattr(setup, "wire_agents", lambda **kw: kw["agents"])
+    code, _, _ = _run_login(monkeypatch, inputs=["code"], agents=["codex", "claude"])
+    assert code == 0
+    assert setup.chosen_agents() == ["codex", "kilo"]
+    assert "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT" not in json.loads(
+        settings.read_text()
+    ).get("env", {})
+
+
+def test_login_warns_without_changing_unsafe_client_config(monkeypatch, capsys):
+    from client import prompts
+
+    path = paths.client_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = "{proxy: {providers: {test: {api_key: private-value}}}}\n"
+    path.write_text(original)
+    monkeypatch.setattr(prompts, "multiselect", lambda *args: [])
+    wired = []
+    stopped = []
+    monkeypatch.setattr(
+        setup, "wire_agents", lambda **kw: wired.append(kw["agents"]) or kw["agents"]
+    )
+    monkeypatch.setattr(
+        setup, "stop_untracked_agents", lambda chosen, endpoint: stopped.append(chosen)
+    )
+    code, _, _ = _run_login(monkeypatch, inputs=["code"], agents=["codex"])
+    assert code == 0
+    assert wired == [["codex"]]
+    assert stopped == [["codex"]]
+    assert path.read_text() == original
+    output = capsys.readouterr()
+    assert (
+        "warning: agent choice not saved; using the persisted/default choice for wiring"
+        in output.err
+    )
+    assert "private-value" not in output.err

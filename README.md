@@ -61,13 +61,30 @@ Agent telemetry is best for agent-specific fields such as sessions and tool/reas
 
 ### 1. Install
 
-Pick the components this machine needs. With no flag the installer does both:
+Pick the components this machine needs. In a terminal, the installer asks
+which components to install when no flags are given. For a client-only install,
+it asks for a server URL. The default answer is the URL preset by
+`TOKENAGE_SERVER` or the server-served installer, or `https://app.tokenage.dev`
+if neither provides one:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash                # server + client
-curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash -s -- --server # server only
-curl -fsSL https://YOUR_SERVER/install.sh | sh                                                         # client only, for that server
+curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash                           # asks; client by default
+curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash -s -- --server            # server only
+curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash -s -- --server --client   # server + client
+curl -fsSL https://YOUR_SERVER/install.sh | sh                                                               # asks; client on that server by default
 ```
+
+`--yes`, `TOKENAGE_YES=1`, or running without a terminal skips the questions.
+With no component flags, an unattended run installs only the client if a server
+URL is preset and installs both components locally if no URL is preset.
+An unattended `--client` requires a server URL.
+After sign-in, `tokenage login` asks which detected
+agents to track (all by default). Changing the offered choice saves it as `agents:` in
+`~/.tokenage/client.yaml`; `tokenage setup` and `tokenage update` wire only
+those and stop tracking the others; wiring to another collector is left alone.
+Pressing Enter keeps the default: without a
+saved choice, agents installed later are tracked too. Previously chosen agents
+that are temporarily absent are remembered. Run `tokenage login` again to change it.
 
 The server is a git clone in `~/.tokenage/src`. The client is a separate snapshot
 and virtualenv under `~/.tokenage/versions`, even on the machine that runs the
@@ -284,7 +301,9 @@ for same-host and container scrapers.
 | `TOKENAGE_API_HOST` | API bind host, overriding `server.host`. |
 | `TOKENAGE_ROOT` | Run this checkout instead of the installed client and server clone. |
 | `TOKENAGE_BIN_DIR` | Where the launcher is installed (default `~/.local/bin`). |
-| `TOKENAGE_SERVER` | Server URL for `tokenage login` without `--server`, and for `install.sh --client`. |
+| `TOKENAGE_SERVER` | Server URL for `tokenage login` without `--server`, and a preset URL for `install.sh`. |
+| `TOKENAGE_YES` | `1` accepts every prompt's default (`install.sh --yes`). |
+| `TOKENAGE_NO_PROMPT` | `1` accepts client prompt defaults. |
 | `TOKENAGE_BRANCH` | Branch `install.sh` clones for the server (default `main`). |
 | `TOKENAGE_SKIP_LOGIN` | `1` makes `install.sh` run `setup` instead of signing in. |
 | `TOKENAGE_API_URL` | API URL for the Vite dev server (see [Dashboard](#dashboard)). |

@@ -11,4 +11,11 @@ def test_client_dependencies_stay_small() -> None:
         "dependencies"
     ]
     names = {re.split(r"[<>=\[ ]", dep, maxsplit=1)[0].lower() for dep in dependencies}
-    assert names == {"httpx", "pydantic", "pyyaml", "starlette", "uvicorn"}
+    assert names == {
+        "httpx",
+        "prompt_toolkit",
+        "pydantic",
+        "pyyaml",
+        "starlette",
+        "uvicorn",
+    }

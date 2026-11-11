@@ -8,15 +8,27 @@ that own the file formats.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from client.agents import DONE, SKIPPED, claude, codex, kilo, opencode, plugin
-from client.paths import PACKAGE_ROOT, display_endpoint
+import yaml
+
+from client.agents import (
+    DONE,
+    SKIPPED,
+    claude,
+    codex,
+    kilo,
+    opencode,
+    plugin,
+)
+from client.paths import PACKAGE_ROOT, client_config_path, display_endpoint
 
 AGENT_MODULES = {"codex": codex, "claude": claude, "opencode": opencode, "kilo": kilo}
 
@@ -59,6 +71,72 @@ def agent_path(name: str) -> str | None:
 
 def installed_agents() -> list[str]:
     return [name for name in AGENT_MODULES if agent_path(name)]
+
+
+def chosen_agents() -> list[str] | None:
+    """The agents picked at login (client.yaml ``agents:``), or None before any
+    pick: then every detected agent is tracked."""
+    try:
+        data = yaml.safe_load(client_config_path().read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None
+    agents = data.get("agents") if isinstance(data, dict) else None
+    if not isinstance(agents, list):
+        return None
+    return [name for name in AGENT_MODULES if name in agents]
+
+
+def agents_to_track() -> list[str]:
+    chosen = chosen_agents()
+    detected = installed_agents()
+    return detected if chosen is None else [n for n in detected if n in chosen]
+
+
+def save_chosen_agents(agents: list[str]) -> None:
+    """Splice the agent choice while preserving other settings and nearby comments.
+
+    Reject layouts that cannot be safely spliced, without changing the file.
+    """
+    path = client_config_path()
+    if path.is_symlink():
+        raise ValueError("refusing to replace a symlinked client config")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        text = ""
+    data = yaml.safe_load(text) or {}
+    root = yaml.compose(text)
+    if root is not None and not isinstance(root, yaml.MappingNode):
+        raise ValueError(f"{path} must be a mapping")
+    lines = text.splitlines(keepends=True)
+    for key, value in root.value if root is not None else []:
+        if key.value == "agents":
+            end = value.end_mark.line + bool(value.end_mark.column)
+            while end > key.start_mark.line + 1 and (
+                not lines[end - 1].strip() or lines[end - 1].lstrip().startswith("#")
+            ):
+                end -= 1
+            del lines[key.start_mark.line : end]
+            break
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    lines.append(f"agents: [{', '.join(agents)}]\n")
+    new_text = "".join(lines)
+    expected = {**data, "agents": agents}
+    try:
+        matches = yaml.safe_load(new_text) == expected
+    except yaml.YAMLError as exc:
+        raise ValueError("agent choice would make the config invalid") from exc
+    if not matches:
+        raise ValueError("agent choice cannot be saved without changing other settings")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".client-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(new_text)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def intended_endpoint() -> str | None:
@@ -188,17 +266,23 @@ def read_agent_states(expected_endpoint: str | None) -> dict[str, dict[str, Any]
     for name, path in plugin_configs().items():
         endpoint = _plugin_endpoint(_read_json(path), PLUGIN_SUFFIX[name])
         states[name] = _health(endpoint is not None, endpoint, expected_endpoint)
+    saved = chosen_agents()
+    if saved is not None:
+        for name in installed_agents():
+            if name not in saved:
+                states[name].update(status="not_tracked", endpoint_matches=None)
     return states
 
 
 def wire_agents(
     *, logs_endpoint: str, token: str | None, agents: list[str] | None = None
 ) -> list[str]:
-    """Point detected agents at a collector. Returns the agents that were wired."""
+    """Point agents (by default the tracked ones) at a collector. Returns the
+    agents that were wired."""
     if not logs_endpoint:
         return []
     wired: list[str] = []
-    for name in agents if agents is not None else installed_agents():
+    for name in agents if agents is not None else agents_to_track():
         code = AGENT_MODULES[name].configure(
             agent_targets()[name], logs_endpoint, token
         )
@@ -208,6 +292,25 @@ def wire_agents(
             status = "skipped" if code == SKIPPED else "failed"
             print(f"warning: wiring {name} {status}", file=sys.stderr)
     return wired
+
+
+def stop_untracked_agents(chosen: list[str], expected_endpoint: str) -> None:
+    """Remove only this collector's wiring from detected agents outside the pick."""
+    targets = agent_targets()
+    stopped = []
+    states = read_agent_states(expected_endpoint)
+    for name in installed_agents():
+        if (
+            name not in chosen
+            and states[name]["configured_endpoint"] == expected_endpoint
+        ):
+            code = AGENT_MODULES[name].disable(targets[name], expected_endpoint)
+            if code == DONE:
+                stopped.append(name)
+            elif code != SKIPPED:
+                print(f"warning: stopping tracking {name} failed", file=sys.stderr)
+    if stopped:
+        print("stopped tracking: " + ", ".join(stopped))
 
 
 @dataclass
@@ -281,7 +384,12 @@ def run_setup(*, disable: bool) -> int:
         print("Not signed in. Run tokenage login.", file=sys.stderr)
         return EXIT_NOT_SIGNED_IN
     print(f"  collector   {display_endpoint(endpoint)}")
-    wired = wire_agents(logs_endpoint=endpoint, token=token)
+    chosen = agents_to_track()
+    stop_untracked_agents(chosen, endpoint)
+    if not chosen:
+        print("No detected agent is chosen to track; run tokenage login to choose.")
+        return 0
+    wired = wire_agents(logs_endpoint=endpoint, token=token, agents=chosen)
     if not wired:
         print("  no agents could be wired")
         return 1

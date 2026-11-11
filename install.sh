@@ -2,11 +2,20 @@
 # tokenage installer: the client, the server, or both.
 #
 #   curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash
-#       both (default): the server, then a client signed in to it
+#       asks what to install; the default is the client, on the hosted server
 #   ... | bash -s -- --server     the server only
 #   ... | bash -s -- --client     the client only (TOKENAGE_SERVER=<url> names its server)
+#   ... | bash -s -- --server --client
+#       both: the server, then a client signed in to it
 #   curl -fsSL https://YOUR_SERVER/install.sh | sh
-#       the copy a server serves is preset to that server and installs the client
+#       asks what to install; the default is the client, on that server
+#
+# With a terminal it asks for the components (unless --client/--server is
+# given) and the client's server URL. --yes, TOKENAGE_YES=1, no terminal and
+# `tokenage update` (TOKENAGE_SKIP_LOGIN=1) skip the questions. A preset URL is
+# the default answer to the URL prompt. In unattended runs without component
+# flags, a preset URL selects the client and no preset installs both locally.
+# An unattended --client needs a server URL.
 #
 # The server is a git clone in ~/.tokenage/src. The client is its own snapshot and
 # virtualenv under ~/.tokenage/versions with a `current` link, even on the machine
@@ -18,6 +27,7 @@
 set -eu
 
 TOKENAGE_INSTALL_SERVER=__TOKENAGE_SERVER_URL__
+HOSTED_SERVER=https://app.tokenage.dev
 TOKENAGE_INSTALL_COMMIT=${TOKENAGE_INSTALL_COMMIT:-__TOKENAGE_INSTALL_COMMIT__}
 REPOSITORY=Haannbboo/tokenage
 BRANCH=${TOKENAGE_BRANCH:-main}
@@ -34,6 +44,8 @@ fail() {
 
 : "${HOME:?HOME must be set}"
 TRACKER_HOME=${TOKENAGE_HOME:-$HOME/.tokenage}
+BIN_DIR=${TOKENAGE_BIN_DIR:-$HOME/.local/bin}
+ORIGINAL_PATH=${PATH:-}
 SERVER_URL=${TOKENAGE_SERVER:-$TOKENAGE_INSTALL_SERVER}
 case "$SERVER_URL" in
   __TOKENAGE_SERVER_URL"__") SERVER_URL= ;;
@@ -43,30 +55,185 @@ case "$TOKENAGE_INSTALL_COMMIT" in
 esac
 
 # ── Which components ───────────────────────────────────────────────
-# Only component flags are accepted.
+# Component selection.
 WANT_CLIENT=0
 WANT_SERVER=0
-count=$#
-while [ "$count" -gt 0 ]; do
-  arg=$1
-  shift
-  case "$arg" in
-    --client) WANT_CLIENT=1 ;;
-    --server) WANT_SERVER=1 ;;
-    *) set -- "$@" "$arg" ;;
+ASSUME_YES=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --client) WANT_CLIENT=1; shift ;;
+    --server) WANT_SERVER=1; shift ;;
+    --yes) ASSUME_YES=1; shift ;;
+    *) fail "unknown option: $1" ;;
   esac
-  count=$((count - 1))
 done
-if [ "$WANT_CLIENT$WANT_SERVER" = 00 ]; then
-  if [ -n "$SERVER_URL" ]; then WANT_CLIENT=1; else WANT_CLIENT=1; WANT_SERVER=1; fi
+# Ask only with a terminal for both the question and the answer; stdin is the
+# script itself under `curl | sh`. The same opt-outs as client/prompts.py.
+is_true() {
+  case "$1" in 1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]) return 0 ;; *) return 1 ;; esac
+}
+SKIP_LOGIN=0
+if is_true "${TOKENAGE_SKIP_LOGIN:-}"; then SKIP_LOGIN=1; fi
+ASK=1
+[ "$ASSUME_YES" = 0 ] || { ASK=0; TOKENAGE_YES=1; export TOKENAGE_YES; }
+for opt_out in "${TOKENAGE_YES:-}" "${TOKENAGE_NO_PROMPT:-}" "${TOKENAGE_SKIP_LOGIN:-}"; do
+  if is_true "$opt_out"; then ASK=0; fi
+done
+if [ "$ASK" = 1 ] && { [ ! -t 1 ] || ! ( : </dev/tty ) 2>/dev/null; }; then
+  ASK=0
 fi
-[ "$#" -eq 0 ] || fail "unknown option: $1"
-if [ "$WANT_CLIENT" = 1 ]; then say 'Installing: client'; fi
-if [ "$WANT_SERVER" = 1 ]; then say 'Installing: server'; fi
 
-for command_name in curl tar sed awk mktemp mkdir mv ln rm cp chmod readlink cat grep uname; do
+for command_name in curl tar sed awk mktemp mkdir mv ln rm cp chmod readlink cat grep uname tr head find; do
   command -v "$command_name" >/dev/null 2>&1 || fail "required command not found: $command_name"
 done
+
+TMP_ROOT=${TMPDIR:-/tmp}
+WORK_DIR=$(mktemp -d "$TMP_ROOT/tokenage-install.XXXXXX") || fail 'could not create temporary directory'
+STAGING_DIR=
+cleanup() {
+  rm -rf "$WORK_DIR"
+  if [ -n "$STAGING_DIR" ]; then
+    rm -rf "$STAGING_DIR"
+  fi
+}
+trap cleanup 0
+trap 'exit 1' HUP TERM
+trap 'exit 130' INT
+
+# uv is installed in the user's bin directory and is used to manage Python.
+ensure_uv() {
+  PATH=$BIN_DIR:$HOME/.local/bin:$PATH
+  export PATH
+  command -v uv >/dev/null 2>&1 && return
+  say 'Installing uv...'
+  curl -fsSL https://astral.sh/uv/install.sh -o "$WORK_DIR/uv-install.sh" || return 1
+  sh "$WORK_DIR/uv-install.sh" || return 1
+  command -v uv >/dev/null 2>&1
+}
+
+resolve_client_commit() {
+  if [ -n "$TOKENAGE_INSTALL_COMMIT" ]; then
+    COMMIT=$TOKENAGE_INSTALL_COMMIT
+  elif [ -f "$WORK_DIR/resolved-commit" ]; then
+    COMMIT=$(cat "$WORK_DIR/resolved-commit")
+    return
+  else
+    say 'Resolving the latest client source...'
+    curl -fsSL -H 'Accept: application/vnd.github+json' \
+      "https://api.github.com/repos/$REPOSITORY/commits/$BRANCH" \
+      -o "$WORK_DIR/commit.json" || fail 'could not resolve the latest GitHub commit'
+    COMMIT=$(sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([a-fA-F0-9]\{40\}\)".*/\1/p' "$WORK_DIR/commit.json" | awk 'length($0) == 40 { print; exit }')
+  fi
+  case "$COMMIT" in
+    *[!0-9a-f]*|'') fail 'the source commit SHA is invalid' ;;
+  esac
+  [ "${#COMMIT}" -eq 40 ] || fail 'the source commit SHA is invalid'
+
+  printf '%s\n' "$COMMIT" > "$WORK_DIR/resolved-commit"
+}
+
+# uv installs Python on demand, which runs the questions in the shared
+# client/prompts.py, fetched at the resolved client commit. The numbered prompts
+# below are the fallback when that fails; Ctrl-C (130) cancels the install.
+normalize_server_scheme() {
+  case "$1" in
+    *://*) printf '%s://%s\n' "$(printf '%s' "${1%%://*}" | tr '[:upper:]' '[:lower:]')" "${1#*://}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+valid_server_url() {
+  case "$1" in
+    *[[:space:]]*) return 1 ;;
+    *://*) ;;
+    *) return 1 ;;
+  esac
+  url=$(normalize_server_scheme "$1")
+  authority=${url#*://}
+  authority=${authority%%[/?#]*}
+  case "$authority" in ''|:*|*@*) return 1 ;; esac
+  case "$authority" in
+    \[?*\]*) host=${authority%%]*}]; port=${authority#*]} ;;
+    *\[*|*\]*) return 1 ;;
+    *) host=${authority%%:*}; port=${authority#"$host"} ;;
+  esac
+  case "$port" in
+    ''|:) ;;
+    :*) port=${port#:}
+        case "$port" in *[!0-9]*) return 1 ;; esac
+        [ "$port" -le 65535 ] 2>/dev/null || return 1 ;;
+    *) return 1 ;;
+  esac
+  host=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
+  case "${url%%://*}://$host" in
+    https://?*|http://localhost|http://127.0.0.1|http://\[::1\]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+ask_clack() {
+  (resolve_client_commit) >/dev/null 2>&1 || return 1
+  COMMIT=$(cat "$WORK_DIR/resolved-commit")
+  ensure_uv || return 1
+  mkdir "$WORK_DIR/prompt" || return 1
+  curl -fsSL "https://raw.githubusercontent.com/$REPOSITORY/$COMMIT/client/prompts.py" \
+    -o "$WORK_DIR/prompt/prompts.py" || return 1
+  picked=
+  [ "$WANT_CLIENT" = 0 ] || picked=client
+  say 'Preparing the installer (first run downloads Python and prompt_toolkit)...'
+  uv run --quiet --no-project --python "$PYTHON_VERSION" --with 'prompt_toolkit>=3.0,<4' python -I "$WORK_DIR/prompt/prompts.py" \
+    install "$WORK_DIR/answers" "$picked" "$SERVER_URL" "$HOSTED_SERVER" </dev/tty || return
+  picked=$(sed -n 1p "$WORK_DIR/answers") || return 1
+  answer=$(sed -n 2p "$WORK_DIR/answers") || return 1
+  case "$picked" in
+    client) valid_server_url "$answer" || return 1; WANT_CLIENT=1; SERVER_URL=$answer ;;
+    server) [ "$WANT_CLIENT:$answer" = 0:- ] || return 1; WANT_SERVER=1 ;;
+    both) [ "$WANT_CLIENT:$answer" = 0:- ] || return 1; WANT_CLIENT=1; WANT_SERVER=1 ;;
+    *) return 1 ;;
+  esac
+}
+if [ "$ASK" = 1 ] && [ "$WANT_SERVER" = 0 ]; then
+  if ask_clack 2>"$WORK_DIR/prompt-error"; then
+    ASK=0
+  else
+    [ "$?" != 130 ] || exit 130
+    printf '%s\n' 'note: shared installer prompt failed; falling back to numbered questions' >&2
+  fi
+fi
+if [ "$WANT_CLIENT$WANT_SERVER" = 00 ] && [ "$ASK" = 1 ]; then
+  printf '\ntokenage installer\n\nWhat do you want to install?\n'
+  printf '  1) Client - track the agents on this machine      [default]\n'
+  printf '  2) Server - host your own dashboard and collector\n'
+  printf '  3) Both   - your own server + a client signed in to it\n'
+  while :; do
+    printf '> '
+    read -r answer </dev/tty || fail 'installer input closed; installation cancelled'
+    case "$answer" in
+      ''|1) WANT_CLIENT=1; break ;;
+      2) WANT_SERVER=1; break ;;
+      3) WANT_CLIENT=1; WANT_SERVER=1; break ;;
+    esac
+    printf 'Answer 1, 2 or 3.\n'
+  done
+fi
+if [ "$WANT_CLIENT$WANT_SERVER" = 00 ]; then
+  WANT_CLIENT=1
+  [ -n "$SERVER_URL" ] || WANT_SERVER=1
+fi
+# The both-install's client uses the server it installs (set below).
+if [ "$WANT_CLIENT$WANT_SERVER" = 10 ]; then
+  if [ "$ASK" = 1 ]; then
+    SERVER_URL=${SERVER_URL:-$HOSTED_SERVER}
+    while :; do
+      printf 'Server URL [%s]: ' "$SERVER_URL"
+      read -r answer </dev/tty || fail 'installer input closed; installation cancelled'
+      candidate=${answer:-$SERVER_URL}
+      if valid_server_url "$candidate"; then SERVER_URL=$candidate; break; fi
+      printf 'Enter an HTTPS URL (HTTP is allowed for localhost).\n'
+    done
+  fi
+  [ -n "$SERVER_URL" ] || fail 'no server URL: set TOKENAGE_SERVER=<url>, or install the server too (--server --client)'
+fi
+if [ "$WANT_CLIENT" = 1 ]; then say 'Installing: client'; fi
+if [ "$WANT_SERVER" = 1 ]; then say 'Installing: server'; fi
 
 # ── Server ─────────────────────────────────────────────────────────
 INSTALL_DIR=$TRACKER_HOME/src
@@ -110,35 +277,21 @@ if [ "$WANT_SERVER" = 1 ]; then
 fi
 [ "$WANT_CLIENT" = 1 ] || exit 0
 
+resolve_client_commit
+
 # ── Client ─────────────────────────────────────────────────────────
 # In the both-install the client's server is the one just installed here.
 if [ "$WANT_SERVER" = 1 ]; then
   api_port=$(grep -E '^[[:space:]]+api_port:' "$TRACKER_HOME/config.yaml" 2>/dev/null | head -1 | awk '{print $2}')
   SERVER_URL=http://127.0.0.1:${api_port:-4001}
 fi
-case "$SERVER_URL" in
-  '') fail 'no server URL: set TOKENAGE_SERVER=<url>, or install the server too (--server --client)' ;;
-  https://?*) ;;
-  http://localhost|http://localhost:*|http://localhost/*|http://localhost\?*|http://localhost\#*) ;;
-  http://127.0.0.1|http://127.0.0.1:*|http://127.0.0.1/*|http://127.0.0.1\?*|http://127.0.0.1\#*) ;;
-  http://\[::1\]|http://\[::1\]:*|http://\[::1\]/*|http://\[::1\]\?*|http://\[::1\]\#*) ;;
-  *) fail 'the hosted server URL must use HTTPS (HTTP is allowed for localhost)' ;;
-esac
-SERVER_AUTHORITY=${SERVER_URL#*://}
-SERVER_AUTHORITY=${SERVER_AUTHORITY%%/*}
-SERVER_AUTHORITY=${SERVER_AUTHORITY%%\?*}
-SERVER_AUTHORITY=${SERVER_AUTHORITY%%\#*}
-[ -n "$SERVER_AUTHORITY" ] || fail 'the hosted server URL has no host'
-case "$SERVER_URL" in
-  *[[:space:]]*) fail 'the hosted server URL contains whitespace' ;;
-esac
+SERVER_URL=$(normalize_server_scheme "$SERVER_URL")
+valid_server_url "$SERVER_URL" || fail 'the server URL must use HTTPS (HTTP is allowed for localhost) and have a host without userinfo or whitespace'
 while [ "${SERVER_URL%/}" != "$SERVER_URL" ]; do
   SERVER_URL=${SERVER_URL%/}
 done
 
 VERSIONS_DIR=$TRACKER_HOME/versions
-BIN_DIR=${TOKENAGE_BIN_DIR:-$HOME/.local/bin}
-ORIGINAL_PATH=${PATH:-}
 OS_NAME=$(uname -s)
 case "$OS_NAME" in
   Darwin|Linux) ;;
@@ -158,48 +311,13 @@ if [ -e "$LAUNCHER" ] || [ -L "$LAUNCHER" ]; then
   fi
 fi
 
-TMP_ROOT=${TMPDIR:-/tmp}
-WORK_DIR=$(mktemp -d "$TMP_ROOT/tokenage-install.XXXXXX") || fail 'could not create temporary directory'
-STAGING_DIR=
-cleanup() {
-  rm -rf "$WORK_DIR"
-  if [ -n "$STAGING_DIR" ]; then
-    rm -rf "$STAGING_DIR"
-  fi
-}
-trap cleanup 0
-trap 'exit 1' HUP INT TERM
 umask 077
 mkdir -p "$VERSIONS_DIR" "$BIN_DIR"
 
-# uv is installed in the user's bin directory and is used to manage Python.
-PATH=$BIN_DIR:$HOME/.local/bin:$PATH
-export PATH
-if ! command -v uv >/dev/null 2>&1; then
-  say 'Installing uv...'
-  curl -fsSL https://astral.sh/uv/install.sh -o "$WORK_DIR/uv-install.sh" || fail 'could not download uv installer'
-  sh "$WORK_DIR/uv-install.sh"
-  PATH=$BIN_DIR:$HOME/.local/bin:$PATH
-  export PATH
-fi
-command -v uv >/dev/null 2>&1 || fail 'uv installation did not provide the uv command'
+ensure_uv || fail 'could not install uv'
 
 say "Installing Python $PYTHON_VERSION..."
 uv python install "$PYTHON_VERSION"
-
-if [ -n "$TOKENAGE_INSTALL_COMMIT" ]; then
-  COMMIT=$TOKENAGE_INSTALL_COMMIT
-else
-  say 'Resolving the latest client source...'
-  curl -fsSL -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/$REPOSITORY/commits/$BRANCH" \
-    -o "$WORK_DIR/commit.json" || fail 'could not resolve the latest GitHub commit'
-  COMMIT=$(sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([a-fA-F0-9]\{40\}\)".*/\1/p' "$WORK_DIR/commit.json" | awk 'length($0) == 40 { print; exit }')
-fi
-case "$COMMIT" in
-  *[!0-9a-f]*|'') fail 'the source commit SHA is invalid' ;;
-esac
-[ "${#COMMIT}" -eq 40 ] || fail 'the source commit SHA is invalid'
 
 VERSION_DIR=$VERSIONS_DIR/$COMMIT
 if [ ! -x "$VERSION_DIR/.venv/bin/python" ]; then
@@ -333,7 +451,7 @@ TOKENAGE_CLIENT_COMMIT=$COMMIT PYTHONPATH=$VERSION_DIR \
     INSTALL_RC=1
   }
 
-if [ "${TOKENAGE_SKIP_LOGIN:-0}" = 1 ]; then
+if [ "$SKIP_LOGIN" = 1 ]; then
   say "Refreshing agent configuration with the updated client..."
   TOKENAGE_CLIENT_COMMIT=$COMMIT PYTHONPATH=$VERSION_DIR \
     "$VERSION_DIR/.venv/bin/python" -P -m client setup && SETUP_RC=0 || SETUP_RC=$?

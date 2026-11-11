@@ -87,3 +87,8 @@ describe('agent verdict', () => {
     expect(verdict).toEqual({ tone: 'badge-neutral', label: 'Not installed', endpoints: false })
   })
 })
+
+it('shows an opted-out agent as neutral even without configuration', () => {
+  expect(agentVerdict(row({ health: health({ status: 'not_tracked', configured: false, endpoint_matches: null }) })))
+    .toEqual({ tone: 'badge-neutral', label: 'Not tracked', endpoints: false })
+})

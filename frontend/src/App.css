@@ -1804,3 +1804,32 @@ img[src^="/models/"] { filter: saturate(0.7); }
   .project-name { max-width: 180px; }
 }
 @media (prefers-reduced-motion: reduce) { .detail-drawer { animation: none; } }
+
+/* Empty Overview: the first-run guide. */
+.empty-guide { display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 40px 24px; }
+.empty-guide-hero { max-width: 560px; text-align: center; }
+.empty-guide-hero h2 { font-size: 28px; font-weight: 600; margin: 0 0 8px; text-wrap: balance; }
+.empty-guide-hero p { font-size: 15px; color: var(--text-secondary); line-height: 1.6; margin: 0; }
+.empty-guide-step { width: 100%; max-width: 680px; display: grid; gap: 10px; min-width: 0; }
+.empty-guide-label { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.empty-guide-cmd { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-radius: 8px; background: var(--surface-sunken); border: 1px solid var(--border-color); min-width: 0; }
+.empty-guide-cmd code { font-family: var(--font-mono); font-size: 13px; color: var(--text-primary); overflow-x: auto; white-space: nowrap; min-width: 0; }
+.empty-guide-copy { font-size: 11px; padding: 4px 10px; white-space: nowrap; }
+.empty-guide-hint { font-size: 13px; color: var(--text-muted); line-height: 1.5; margin: 0; }
+.empty-guide-hint code, .empty-guide-agent code { font-family: var(--font-mono); font-size: 12px; }
+.empty-guide-hint code { background: var(--surface-sunken); padding: 1px 5px; border-radius: 4px; color: var(--text-primary); }
+.empty-guide-agents { display: flex; flex-wrap: wrap; gap: 8px; }
+.empty-guide-agent { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; }
+.empty-guide-agent code { color: var(--text-muted); }
+.empty-guide-wait { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-muted); }
+.empty-guide-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-blue); animation: empty-guide-pulse 1.4s ease-in-out infinite; flex-shrink: 0; }
+@keyframes empty-guide-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .empty-guide-dot { animation: none; } }
+.empty-guide-ok { padding: 8px 12px; border-radius: 6px; background: var(--accent-bg); color: var(--color-green); font-weight: 600; font-size: 13px; }
+.empty-guide-kv { font-size: 12px; display: grid; gap: 4px; font-variant-numeric: tabular-nums; }
+.empty-guide-kv span { color: var(--text-muted); }
+.empty-guide-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.empty-guide-buttons button { font-size: 12px; }
+.empty-guide-foot { font-size: 13px; color: var(--text-muted); margin: 0; }
+.empty-guide-foot a, .empty-guide-hint a { color: var(--color-blue); }
+.empty-guide-foot a:hover, .empty-guide-hint a:hover { text-decoration: underline; }

@@ -61,13 +61,20 @@ Agent telemetry 更适合拿到 session、tool/reasoning metadata 等 agent-spec
 
 ### 1. 安装
 
-按这台机器的需要选择组件，不带参数时两个都装：
+按这台机器的需要选择组件。在终端中不带组件参数运行时，安装脚本会询问要安装哪些组件。
+只装 client 时，脚本会询问 server URL。默认使用 `TOKENAGE_SERVER` 或 server 提供的
+安装脚本预设的 URL，两者都未提供时默认使用托管地址 `https://app.tokenage.dev`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash                # server + client
+curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash                # 交互选择，默认只装 client
 curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash -s -- --server # 只装 server
-curl -fsSL https://YOUR_SERVER/install.sh | sh                                                         # 只装 client，连接该 server
+curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash -s -- --server --client # 两个都装
+curl -fsSL https://YOUR_SERVER/install.sh | sh                                                       # 交互选择，默认只装 client 并连接该 server
 ```
+
+使用 `--yes`、`TOKENAGE_YES=1` 或在没有终端时运行会跳过提问。非交互运行且未指定组件时，
+如果预设了 server URL，就只安装 client。如果未预设 URL，就在本机安装两个组件。
+非交互运行 `--client` 时必须提供 server URL。
 
 Server 是 `~/.tokenage/src` 里的 git clone。Client 是 `~/.tokenage/versions` 下独立的
 snapshot 和 virtualenv，即使与 server 在同一台机器上也一样，两者只通过 HTTP 通信。

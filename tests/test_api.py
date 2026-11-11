@@ -1215,13 +1215,19 @@ def test_hosted_installer_uses_configured_origin_and_is_public(
     import subprocess
 
     monkeypatch.setattr(
-        api_module, "resolve_server_urls", lambda _config: {"api_url": server_url}
+        api_module,
+        "resolve_server_urls",
+        lambda _config: {"api_url": server_url, "otlp_url": server_url + "/otlp"},
     )
     monkeypatch.setitem(api_module.CONFIG, "auth", {"provider": "google"})
     response = TestClient(api_module.app).get(
         "/install.sh", headers={"host": "attacker.example"}
     )
     assert response.status_code == 200
+    # The empty dashboard shows the same address the script is preset with.
+    version = TestClient(api_module.app).get("/version").json()
+    assert version["server_url"] == server_url
+    assert version["installer_available"] is True
     assert "text/x-shellscript" in response.headers["content-type"]
     assert f"TOKENAGE_INSTALL_SERVER={shlex.quote(server_url)}" in response.text
     assert "TOKENAGE_INSTALL_COMMIT=${TOKENAGE_INSTALL_COMMIT:-''}" in response.text
@@ -1242,6 +1248,7 @@ def test_hosted_installer_uses_configured_origin_and_is_public(
         "https://tracker.example.test:bad",
         "https://tracker.example.test/path",
         "https://name:pass@tracker.example.test",
+        "https://@tracker.example.test",
         "https://tracker.example.test?foo=bar",
         "https://tracker.example.test\n",
     ],
@@ -1250,10 +1257,17 @@ def test_hosted_installer_rejects_invalid_api_origins(
     api_module, monkeypatch, server_url
 ):
     monkeypatch.setattr(
-        api_module, "resolve_server_urls", lambda _config: {"api_url": server_url}
+        api_module,
+        "resolve_server_urls",
+        lambda _config: {"api_url": server_url, "otlp_url": server_url + "/otlp"},
     )
     response = TestClient(api_module.app).get("/install.sh")
     assert response.status_code == 503
+    assert TestClient(api_module.app).get("/version").json()["server_url"] is None
+    assert (
+        TestClient(api_module.app).get("/version").json()["installer_available"]
+        is False
+    )
 
 
 def _otlp_body() -> dict:

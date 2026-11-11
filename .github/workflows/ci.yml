@@ -1,9 +1,12 @@
 name: CI
 
 "on":
+  # Docs-only changes skip CI; no status check is required on main.
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
 
 permissions:
   contents: read

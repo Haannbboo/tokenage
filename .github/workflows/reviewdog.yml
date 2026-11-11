@@ -2,6 +2,7 @@ name: PR annotations
 
 "on":
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
 
 permissions:
   contents: read

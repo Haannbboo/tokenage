@@ -1,16 +1,60 @@
 name: CI
 
 "on":
+  # Docs-only PRs report skipped jobs; docs-only pushes skip the workflow.
   pull_request:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    # Decides which side of the repo a pull request touches, so a frontend-only
+    # change skips the backend jobs and vice versa.
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.diff.outputs.backend }}
+      frontend: ${{ steps.diff.outputs.frontend }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # Pushes to main that reach this step run everything (docs-only pushes skip CI).
+          # CI changes and anything that cannot be diffed also run everything.
+          if [ "$EVENT" != "pull_request" ] \
+            || ! files=$(git -c core.quotePath=false diff --name-only --no-renames "origin/${BASE_REF}...HEAD" 2>/dev/null) \
+            || [[ $'\n'"$files"$'\n' == *$'\n.github/workflows/ci.yml\n'* ]]; then
+            printf 'backend=true\nfrontend=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          frontend=false; backend=false
+          while IFS= read -r f; do
+            case "$f" in
+              frontend/*) frontend=true ;;
+              *.md|docs/*) ;;
+              *) backend=true ;;
+            esac
+          done <<< "$files"
+          echo "backend=$backend frontend=$frontend"
+          printf 'backend=%s\nfrontend=%s\n' "$backend" "$frontend" >> "$GITHUB_OUTPUT"
+
   backend:
     name: Backend
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     services:
       redis:
@@ -84,6 +128,8 @@ jobs:
     # This job runs the suite against Postgres, but only when something that
     # can behave differently there changed.
     name: Postgres
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -157,6 +203,8 @@ jobs:
 
   hosted-client:
     name: Hosted install (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -196,6 +244,8 @@ jobs:
 
   frontend:
     name: Frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
     defaults:

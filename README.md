@@ -91,7 +91,7 @@ Dashboard: https://app.tokenage.dev/
 
 <sub>➖ The agent doesn't report it. Captured through each agent's built-in OpenTelemetry export (Claude Code, Codex) or the tokenage plugin (OpenCode, Kilo); `tokenage login` sets it up.</sub>
 
-<sub>🔒 Holds as long as the agents' own prompt logging stays off, which is their default and what `tokenage login` expects. If you've turned it on yourself (`OTEL_LOG_USER_PROMPTS` for Claude Code, `log_user_prompt` for Codex), the agent sends prompt text too; tokenage drops it on arrival and never stores it, but turn it off to keep prompts on your machine.</sub>
+<sub>🔒 Holds as long as the agents' own content logging (prompt or response text) stays off, which is their default and what `tokenage login` expects. If you've turned it on yourself (for example `OTEL_LOG_USER_PROMPTS` or response logging in Claude Code, `log_user_prompt` in Codex), the agent sends that text too; tokenage drops it on arrival and never stores it, but turn it off to keep it on your machine.</sub>
 
 ## How it works
 
@@ -109,8 +109,15 @@ Dashboard: https://app.tokenage.dev/
 | Setup | Command |
 |---|---|
 | One machine (server + client) | `curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh \| sh`, then pick **Both** |
-| Docker, SQLite | `cd docker && cp ../src/config/config.example.yaml config.yaml && docker compose up -d` |
-| Docker, bundled Postgres | Same, but uncomment the bundled `db.url` in `config.yaml`, then `docker compose --profile postgres up -d` |
+| Docker, SQLite | `docker compose up -d` |
+| Docker, bundled Postgres | Uncomment the bundled `db.url` in `config.yaml`, then `docker compose --profile postgres up -d` |
+
+The Docker setups run from a checkout with a config file:
+
+```sh
+git clone https://github.com/Haannbboo/tokenage && cd tokenage/docker
+cp ../src/config/config.example.yaml config.yaml
+```
 
 Config, TLS and scaling out: [docker/README.md](docker/README.md).
 

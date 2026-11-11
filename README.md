@@ -1,18 +1,15 @@
 <div align="center">
 
-<img src="docs/assets/favicon.svg" height="70" alt="">
-<br>
-<img src="docs/assets/wordmark.svg" height="56" alt="tokenage">
+<p><img src="docs/assets/favicon.svg" height="70" alt=""></p>
+<p><img src="docs/assets/wordmark.svg" height="56" alt="tokenage"></p>
 
-## Every token your coding agents spend, in one dashboard.
+### Every token your coding agents spend, in one dashboard.
 
 Real-time, privacy-first usage and cost tracking for your coding agents.
 
-[![release](https://img.shields.io/github/v/tag/Haannbboo/tokenage?filter=v*&label=release&color=1456f0)](https://github.com/Haannbboo/tokenage/tags)
+[![server](https://img.shields.io/github/v/tag/Haannbboo/tokenage?filter=v*&label=server&color=1456f0)](https://github.com/Haannbboo/tokenage/tags)
 [![client](https://img.shields.io/github/v/tag/Haannbboo/tokenage?filter=client-v*&label=client&color=3daeff)](https://github.com/Haannbboo/tokenage/tags)
 [![CI](https://github.com/Haannbboo/tokenage/actions/workflows/ci.yml/badge.svg)](https://github.com/Haannbboo/tokenage/actions/workflows/ci.yml)
-
-**Demo: [tokenage.dev](https://tokenage.dev)**
 
 <a href="https://tokenage.dev/demo/" target="_blank">
   <picture>
@@ -26,10 +23,10 @@ Real-time, privacy-first usage and cost tracking for your coding agents.
 
 **Works with**
 
-<img src="frontend/public/models/claude-ai-icon.svg" height="20" alt=""> Claude Code &nbsp;&nbsp;
-<img src="frontend/public/models/codex-color.svg" height="20" alt=""> Codex &nbsp;&nbsp;
-<picture><source media="(prefers-color-scheme: dark)" srcset="frontend/public/models/opencode-dark.png"><img src="frontend/public/models/opencode.svg" height="20" alt=""></picture> OpenCode &nbsp;&nbsp;
-<picture><source media="(prefers-color-scheme: dark)" srcset="frontend/public/models/kilocode-dark.png"><img src="frontend/public/models/kilocode.png" height="20" alt=""></picture> Kilo
+<img src="frontend/public/models/claude-ai-icon.svg" height="20" align="absmiddle" alt=""> Claude Code &nbsp;&nbsp;
+<img src="frontend/public/models/codex-color.svg" height="20" align="absmiddle" alt=""> Codex &nbsp;&nbsp;
+<picture><source media="(prefers-color-scheme: dark)" srcset="frontend/public/models/opencode-dark.png"><img src="frontend/public/models/opencode.svg" height="20" align="absmiddle" alt=""></picture> OpenCode &nbsp;&nbsp;
+<picture><source media="(prefers-color-scheme: dark)" srcset="frontend/public/models/kilocode-dark.png"><img src="frontend/public/models/kilocode.png" height="20" align="absmiddle" alt=""></picture> Kilo
 
 </div>
 

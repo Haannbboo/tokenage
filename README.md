@@ -1,472 +1,156 @@
-[English](README.md) | [中文](docs/README_CN.md)
+<div align="center">
 
-# tokenage
+<img src="docs/assets/favicon.svg" height="70" alt="">
+<br>
+<img src="docs/assets/wordmark.svg" height="56" alt="tokenage">
 
-**Local-first observability for command-line LLM agents.**
+## Every token your coding agents spend, in one dashboard.
 
-`tokenage` shows what your coding agents are doing: requests, token usage, cost estimates, latency, TTFT, models, sources, and session IDs across **Claude Code**, **Codex**, **OpenCode**, **Kilo Code**, and OpenAI/Anthropic-compatible traffic.
+Real-time, privacy-first usage and cost tracking for your coding agents.
 
-It is built for people who run multiple LLM agents locally and want one place to answer:
+[![release](https://img.shields.io/github/v/tag/Haannbboo/tokenage?filter=v*&label=release&color=1456f0)](https://github.com/Haannbboo/tokenage/tags)
+[![client](https://img.shields.io/github/v/tag/Haannbboo/tokenage?filter=client-v*&label=client&color=3daeff)](https://github.com/Haannbboo/tokenage/tags)
+[![CI](https://github.com/Haannbboo/tokenage/actions/workflows/ci.yml/badge.svg)](https://github.com/Haannbboo/tokenage/actions/workflows/ci.yml)
 
-- Which agent/model is spending the most?
-- Did my last command actually get tracked?
-- How much did this coding session cost?
-- Which requests were slow, streamed, cached, or reasoning-heavy?
+**Demo: [tokenage.dev](https://tokenage.dev)**
 
-The default setup is local: config in `~/.tokenage/config.yaml`, usage data in SQLite at `~/.tokenage/usage.db`, and services bound to loopback ports.
+<a href="https://tokenage.dev/demo/" target="_blank">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/overview-dark.jpg">
+    <img src="docs/assets/screenshots/overview-light.jpg" alt="tokenage dashboard: cost, tokens, requests, cache hit rate and speed. Click to open the live demo.">
+  </picture>
+</a>
 
-## What it does
+<sub>Click to open the live demo, no sign-in.</sub>
 
-- **Tracks popular coding agents**: Claude Code, Codex, OpenCode, and Kilo Code through local OTLP telemetry.
-- **Tracks OpenAI/Anthropic-compatible clients**: route clients through the optional local proxy that runs in the client service.
-- **Shows a dashboard**: usage, cost, latency, models, sources, request logs, setup health, and first-event onboarding.
-- **Prints command summaries**: run an agent through `tokenage` and get usage for that run.
-- **Keeps setup inspectable**: plain YAML config, SQLite by default, logs in `logs/`, no hosted backend required.
-- **Supports SQL databases**: keep SQLite locally or point `db.url` at PostgreSQL/MySQL through SQLAlchemy.
 
-## How collection works
+**Works with**
 
-`tokenage` collects usage in two complementary ways:
+<img src="frontend/public/models/claude-ai-icon.svg" height="20" alt=""> Claude Code &nbsp;&nbsp;
+<img src="frontend/public/models/codex-color.svg" height="20" alt=""> Codex &nbsp;&nbsp;
+<picture><source media="(prefers-color-scheme: dark)" srcset="frontend/public/models/opencode-dark.png"><img src="frontend/public/models/opencode.svg" height="20" alt=""></picture> OpenCode &nbsp;&nbsp;
+<picture><source media="(prefers-color-scheme: dark)" srcset="frontend/public/models/kilocode-dark.png"><img src="frontend/public/models/kilocode.png" height="20" alt=""></picture> Kilo
 
-```text
-Claude Code / Codex / OpenCode / Kilo Code
-        │
-        │ OTLP telemetry
-        ▼
-tokenage OTLP collector ──► database ──► dashboard / API / summaries
-```
+</div>
 
-```text
-OpenAI-compatible or Anthropic-compatible client
-        │
-        │ HTTP
-        ▼
-tokenage client proxy (127.0.0.1) ──► upstream provider
-        │
-        │ usage report (metadata only)
-        ▼
-tokenage server ──► database
-```
-
-Agent telemetry is best for agent-specific fields such as sessions and tool/reasoning metadata. The proxy is useful for clients that support custom base URLs. It runs on your machine, keeps your provider keys there, and sends the server only token counts and timings.
 
 ## Quick start
 
-### Prerequisites
-
-- macOS or Linux shell environment
-- Python 3.13, or `uv` so the installer can create it
-- Node.js 18+ if you want the dashboard built and served
-- Optional: `claude`, `codex`, `opencode`, or `kilo` installed locally
-
-### 1. Install
-
-Pick the components this machine needs. In a terminal, the installer asks
-which components to install when no flags are given. For a client-only install,
-it asks for a server URL. The default answer is the URL preset by
-`TOKENAGE_SERVER` or the server-served installer, or `https://app.tokenage.dev`
-if neither provides one:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash                           # asks; client by default
-curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash -s -- --server            # server only
-curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | bash -s -- --server --client   # server + client
-curl -fsSL https://YOUR_SERVER/install.sh | sh                                                               # asks; client on that server by default
+```sh
+curl -fsSL https://app.tokenage.dev/install.sh | sh
 ```
 
-`--yes`, `TOKENAGE_YES=1`, or running without a terminal skips the questions.
-With no component flags, an unattended run installs only the client if a server
-URL is preset and installs both components locally if no URL is preset.
-An unattended `--client` requires a server URL.
-After sign-in, `tokenage login` asks which detected
-agents to track (all by default). Changing the offered choice saves it as `agents:` in
-`~/.tokenage/client.yaml`; `tokenage setup` and `tokenage update` wire only
-those and stop tracking the others; wiring to another collector is left alone.
-Pressing Enter keeps the default: without a
-saved choice, agents installed later are tracked too. Previously chosen agents
-that are temporarily absent are remembered. Run `tokenage login` again to change it.
+Dashboard: https://app.tokenage.dev/
 
-The server is a git clone in `~/.tokenage/src`. The client is a separate snapshot
-and virtualenv under `~/.tokenage/versions`, even on the machine that runs the
-server; the two talk only over HTTP. Installing both is the server install
-followed by the client install pointed at `http://127.0.0.1:<api_port>`. The
-`tokenage` launcher in `~/.local/bin` is shared. `tokenage update` updates the
-client and `tokenage server update` the server.
+## What you get
 
-From a checkout, `bash src/scripts/bootstrap.sh` is the server install alone. It:
+<a href="docs/assets/screenshots/sessions-light.jpg" target="_blank">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/sessions-dark.jpg">
+    <img src="docs/assets/screenshots/sessions-light.jpg" alt="Sessions page">
+  </picture>
+</a>
 
-1. installs Python dependencies into `.venv`
-2. builds the dashboard when Node/npm are available
-3. creates a launcher symlink at `~/.local/bin/tokenage` if there is none (steps 1 and 3 are shell, the rest `src/ops.py`)
-4. creates `~/.tokenage/config.yaml` if needed
-5. starts the server (API, dashboard and OTLP collector in one process) with Supervisor
-6. verifies service ports and the dashboard
-7. restarts the API so the freshly built dashboard is served
+**Sessions.** Every agent session with its cost, tools and live status, plus how many ran in parallel.
 
-If `~/.local/bin` is not on your `PATH`, the installer prints the shell command to add it.
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/assets/screenshots/logs-light.jpg" target="_blank">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/logs-dark.jpg">
+          <img src="docs/assets/screenshots/logs-light.jpg" alt="Request logs">
+        </picture>
+      </a>
+      <br><b>Request logs.</b> Each request with model, tokens, cache, latency and reasoning effort.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/assets/screenshots/projects-light.jpg" target="_blank">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/projects-dark.jpg">
+          <img src="docs/assets/screenshots/projects-light.jpg" alt="Projects">
+        </picture>
+      </a>
+      <br><b>Projects.</b> Spend per repository, across every agent and device.
+    </td>
+  </tr>
+</table>
 
-### 2. Open the dashboard
+## Supported agents and what's tracked
 
-```bash
-open http://localhost:4001
-```
+| | Claude Code | Codex | OpenCode | Kilo |
+|---|:---:|:---:|:---:|:---:|
+| Input, output tokens and cost | ✅ | ✅ | ✅ | ✅ |
+| Cache reads | ✅ | ✅ | ✅ | ✅ |
+| Cache writes | ✅ | ➖ | ✅ | ✅ |
+| Reasoning tokens | ➖ | ✅ | ✅ | ✅ |
+| Reasoning effort | ✅ | ✅ | ✅ | ✅ |
+| Latency and time to first token | ✅ | ✅ | ✅ | ✅ |
+| Sessions and projects | ✅ | ✅ | ✅ | ✅ |
+| Tool calls and duration | ✅ | ✅ | ✅ | ✅ |
+| Failed requests | ➖ | ➖ | ✅ | ✅ |
+| Real-time updates | ✅ | ✅ | ✅ | ✅ |
+| **🔒 Prompts, responses, transcripts, code** | | **Never leave your machine** | | |
 
-If you prefer the Vite dev server while developing the frontend:
+<sub>➖ The agent doesn't report it. Captured through each agent's built-in OpenTelemetry export (Claude Code, Codex) or the tokenage plugin (OpenCode, Kilo); `tokenage login` sets it up.</sub>
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+## How it works
 
-Then open [http://localhost:5173](http://localhost:5173).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+  <img src="docs/assets/how-it-works-light.svg" alt="Your agents send usage numbers only (tokens, cost, timing, tools) to tokenage, on your server or app.tokenage.dev, and your dashboard updates within seconds. Prompts, responses, transcripts and code stay on your machine.">
+</picture>
 
-### 3. Point your agents at the collector
+1. **Your agents report usage.** `tokenage login` turns on each agent's usage reporting. Content logging stays off.
+2. **Only numbers travel.** Tokens, cost, timing and tool names go to your tokenage server. Prompts, responses and code don't.
+3. **The dashboard updates live.** Each request shows up within seconds, by session, project, model and device.
 
-The server install never configures agents. That is the client's job (the
-both-install runs the sign-in for you):
+## Self-host
 
-```bash
-tokenage setup
-```
+| Setup | Command |
+|---|---|
+| One machine (server + client) | `curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh \| sh`, then pick **Both** |
+| Docker, SQLite | `cd docker && docker compose up -d` |
+| Docker, bundled Postgres | `cd docker && docker compose --profile postgres up -d` |
 
-It points the agents installed on this machine at the collector of the server
-the client signed in to (`tokenage login --server URL`), and
-leaves every setting it does not own alone. `tokenage setup --disable` takes
-them back off again. `tokenage status` shows this client's sign-in and where the
-agents point.
+Config, TLS and scaling out: [docker/README.md](docker/README.md).
 
-### 4. Generate your first tracked event
+## Usage
 
-After bootstrap, run one of the commands shown by the dashboard, or use one of these directly:
-
-```bash
-tokenage codex exec "hello"
-tokenage claude
-```
-
-Repo-local fallback, useful before the symlink is on your `PATH`:
-
-```bash
-TOKENAGE_ROOT="$PWD" ./client/bin/tokenage codex exec "hello"
-TOKENAGE_ROOT="$PWD" ./client/bin/tokenage claude
-```
-
-The empty dashboard automatically checks for your first event. No fake demo data, no manual seeding.
-
-## Docker deployment
-
-Run the server (API, dashboard and OTLP collector) in a single container for NAS or remote server deployment. See [docker/README.md](docker/README.md).
-
-## CLI examples
-
-The wrapper runs a child command, captures usage while it runs, then prints a summary. It reports to the collector that is already running: it never starts a service, never spins up a temporary database or collector, and never merges anything afterwards. If the collector is not reachable the child still runs, untracked, and the exit code is still the child's.
-
-```bash
-# Interactive agents
-tokenage codex
-tokenage claude
-
-# One-shot commands
-tokenage codex exec "say hello in one sentence"
-
-# Installed CLI
-tokenage codex exec "say hello in one sentence"
-```
-
-The same command also covers everything that is not a tracked run:
-
-```bash
-# Client sign-in and agents
+```sh
+# See what's tracked on this machine and whether the server is reachable
 tokenage status
-tokenage setup
-tokenage update --check
 
-# The local server needs no Google account: its dashboard and `tokenage login`
-# work from the server machine; for a browser on another machine, run
-# `tokenage server login-link` on the server and open the URL it prints.
-# A remote server instead of a local one
-tokenage login --server https://app.example.com
-tokenage logout
+# Sign in again, or change which agents are tracked
+tokenage login
+
+# Update the client to the latest release
+tokenage update
+
+# Pick a specific client release
+tokenage update --list
+tokenage update --version 0.1.28
+
+# Everything else
+tokenage --help
 ```
-
-Use `--` when passing flags to `tokenage` itself:
-
-```bash
-tokenage --json -- codex
-tokenage --usage-only -- codex exec "say hello in one sentence"
-tokenage --wait-ms 5000 -- codex exec "say hello in one sentence"
-tokenage --summary-dest file --summary-file /tmp/llm-summary.json -- claude
-tokenage --no-summary -- codex exec "say hello"
-```
-
-Run `tokenage --help` and `tokenage <command> --help` for every command and flag.
-
-## Dashboard
-
-The dashboard gives you:
-
-- first-event onboarding when no data exists yet
-- usage and cost overview
-- model/source breakdowns
-- latency and TTFT trends
-- request logs
-- detected agents and setup health
-
-By default, the backend API serves the built dashboard at `http://localhost:4001`. The frontend dev server resolves the API URL in this order:
-
-1. `TOKENAGE_API_URL`
-2. `TOKENAGE_BACKEND_URL`
-3. `~/.tokenage/config.yaml` using `server.host` and `server.api_port`
-4. `http://localhost:4001`
-
-Frontend-specific notes live in [frontend/README.md](frontend/README.md).
-
-## Default local services
-
-| Service | Default URL | Purpose |
-| --- | --- | --- |
-| API + dashboard | `http://127.0.0.1:4001` | REST API and built dashboard |
-| OTLP collector | `http://127.0.0.1:4001/otlp` | Agent telemetry ingestion (`/otlp/v1/logs`) |
-
-Service commands:
-
-```bash
-tokenage server status
-tokenage server restart
-tokenage server stop
-```
-
-`tokenage server start` turns the services on, and `tokenage server
-bootstrap` reinstalls, rebuilds the dashboard and restarts the API so the new
-bundle is served. `tokenage server update` updates the server clone. `tokenage status` is a
-different command: it reports this client, not the services.
-
-Runtime files live under `~/.tokenage/run/`. Logs are written to `logs/`.
-
-## Configuration
-
-Main config:
-
-```text
-~/.tokenage/config.yaml
-```
-
-Minimal server and database config:
-
-```yaml
-models:
-  gpt-5.4:
-    cost:
-      input: 2.5
-      output: 15.0
-      cacheRead: 0.25
-
-server:
-  host: 127.0.0.1
-  api_port: 4001
-
-db:
-  path: ~/.tokenage/usage.db
-```
-
-To use PostgreSQL or MySQL instead of SQLite, set `db.url`:
-
-```yaml
-db:
-  url: postgresql+psycopg://user:password@db-host:5432/tokenage?sslmode=require
-```
-
-`tokenage server start` merges missing defaults from `src/config/config.example.yaml` into your user config without overwriting existing values.
-
-Optional Prometheus metrics use a separate, unauthenticated listener. Set
-`metrics.enabled: true` and `metrics.port` in the server config; the host defaults
-to loopback. Never publish or proxy this port. After enabling, disabling, or
-changing the metrics bind, do a full restart: `tokenage server stop`
-then `tokenage server start` (brief outage). `tokenage server restart` refuses
-SIGHUP when the running bind differs or is unknown. For a private interface,
-set `metrics.allowed_hosts` to the node IP or MagicDNS name used by the scraper.
-See the [metrics setup](docker/README.md#prometheus-metrics)
-for same-host and container scrapers.
-
-### Environment variables
-
-| Variable | Effect |
-| --- | --- |
-| `TOKENAGE_HOME` | Tracker home (default `~/.tokenage`). |
-| `TOKENAGE_CONFIG` | Server config file path (default `$TOKENAGE_HOME/config.yaml`). |
-| `TOKENAGE_DB_URL` | Database URL, overriding `db.url`. |
-| `TOKENAGE_QUEUE_URL` | Queue URL, overriding `queue.url`. |
-| `TOKENAGE_API_PORT` | API listen port, overriding `server.api_port`. |
-| `TOKENAGE_API_HOST` | API bind host, overriding `server.host`. |
-| `TOKENAGE_ROOT` | Run this checkout instead of the installed client and server clone. |
-| `TOKENAGE_BIN_DIR` | Where the launcher is installed (default `~/.local/bin`). |
-| `TOKENAGE_SERVER` | Server URL for `tokenage login` without `--server`, and a preset URL for `install.sh`. |
-| `TOKENAGE_YES` | `1` accepts every prompt's default (`install.sh --yes`). |
-| `TOKENAGE_NO_PROMPT` | `1` accepts client prompt defaults. |
-| `TOKENAGE_BRANCH` | Branch `install.sh` clones for the server (default `main`). |
-| `TOKENAGE_SKIP_LOGIN` | `1` makes `install.sh` run `setup` instead of signing in. |
-| `TOKENAGE_API_URL` | API URL for the Vite dev server (see [Dashboard](#dashboard)). |
-
-## Point clients at the proxy
-
-The proxy runs in the client service (`tokenage client start`), not in the server. It binds to `127.0.0.1` only and is configured in `~/.tokenage/client.yaml` (kept mode `0600`; keys are literal). Without a `proxy:` section there is no proxy.
-
-```yaml
-proxy:
-  port: 4000              # optional
-  providers:
-    my-provider:
-      base_url: https://api.example.com/v1
-      api_key: sk-...
-      models: [gpt-5.4]
-    anthropic:
-      base_url: https://api.anthropic.com/v1
-      api_key: sk-ant-...
-      auth_scheme: x-api-key   # default is bearer
-      enabled: true            # default
-      models: [claude-sonnet-4-6]
-```
-
-After editing, run `tokenage client restart`. `tokenage status`, `tokenage client status` and `tokenage client start` print the proxy URL, or `proxy failed: <reason>`. An explicit `port` is bound or fails; without one the proxy reuses its last port, else tries 4000 and scans upward. The default is `http://127.0.0.1:4000`, but read the real URL from `tokenage status`.
-
-For OpenAI-compatible clients:
-
-```bash
-export OPENAI_BASE_URL=http://127.0.0.1:4000/v1
-```
-
-For Anthropic-compatible clients:
-
-```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:4000
-```
-
-The client's own API key is ignored: the proxy injects the provider's `api_key` upstream as `Authorization: Bearer <key>`, or `x-api-key: <key>` with `auth_scheme: x-api-key` (e.g. `api.anthropic.com`). The client must still send its own `anthropic-version` header (real Anthropic clients like Claude Code always do; the proxy passes it through unchanged and does not set a default).
-
-For each model call the client posts a metadata-only usage report (model, token counts, timings; no prompts, responses or keys) to the server's `POST /ingest/v1/usage` with this device's ingest token. It makes a single attempt and drops the report on failure; the server prices it. This works the same whether the server is on this machine or elsewhere.
-
-Supported proxy paths include:
-
-- `/v1/chat/completions`
-- `/v1/responses`
-- `/v1/messages`
-
-For streamed responses, the proxy records TTFT as time until the first upstream chunk arrives.
-
-## Tracking coverage
-
-| Metric | Claude Code | Codex | OpenCode / Kilo Code | Direct proxy |
-| --- | --- | --- | --- | --- |
-| Input tokens | OTLP | OTLP | Plugin OTLP | Response usage |
-| Output tokens | OTLP | OTLP | Plugin OTLP | Response usage |
-| Cached tokens read | OTLP | OTLP | Plugin OTLP | Response usage |
-| Cached tokens write | OTLP | Not available | Plugin OTLP | Not available |
-| Reasoning tokens | Not available | OTLP | Plugin OTLP | Response usage |
-| Tool tokens | Not available | OTLP | Not available | Not available |
-| Prompt length | OTLP | OTLP | Plugin OTLP | Not available |
-| Latency | OTLP | OTLP | Plugin OTLP | Proxy timing |
-| TTFT | Not available | OTLP | Plugin OTLP | Streaming only |
-| Session ID | OTLP | OTLP | Plugin OTLP | Not available |
-
-TTFT is an operational signal, not a billing-grade metric. Each agent exposes different timing data.
-
-OpenCode and Kilo Code tracking is provided by local plugins (`plugins/opencode` and `plugins/kilo`) that emit one OTLP log record for each completed assistant message. `tokenage setup` registers each built plugin (when `opencode` or `kilo` is installed) with the local OTLP logs endpoint, using `client/agents/`.
-
-The OpenCode plugin serves both OpenCode 1 and OpenCode 2 from one build: the default export carries a v1 `server()` (message events) and a v2 `setup()` (the `session.step.*` and `session.tool.*` event stream). It is registered as the built directory (`plugins/opencode/dist`) under `plugin`, which both versions load; OpenCode 2 rejects a file path there. Re-running `tokenage setup` migrates an older `dist/index.js` entry.
-
-## API
-
-Useful local endpoints:
-
-```bash
-curl http://127.0.0.1:4001/usage?limit=20
-curl http://127.0.0.1:4001/usage/summary
-curl http://127.0.0.1:4001/usage/daily
-curl http://127.0.0.1:4001/usage/high-watermark
-```
-
-Device status and agent wiring live on the client, not the API:
-
-```bash
-tokenage status --json
-```
-
-Query params for `/usage`: `limit`, `offset`, `provider`, `model`, `since`, `until`.
-
-Query params for `/usage/daily`: `since`, `until`, `provider`, `model`, `granularity`, `tz_offset`.
 
 ## Development
+<details>
+<summary><b>Development setup</b></summary>
 
-Install/start backend services:
+```sh
+git clone https://github.com/Haannbboo/tokenage && cd tokenage
+uv venv --python 3.13
+uv pip install -r src/pyproject.toml --extra dev
+npm ci --prefix frontend
 
-```bash
-TOKENAGE_ROOT="$PWD" tokenage server start
-```
+# Run an isolated server with auto-reload on free ports
+src/scripts/dev/dev-start.sh
 
-Run backend tests:
-
-```bash
+# Tests
 uv run python -m pytest -q
+cd frontend && npm test
 ```
 
-If `uv` is unavailable but the bootstrap-created virtualenv exists, use `./.venv/bin/python -m pytest -q` as a fallback.
-
-Run frontend tests and build:
-
-```bash
-cd frontend
-npm test
-npm run build
-```
-
-Optional bootstrap smoke test:
-
-```bash
-bash src/scripts/dev/smoke-bootstrap-container.sh
-```
-
-That check runs `src/scripts/bootstrap.sh` in a fresh Docker or Apple `container` environment. It is not part of normal user setup.
-
-## Privacy and security notes
-
-- `tokenage` is intended to run locally.
-- Usage is stored in `~/.tokenage/usage.db` by default.
-- If you configure `db.url`, usage data is written to that database instead.
-- The proxy listens on loopback only and replaces the client's credentials with the provider key from `client.yaml`; the client's own credential headers are never forwarded upstream. Provider keys stay on your machine; only usage metadata goes to the server.
-- OTLP payloads are emitted by the agents themselves; review agent telemetry settings if you need strict metadata control.
-
-## Contributing
-
-Issues and PRs are welcome. Good contributions usually include:
-
-- a clear bug report or product problem
-- a small, testable change
-- backend tests with `pytest` when changing Python behavior
-- frontend tests under `frontend/tests/` when changing dashboard behavior
-- updated docs when commands, setup, or behavior changes
-
-Please keep examples consistent: plain agent invocations should use `tokenage codex` or `tokenage claude`; reserve `--` for cases where `tokenage` flags are present.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
-
-### Session projects
-
-The Sessions page groups tokens, cost and session counts by project and lets you
-filter sessions by name. Claude Code and Codex use a local SessionStart hook;
-OpenCode (v1/v2) and Kilo use the tokenage plugin. Run `tokenage setup` to install
-these integrations. In Codex, open `/hooks` and review/trust the tokenage
-SessionStart hook once before it can run.
-
-Only the project **name** is sent: Git checkout/worktree names are resolved
-locally, with the working folder name as fallback. Paths, transcripts and hook
-payloads are never spooled or sent. The first accepted name stays with the
-session. Existing sessions are not backfilled; an unassigned session can acquire
-a name when resumed. Proxy-only usage has no session association.
-
-Reports wait in a private, bounded spool for the client service (up to 1,000
-files, retained for 24 hours). Signed-out hooks skip reporting; a different
-server/device credential discards the previous login's backlog. For remote
-OpenCode hosts, run the client service on that host too.
+</details>

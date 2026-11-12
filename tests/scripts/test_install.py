@@ -636,6 +636,7 @@ def _run_in_terminal(
     *args: str,
     shell: tuple[str, ...] = ("/bin/sh",),
     expected_returncode: int | None = None,
+    timeout: float = 30,
 ) -> bytes:
     """Run the installer as `curl | sh` does: stdin is the script, a tty is there.
 
@@ -661,7 +662,7 @@ def _run_in_terminal(
     steps = [(b"", typed)] if isinstance(typed, bytes) else list(typed)
     output = bytearray()
     seen = 0  # only output after the last marker can satisfy the next step
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + timeout
     status = None
     while time.monotonic() < deadline:
         if steps and (found := output.find(steps[0][0], seen)) >= 0:
@@ -678,8 +679,9 @@ def _run_in_terminal(
             status = child_status
             break
     else:
-        os.kill(pid, 9)
+        os.killpg(pid, 9)
         os.waitpid(pid, 0)
+        os.close(terminal)
         raise AssertionError(f"installer did not finish; output: {bytes(output)!r}")
     os.close(terminal)
     if status is None:
@@ -1117,20 +1119,77 @@ def test_numbered_prompt_cancels_on_eof(tmp_path, question, shell):
     assert not (home / ".tokenage/current").exists()
 
 
+@pytest.mark.parametrize("question", ["component", "server"])
 @pytest.mark.parametrize("shell", [("dash",), ("bash", "--posix"), ("busybox", "sh")])
-def test_numbered_prompt_ctrl_c_exits_130(tmp_path, shell):
+@pytest.mark.parametrize("traced", [False, True], ids=["untraced", "strace"])
+def test_numbered_prompt_ctrl_c_exits_130(tmp_path, question, shell, traced):
     executable = shutil.which(shell[0])
     if executable is None:
         pytest.skip(f"{shell[0]} is not installed")
-    _, env = _both_fixture(tmp_path)
+    command = (executable, *shell[1:])
+    if traced:
+        strace = shutil.which("strace")
+        if strace is None:
+            pytest.skip("strace is not installed")
+        # Delay terminal open setup under tracing so SIGINT lands before the
+        # read blocks. Plain tracing can still miss this window on fast hosts;
+        # the old parent read then hangs even with its INT trap installed.
+        command = (
+            strace,
+            "-f",
+            "-o",
+            str(tmp_path / "trace"),
+            "-e",
+            "inject=openat:delay_enter=1ms",
+            *command,
+        )
+    home, env = _both_fixture(tmp_path)
+    args = ("--client",) if question == "server" else ()
+    marker = b"Server URL [" if question == "server" else b"> "
     output = _run_in_terminal(
         INSTALLER,
         env,
-        [(b"> ", b"\x03")],
-        shell=(executable, *shell[1:]),
+        [(marker, b"\x03")],
+        *args,
+        shell=command,
         expected_returncode=130,
+        timeout=5,
     )
     assert b"Installing:" not in output
+    assert not (home / ".tokenage/current").exists()
+
+
+@pytest.mark.parametrize("shell", [("dash",), ("bash", "--posix"), ("busybox", "sh")])
+def test_numbered_prompt_reader_sigint_exits_130(tmp_path, shell):
+    executable = shutil.which(shell[0])
+    if executable is None:
+        pytest.skip(f"{shell[0]} is not installed")
+    home, env = _both_fixture(tmp_path)
+    script = tmp_path / "reader-sigint.sh"
+    # Signal the reader and its helper, leaving the installer parent untouched
+    # so its INT trap cannot mask a wrong mapping to the EOF error path.
+    # Bash propagates SIGINT only when the foreground helper also dies of it.
+    script.write_text(
+        INSTALLER.read_text().replace(
+            "    read -r answer </dev/tty || exit 1",
+            "    python3 -c 'import os, signal; "
+            "signal.signal(signal.SIGINT, signal.SIG_DFL); "
+            "os.kill(os.getppid(), signal.SIGINT); "
+            "os.kill(os.getpid(), signal.SIGINT)'\n"
+            "    read -r answer </dev/tty || exit 1",
+        )
+    )
+    output = _run_in_terminal(
+        script,
+        env,
+        b"",
+        shell=(executable, *shell[1:]),
+        expected_returncode=130,
+        timeout=5,
+    )
+    assert b"installer input closed" not in output
+    assert b"Installing:" not in output
+    assert not (home / ".tokenage/current").exists()
 
 
 @pytest.mark.parametrize(

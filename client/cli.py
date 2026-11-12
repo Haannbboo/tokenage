@@ -38,7 +38,7 @@ commands:
   logout [--keep-agents]    revoke this device and remove its credentials
   setup [--disable]         configure detected agents to report usage
   status [--json]           show this client's sign-in and agent configuration
-  update [--check]          update the client
+  update [--check|--list|--version X]  update the client
   client <command>          manage the background client service
                             (start, stop, restart, status, run)
   server <command>          manage the server, if installed
@@ -182,6 +182,16 @@ def _build_subcommand(name: str) -> argparse.ArgumentParser:
             action="store_true",
             help="show the latest client and update availability",
         )
+        target = parser.add_mutually_exclusive_group()
+        target.add_argument(
+            "--version", help="install a specific client version (including downgrades)"
+        )
+        target.add_argument(
+            "--list",
+            dest="list_versions",
+            action="store_true",
+            help="list client releases; pick and install with a terminal",
+        )
         parser.add_argument(
             "--dry-run", action="store_true", help="print the planned commands"
         )
@@ -275,6 +285,8 @@ def _run_subcommand(name: str, argv: list[str]) -> int:
         return update.run_update(
             check=args.check,
             dry_run=args.dry_run,
+            version=args.version,
+            list_versions=args.list_versions,
         )
     if name == "client":
         from client import service

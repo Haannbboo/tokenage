@@ -11,6 +11,14 @@ import os
 import sys
 
 
+def is_terminal(stream) -> bool:
+    """Missing and closed streams cannot accept interactive input."""
+    try:
+        return stream is not None and not stream.closed and stream.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
 def interactive(*, yes: bool = False) -> bool:
     return (
         not yes
@@ -18,8 +26,8 @@ def interactive(*, yes: bool = False) -> bool:
             os.environ.get(name, "").lower() in {"1", "true", "yes"}
             for name in ("TOKENAGE_NO_PROMPT", "TOKENAGE_YES")
         )
-        and sys.stdin.isatty()
-        and sys.stdout.isatty()
+        and is_terminal(sys.stdin)
+        and is_terminal(sys.stdout)
     )
 
 

@@ -76,6 +76,17 @@ curl -fsSL https://YOUR_SERVER/install.sh | sh                                  
 如果预设了 server URL，就只安装 client。如果未预设 URL，就在本机安装两个组件。
 非交互运行 `--client` 时必须提供 server URL。
 
+安装指定版本的 client 时，传入 `--client-version X.Y.Z` 或设置
+`TOKENAGE_CLIENT_VERSION`。
+
+```bash
+curl -fsSL https://YOUR_SERVER/install.sh | sh -s -- --client-version 0.1.28
+```
+
+客户端发布标签（`client-vX.Y.Z`）从提供版本选择功能的 0.1.28 开始，
+不为更早的版本补建标签。同时安装两个组件时，
+指定版本只影响 client。
+
 Server 是 `~/.tokenage/src` 里的 git clone。Client 是 `~/.tokenage/versions` 下独立的
 snapshot 和 virtualenv，即使与 server 在同一台机器上也一样，两者只通过 HTTP 通信。
 两个都装就是先装 server，再装指向 `http://127.0.0.1:<api_port>` 的 client。
@@ -161,6 +172,8 @@ tokenage codex exec "say hello in one sentence"
 tokenage status
 tokenage setup
 tokenage update --check
+tokenage update --version 0.1.28  # 切换到指定版本，也可以降级
+tokenage update --list            # 列出可用版本，在交互终端中选择
 
 # 本地 server 不需要 Google 账户：在 server 本机即可使用 dashboard 和 `tokenage login`；
 # 其他机器的浏览器请在 server 上运行 `tokenage server login-link` 并打开输出的 URL。
@@ -168,6 +181,8 @@ tokenage update --check
 tokenage login --server https://app.example.com
 tokenage logout
 ```
+
+切换 client 版本时，共用的 launcher 也会替换为所选版本中的 launcher。
 
 只有在传 `tokenage` 自己的 flags 时才需要 `--`：
 

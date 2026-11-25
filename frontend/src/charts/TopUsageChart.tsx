@@ -2,7 +2,7 @@ import { appendModels } from '../modelFilter'
 import { useState, useMemo, useEffect, useRef } from 'react'
 import type { Theme } from '../theme'
 import type { UsageSummary } from '../types'
-import { formatModelName, formatProviderName, getModelIcon, getProviderIcon, getSourceIcon, modelColor, providerColor, sourceColor, nameColor, netThroughput, getTimezoneOffset, resolveTimezone } from '../utils'
+import { formatModelName, formatProviderName, getModelIcon, getProviderIcon, getSourceDisplayName, getSourceIcon, modelColor, providerColor, sourceColor, nameColor, netThroughput, getTimezoneOffset, resolveTimezone } from '../utils'
 import { useApp } from '../contexts/AppContext'
 import { HorizontalBarChart } from './HorizontalBarChart'
 import type { BarItem, Metric } from './HorizontalBarChart'
@@ -263,6 +263,7 @@ export function TopUsageChart({
       const cacheCreation = row.cache_creation_tokens ?? 0
       return {
         name,
+        label: getSourceDisplayName(name),
         icon: getSourceIcon(name),
         color: sourceColor(name),
         tokens,

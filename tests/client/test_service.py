@@ -91,7 +91,7 @@ api_key = "super-secret"
 
     payload = service.health_payload()
 
-    assert len(payload["agents"]) == 4
+    assert len(payload["agents"]) == 5
     assert _counts(payload) == (2, 1)
     assert payload["agents"]["claude"]["expected_endpoint"] == ENDPOINT
 
@@ -214,7 +214,7 @@ def test_health_payload_round_trips_the_protocol_model(device_home: Path) -> Non
 def test_health_handles_missing_agent_configs(device_home: Path) -> None:
     payload = service.health_payload()
 
-    assert len(payload["agents"]) == 4
+    assert len(payload["agents"]) == 5
     assert _counts(payload) == (0, 0)
     for agent in payload["agents"].values():
         assert agent["configured"] is False

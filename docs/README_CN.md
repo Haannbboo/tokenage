@@ -318,18 +318,20 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:4000
 
 ## Tracking 覆盖范围
 
-| 指标 | Claude Code | Codex | OpenCode / Kilo Code | Direct proxy |
-| --- | --- | --- | --- | --- |
-| Input tokens | OTLP | OTLP | Plugin OTLP | Response usage |
-| Output tokens | OTLP | OTLP | Plugin OTLP | Response usage |
-| Cached tokens read | OTLP | OTLP | Plugin OTLP | Response usage |
-| Cached tokens write | OTLP | 不可用 | Plugin OTLP | 不可用 |
-| Reasoning tokens | 不可用 | OTLP | Plugin OTLP | Response usage |
-| Tool tokens | 不可用 | OTLP | 不可用 | 不可用 |
-| Prompt length | OTLP | OTLP | Plugin OTLP | 不可用 |
-| Latency | OTLP | OTLP | Plugin OTLP | Proxy timing |
-| TTFT | 不可用 | OTLP | Plugin OTLP | Streaming only |
-| Session ID | OTLP | OTLP | Plugin OTLP | 不可用 |
+| 指标 | Claude Code | Codex | OpenCode / Kilo Code | Antigravity | Direct proxy |
+| --- | --- | --- | --- | --- | --- |
+| Input tokens | OTLP | OTLP | Plugin OTLP | Plugin OTLP | Response usage |
+| Output tokens | OTLP | OTLP | Plugin OTLP | Plugin OTLP | Response usage |
+| Cached tokens read | OTLP | OTLP | Plugin OTLP | Plugin OTLP | Response usage |
+| Cached tokens write | OTLP | 不可用 | Plugin OTLP | 未上报 | 不可用 |
+| Reasoning tokens | 不可用 | OTLP | Plugin OTLP | 未上报 | Response usage |
+| Tool tokens | 不可用 | OTLP | 不可用 | 未上报 | 不可用 |
+| Prompt length | OTLP | OTLP | Plugin OTLP | 未上报 | 不可用 |
+| Latency | OTLP | OTLP | Plugin OTLP | Hook 计时（仅调用工具的步骤） | Proxy timing |
+| TTFT | 不可用 | OTLP | Plugin OTLP | 未上报 | Streaming only |
+| Session ID | OTLP | OTLP | Plugin OTLP | Plugin OTLP | 不可用 |
+
+Antigravity 每轮结束后上报用量，支持费用估算、项目、工具调用及耗时。推理强度取自模型后缀，失败请求未上报。
 
 TTFT 是运维参考指标，不是 billing-grade 指标。每个 Agent 暴露的 timing 数据不一样。
 

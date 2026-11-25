@@ -65,8 +65,13 @@ it('toggles the URL drawer with click, Enter and Space, and restores focus after
 })
 it('supports project deep links and recent session navigation', async () => {
   fixture()
+  state.data.projects[0].agents = { agy: 1 }
+  state.detail.recent_sessions[0].client_source = 'agy'
   const view = open('/projects?project=orchard')
   expect(screen.getByRole('dialog')).toBeTruthy()
+  expect(screen.getByRole('img', { name: 'Antigravity: 1' })).toBeTruthy()
+  expect(screen.getByTitle('Antigravity').textContent).toBe('Antigravity')
+  expect(view.container.querySelector('.project-recent-table img')?.getAttribute('src')).toBe('/models/google-antigravity.png')
   expect(screen.getByRole('link', { name: 'Open in Sessions →' }).getAttribute('href')).toBe('/sessions?project=orchard&range=30d')
   fireEvent.click(view.container.querySelector('.project-recent-table tbody tr')!)
   await waitFor(() => expect(screen.getByText('Sessions destination')).toBeTruthy())

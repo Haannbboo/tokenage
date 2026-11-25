@@ -81,8 +81,40 @@ def _read_report(path: Path) -> SpoolReport:
         return SpoolReport.model_validate_json(stream.read(MAX_BYTES + 1))
 
 
+def _post(server: str, token: str, batch: list) -> bool:
+    """True when the server answered and a retry could not change the answer."""
+    try:
+        response = httpx.post(
+            f"{server.rstrip('/')}/ingest/v1/events",
+            headers={"x-tokenage-token": token},
+            json={"events": [r.event().model_dump(mode="json") for _, _, r in batch]},
+            timeout=5.0,
+        )
+    except httpx.HTTPError:
+        return False
+    if response.status_code == 422 and len(batch) > 1:
+        # One event this server cannot parse (a newer agent, say) fails the
+        # whole request: send each alone so the others are not lost with it.
+        for item in batch:
+            if not _post(server, token, [item]):
+                return False
+        return True
+    # Auth, timeouts, rate limits and unavailable service remain retryable.
+    if 200 <= response.status_code < 300 or (
+        400 <= response.status_code < 500
+        and response.status_code not in {401, 403, 408, 429}
+    ):
+        for _, path, _ in batch:
+            path.unlink(missing_ok=True)
+        return True
+    return False
+
+
 def drain_once() -> bool:
-    """One bounded request; True on success, False requests backoff."""
+    """Send a bounded batch, retrying items individually on a batch 422.
+
+    True on success, False requests backoff.
+    """
     identity = _identity()
     directory = spool_dir()
     if identity is None or not directory.is_dir() or directory.is_symlink():
@@ -110,24 +142,7 @@ def drain_once() -> bool:
     batch = sorted(reports, key=lambda item: (item[0], item[1].name))[:BATCH_SIZE]
     if not batch:
         return True
-    try:
-        response = httpx.post(
-            f"{server.rstrip('/')}/ingest/v1/events",
-            headers={"x-tokenage-token": token},
-            json={"events": [r.event().model_dump(mode="json") for _, _, r in batch]},
-            timeout=5.0,
-        )
-    except httpx.HTTPError:
-        return False
-    # Auth, timeouts, rate limits and unavailable service remain retryable.
-    if 200 <= response.status_code < 300 or (
-        400 <= response.status_code < 500
-        and response.status_code not in {401, 403, 408, 429}
-    ):
-        for _, path, _ in batch:
-            path.unlink(missing_ok=True)
-        return True
-    return False
+    return _post(server, token, batch)
 
 
 def start_drain() -> threading.Event:

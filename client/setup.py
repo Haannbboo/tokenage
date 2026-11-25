@@ -22,6 +22,7 @@ import yaml
 from client.agents import (
     DONE,
     SKIPPED,
+    agy,
     claude,
     codex,
     kilo,
@@ -30,7 +31,13 @@ from client.agents import (
 )
 from client.paths import PACKAGE_ROOT, client_config_path, display_endpoint
 
-AGENT_MODULES = {"codex": codex, "claude": claude, "opencode": opencode, "kilo": kilo}
+AGENT_MODULES = {
+    "codex": codex,
+    "claude": claude,
+    "opencode": opencode,
+    "kilo": kilo,
+    "agy": agy,
+}
 
 PLUGIN_SUFFIX = {name: plugin.tracker_suffixes(name) for name in ("opencode", "kilo")}
 
@@ -47,6 +54,7 @@ def agent_targets() -> dict[str, str]:
         "claude": str(home / ".claude" / "settings.json"),
         "opencode": str(PACKAGE_ROOT),
         "kilo": str(PACKAGE_ROOT),
+        "agy": str(home / ".gemini" / "config" / "plugins" / "tokenage"),
     }
 
 
@@ -66,6 +74,15 @@ def agent_path(name: str) -> str | None:
         # which a background service never sources.
         fallback = Path.home() / ".kilo" / "bin" / "kilo"
         path = str(fallback) if fallback.exists() else None
+    if path is None and name == "agy":
+        # Same for Antigravity's installer locations.
+        home = Path.home()
+        for fallback in (
+            home / ".local" / "bin" / "agy",
+            home / ".gemini" / "antigravity-cli" / "bin" / "agy",
+        ):
+            if fallback.exists():
+                return str(fallback)
     return path
 
 
@@ -266,6 +283,14 @@ def read_agent_states(expected_endpoint: str | None) -> dict[str, dict[str, Any]
     for name, path in plugin_configs().items():
         endpoint = _plugin_endpoint(_read_json(path), PLUGIN_SUFFIX[name])
         states[name] = _health(endpoint is not None, endpoint, expected_endpoint)
+    # The plugin holds no endpoint: its hooks spool for whichever collector the
+    # client is signed in to, so an enabled plugin is wired for this one.
+    agy_configured = agy.state(agent_targets()["agy"])
+    states["agy"] = _health(
+        agy_configured,
+        expected_endpoint if agy_configured else None,
+        expected_endpoint,
+    )
     saved = chosen_agents()
     if saved is not None:
         for name in installed_agents():
@@ -350,7 +375,12 @@ EXIT_NOT_SIGNED_IN = 3
 def run_setup(*, disable: bool) -> int:
     """``tokenage setup`` — wire, or un-wire, the agents found on this machine."""
     if disable:
-        from client.event_spool import clear_spool
+        from client.event_spool import clear_spool as clear_events
+        from client.otlp_spool import clear_spool as clear_otlp
+
+        def clear_spool() -> None:
+            clear_events()
+            clear_otlp()
 
     agents = installed_agents()
     if not agents:

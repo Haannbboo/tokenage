@@ -465,6 +465,10 @@ def run_foreground() -> int:
 
     event_stop = start_drain()
 
+    from client.otlp_spool import start_drain as start_otlp_drain
+
+    otlp_stop = start_otlp_drain()
+
     from client.retirement import start_cleanup
 
     cleanup_stop = None
@@ -486,6 +490,7 @@ def run_foreground() -> int:
                 time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
     finally:
         event_stop.set()
+        otlp_stop.set()
         if cleanup_stop is not None:
             cleanup_stop.set()
         proxy.stop()

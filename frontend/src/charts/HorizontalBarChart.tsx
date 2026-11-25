@@ -7,6 +7,7 @@ import { t } from '../i18n/index.ts'
 
 export type BarItem = {
   name: string
+  label?: string
   id?: string
   icon: React.ReactNode
   tokens: number
@@ -115,7 +116,7 @@ export function RankTooltipBody({ item, metric, rank, share, mono = false, toolB
     <TooltipTitle>
       {toolBadge ? <ToolBadge name={item.name} /> : <>
         <span className="rank-mark">{item.icon ?? <i style={{ background: item.color }} />}</span>
-        <span className={mono ? 'mono' : undefined}>{item.name}</span>
+        <span className={mono ? 'mono' : undefined}>{item.label ?? item.name}</span>
       </>}
       <small>#{rank}</small>
     </TooltipTitle>
@@ -245,7 +246,7 @@ export function HorizontalBarChart({
                 <span className="rank-n">{index + 1}</span>
                 {!toolBadges && <span className="rank-mark">{s.icon ?? <i style={{ background: s.color }} />}</span>}
                 <span className="rank-name">
-                  {toolBadges ? <ToolBadge name={s.name} /> : <span className={mono ? 'mono' : undefined}>{s.name}</span>}
+                  {toolBadges ? <ToolBadge name={s.name} /> : <span className={mono ? 'mono' : undefined}>{s.label ?? s.name}</span>}
                   {sub && <small>{sub}</small>}
                 </span>
                 <span className="rank-value">

@@ -549,6 +549,9 @@ def logout(*, keep_agents: bool) -> int:
         print("Not signed in; nothing to remove.", file=sys.stderr)
         return 1
     print(f"  removed   {credentials_path()}")
+    from client.otlp_spool import clear_spool
+
+    clear_spool()  # Usage spooled under this login is never sent after it.
     if keep_agents:
         endpoint = (
             collector

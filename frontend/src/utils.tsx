@@ -370,7 +370,7 @@ export function providerColor(provider: string) {
 
 const SOURCE_HUES: [string, string][] = [
   ['claude', 'orange'], ['codex', 'slate'], ['gemini', 'blue'], ['opencode', 'green'], ['open-code', 'green'],
-  ['kilo', 'cyan'], ['hermes', 'purple'], ['proxy', 'violet'],
+  ['kilo', 'cyan'], ['hermes', 'purple'], ['agy', 'indigo'], ['proxy', 'violet'],
 ]
 
 export function sourceColor(source: string) {
@@ -512,6 +512,7 @@ export function getSourceIcon(source: string, theme: Theme = getTheme()) {
   const s = source.toLowerCase()
   const style = ICON_STYLE
   const dark = theme === 'dark'
+  if (s === 'agy') return <img src="/models/google-antigravity.png" alt="" style={style} />
   if (s.includes('hermes')) return <img src={dark ? '/models/hermesagent-dark.png' : '/models/hermesagent.svg'} alt="" style={style} />
   if (s.includes('codex')) return <img src="/models/codex-color.svg" alt="" style={style} />
   if (s.includes('opencode') || s.includes('open-code')) return <img src={dark ? '/models/opencode-dark.png' : '/models/opencode.svg'} alt="" style={style} />
@@ -524,9 +525,12 @@ export function shortSessionId(id: string) {
   return id.length > 8 ? `${id.slice(0, 8)}…` : id
 }
 
+export function getSourceDisplayName(source: string) {
+  return source.toLowerCase() === 'agy' ? 'Antigravity' : source
+}
+
 export function sessionAgentName(source: string | null | undefined) {
-  const raw = source || 'unknown'
-  return raw
+  return getSourceDisplayName(source || 'unknown')
     .split(/[-_\s]+/)
     .filter(Boolean)
     .map(part => part.charAt(0).toUpperCase() + part.slice(1))
@@ -539,7 +543,7 @@ export function getAgentDisplayName(name: string) {
   if (normalized.includes('codesonline') || normalized.includes('codex')) return 'Codex'
   if (normalized.includes('opencode')) return 'OpenCode'
   if (normalized.includes('kilo')) return 'Kilo Code'
-  return name
+  return getSourceDisplayName(name)
 }
 
 export function getSetupAgentKey(name: string) {

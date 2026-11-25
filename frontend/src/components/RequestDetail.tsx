@@ -3,7 +3,7 @@ import { ClickToCopy } from './CopyButton'
 import { RequestTimeline, type TimelineTool } from './RequestTimeline'
 import { t } from '../i18n'
 import { EffortLevel } from '../effort'
-import { formatLatency, formatNumber, value, getSourceIcon } from '../utils'
+import { formatLatency, formatNumber, value, getSourceDisplayName, getSourceIcon } from '../utils'
 
 export function RequestDetail({ row, toolCalls, showToast }: { row: UsageRow; toolCalls: TimelineTool[] | null; showToast: (message: string) => void }) {
   return (
@@ -30,7 +30,7 @@ export function RequestDetail({ row, toolCalls, showToast }: { row: UsageRow; to
                             <span className="detail-label">{t('Source')}</span>
                             <span className="detail-value entity-badge" style={{ width: 'fit-content' }}>
                               {getSourceIcon(row.client_source ?? '')}
-                              {row.client_source || '—'}
+                              {getSourceDisplayName(row.client_source || '—')}
                             </span>
                           </div>
                           {row.effort && (

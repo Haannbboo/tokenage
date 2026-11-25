@@ -32,6 +32,7 @@ it('tells a new user to install the client from the configured server, not the b
   open()
   expect(await screen.findByText('curl -fsSL https://tokens.example.com/install.sh | sh')).toBeTruthy()
   expect(screen.getByText('No usage tracked yet')).toBeTruthy()
+  expect(screen.getByText('Antigravity').textContent).toBe('Antigravity agy')
   expect(screen.getByText('Waiting for your first request. This page checks automatically.')).toBeTruthy()
   expect(screen.getByRole('link', { name: 'Self-hosting with Docker' }).getAttribute('href'))
     .toBe('https://github.com/Haannbboo/tokenage/blob/main/docker/README.md')

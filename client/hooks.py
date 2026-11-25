@@ -19,11 +19,15 @@ if TYPE_CHECKING:
 
 def hook_command(agent: str) -> str:
     """Use the installed launcher, which survives replacement of snapshots."""
+    return f"{launcher_command()} hook session-start --agent {agent}"
+
+
+def launcher_command() -> str:
     launcher = (
         Path(os.environ.get("TOKENAGE_BIN_DIR", "~/.local/bin")).expanduser()
         / "tokenage"
     )
-    return f"{shlex.quote(str(launcher))} hook session-start --agent {agent}"
+    return shlex.quote(str(launcher))
 
 
 def _owned_hook(command: object, agent: str) -> bool:
@@ -88,6 +92,11 @@ def update_session_hooks(settings: dict, agent: str, *, remove: bool = False) ->
 def project_name(cwd: str) -> str:
     from protocol.events import sanitize_project
 
+    return sanitize_project(raw_project_name(cwd)[:100])
+
+
+def raw_project_name(cwd: str) -> str:
+    """The unsanitized name. Standard library only: client.agy_hooks shares it."""
     folder = Path(cwd)
     if not folder.is_absolute() or not folder.is_dir():
         raise ValueError("invalid working directory")
@@ -120,7 +129,7 @@ def project_name(cwd: str) -> str:
                 name = common.parent.name if common.name == ".git" else top.name
     except (OSError, UnicodeError, subprocess.SubprocessError):
         pass
-    return sanitize_project(name[:100])
+    return name
 
 
 def session_start(agent: Agent, payload: dict) -> None:
@@ -141,6 +150,11 @@ def session_start(agent: Agent, payload: dict) -> None:
 
 
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["agy"]:
+        # Antigravity reads hook stdout, so it has its own entry point.
+        from client.agy_hooks import main as agy_main
+
+        return agy_main(argv[1:])
     parser = argparse.ArgumentParser(
         prog="tokenage hook",
         description="Locally spool a session's project name; no network or stdout.",

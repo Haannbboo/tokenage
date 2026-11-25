@@ -1,6 +1,8 @@
 import asyncio
+import hashlib
 import json
 import logging
+import re
 import uuid
 from collections.abc import Iterator, MutableMapping
 from contextlib import asynccontextmanager
@@ -32,8 +34,14 @@ CODEX_EVENT = "codex.sse_event"
 CODEX_API_REQUEST_EVENT = "codex.api_request"
 OPENCODE_EVENT = "opencode.message_completed"
 KILO_EVENT = "kilo.message_completed"
+AGY_EVENT = "agy.invocation_completed"
+AGY_TOOL_DECISION_EVENT = "agy.tool_decision"
+AGY_MAX_BUFFERED_TOOLS = 100
+AGY_MAX_ID_LEN = 256
+_AGY_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:@+\-]{1,128}")  # Matches the client hook.
 CODEX_SERVICE_NAMES = {"codex_cli_rs", "codex_exec", "codex-app-server"}
 KILO_SERVICE_NAMES = {"kilo"}
+AGY_SERVICE_NAMES = {"agy"}
 RETIRED_SERVICE_NAMES = {"gemini-cli"}
 
 # State cache for merging Codex events: conversation key -> {duration_ms, ttft_ms, start_ms}
@@ -47,6 +55,9 @@ codex_state = SharedMapping("otlp:codex")
 _claude_tool_buffer = SharedMapping("otlp:claude-tools")
 _codex_tool_buffer = SharedMapping("otlp:codex-tools")
 _opencode_tool_buffer = SharedMapping("otlp:opencode-tools")  # keyed by message.id
+_agy_tool_buffer = SharedMapping(
+    "otlp:agy-tools"
+)  # keyed by user, device, session and message
 
 # Most recent Claude usage row per prompt.id: prompt_key -> (usage_id, session_id, ts_ms).
 # Claude's prompt.id spans a whole user turn, so this lets a trailing tool_result
@@ -156,6 +167,7 @@ def _buffer_tool_call(
     tool_use_id: str,
     ts: int,
     duration_ms: int | None = None,
+    max_entries: int | None = None,
 ) -> None:
     """Buffer a tool call, merging on tool_use_id so redelivery can't double count."""
     if not key:
@@ -169,6 +181,8 @@ def _buffer_tool_call(
                 entry["duration_ms"] = duration_ms
             buffer[key] = entries
             return
+    if max_entries is not None and len(entries) >= max_entries:
+        return
     entries.append(
         {
             "tool_name": tool_name,
@@ -563,6 +577,97 @@ def _parse_opencode_record(
             )
 
 
+def _valid_agy_identifier(value: object) -> bool:
+    return isinstance(value, str) and _AGY_IDENTIFIER.fullmatch(value) is not None
+
+
+def _agy_tool_key(
+    identifier: str, user_id: str, device_id: str, session_id: str | None
+) -> str:
+    return json.dumps([user_id, device_id, session_id, identifier])
+
+
+def _split_agy_model_effort(raw_model: str) -> tuple[str, str | None]:
+    base_model, _, suffix = raw_model.rpartition("-")
+    effort = suffix.lower()
+    if not base_model or effort not in {"low", "medium", "high", "xhigh", "max"}:
+        return raw_model, None
+    if effort == "max" and base_model.lower().endswith(("codex", "qwen")):
+        return raw_model, None
+    return base_model, effort
+
+
+def _parse_agy_record(
+    record: dict,
+    attrs: list,
+    session_id: str | None,
+    *,
+    user_id: str,
+    device_id: str,
+    session: Session,
+) -> None:
+    def token_count(key: str) -> int | None:
+        value = _attr(attrs, key)
+        return int(value) if value is not None else None
+
+    raw_input = token_count("input_tokens")
+    cached = token_count("cache_read_tokens")
+    completion = token_count("output_tokens")
+    cache_creation = token_count("cache_creation_tokens")
+    message_id = _attr(attrs, "message.id")
+    tool_calls: list[dict] = []
+    if isinstance(message_id, str) and 0 < len(message_id) <= AGY_MAX_ID_LEN:
+        # Clear buffered decisions even for a duplicate or tokenless completion.
+        tool_calls = _agy_tool_buffer.pop(
+            _agy_tool_key(message_id, user_id, device_id, session_id), []
+        )
+    if all(count is None for count in (raw_input, cached, completion, cache_creation)):
+        return
+    raw_model = _attr(attrs, "model")
+    model, effort = _split_agy_model_effort(
+        raw_model if _valid_agy_identifier(raw_model) else "agy-unknown"
+    )
+    # Antigravity reports disjoint token counts. Pricing expects prompt tokens
+    # to include cache reads so it can subtract them to recover uncached input.
+    prompt_tokens = (raw_input or 0) + (cached or 0)
+    usage = record_usage(
+        ts=_usage_ts_us(record),
+        provider="google",
+        model=model,
+        user_id=user_id,
+        device_id=device_id,
+        client_source="agy",
+        session_id=session_id,
+        endpoint="otlp",
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion,
+        cached_tokens=cached,
+        cache_creation_tokens=cache_creation,
+        total_tokens=prompt_tokens + (completion or 0) + (cache_creation or 0),
+        latency_ms=_optional_int_attr(attrs, "duration_ms"),
+        status=_optional_int_attr(attrs, "http.response.status_code"),
+        effort=effort,
+        session=session,
+    )
+    if usage:
+        for tool_info in tool_calls:
+            tool_key = _agy_tool_key(
+                tool_info["tool_use_id"], user_id, device_id, session_id
+            )
+            tool_id = hashlib.sha256(tool_key.encode()).hexdigest()
+            record_tool_call(
+                tool_use_id=f"agy:{tool_id}",
+                usage_id=usage.id,
+                session_id=usage.session_id,
+                tool_name=tool_info["tool_name"],
+                duration_ms=tool_info["duration_ms"],
+                user_id=user_id,
+                client_source="agy",
+                ts=tool_info["ts"],
+                session=session,
+            )
+
+
 def _codex_state_for(attrs: list, user_id: str) -> tuple[str, dict] | None:
     """Return the key and mutable per-conversation Codex state.
 
@@ -828,6 +933,29 @@ def _parse_log_record(
                 ts=ts_attr,
                 duration_ms=_optional_int_attr(attrs, "duration_ms"),
             )
+    elif event_name == AGY_TOOL_DECISION_EVENT and service_name in AGY_SERVICE_NAMES:
+        message_id = _attr(attrs, "message.id")
+        tool_name = _attr(attrs, "tool_name")
+        call_id = _attr(attrs, "call_id")
+        if (
+            isinstance(message_id, str)
+            and 0 < len(message_id) <= AGY_MAX_ID_LEN
+            and _valid_agy_identifier(tool_name)
+            and (
+                call_id is None
+                or isinstance(call_id, str)
+                and len(call_id) <= AGY_MAX_ID_LEN
+            )
+        ):
+            _buffer_tool_call(
+                _agy_tool_buffer,
+                _agy_tool_key(message_id, user_id, device_id, usage_session_id),
+                tool_name=tool_name,
+                tool_use_id=call_id or _fallback_tool_use_id(),
+                ts=ts_attr,
+                duration_ms=_optional_int_attr(attrs, "duration_ms"),
+                max_entries=AGY_MAX_BUFFERED_TOOLS,
+            )
 
     if (
         event_name == CLAUDE_EVENT or event_name == "api_request"
@@ -904,6 +1032,15 @@ def _parse_log_record(
             attrs,
             usage_session_id or "",
             client_source="kilo",
+            user_id=user_id,
+            device_id=device_id,
+            session=session,
+        )
+    elif event_name == AGY_EVENT and service_name in AGY_SERVICE_NAMES:
+        _parse_agy_record(
+            record,
+            attrs,
+            usage_session_id,
             user_id=user_id,
             device_id=device_id,
             session=session,
@@ -989,7 +1126,7 @@ _QUEUE_ATTRIBUTES = frozenset(
 )
 
 
-def _queue_record(record: dict) -> dict:
+def _queue_record(record: dict, service_name: str = "") -> dict:
     attributes = []
     for attr in record.get("attributes", []):
         if attr.get("key") not in _QUEUE_ATTRIBUTES:
@@ -1001,6 +1138,12 @@ def _queue_record(record: dict) -> dict:
             if kind in raw_value
             and isinstance(raw_value[kind], (str, int, float, bool))
         }
+        if (
+            service_name in AGY_SERVICE_NAMES
+            and attr["key"] in {"model", "tool_name"}
+            and not _valid_agy_identifier(value.get("stringValue"))
+        ):
+            continue
         attributes.append({"key": attr["key"], "value": value})
     return {
         "timeUnixNano": record.get("timeUnixNano", "0"),
@@ -1053,7 +1196,7 @@ async def receive_logs(request: Request):
                 {
                     "kind": "otlp",
                     "device_id": device_id,
-                    "record": (_queue_record(record), service, session),
+                    "record": (_queue_record(record, service), service, session),
                 }
                 for record, service, session in records
             ],

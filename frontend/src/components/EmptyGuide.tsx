@@ -6,7 +6,7 @@ import type { UsageRow } from '../types'
 
 const GITHUB_INSTALL = 'curl -fsSL https://raw.githubusercontent.com/Haannbboo/tokenage/main/install.sh | sh'
 const DOCKER_README = 'https://github.com/Haannbboo/tokenage/blob/main/docker/README.md'
-const AGENTS = ['claude', 'codex', 'opencode', 'kilo']
+const AGENTS = ['claude', 'codex', 'opencode', 'kilo', 'agy']
 
 function parseServerUrl(serverUrl: string) {
   try {

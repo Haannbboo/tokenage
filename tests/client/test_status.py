@@ -216,7 +216,7 @@ def test_known_collector_with_missing_agent_config_is_unhealthy(
     assert codex["endpoint_matches"] is False
 
 
-@pytest.mark.parametrize("agent", ["claude", "codex", "opencode", "kilo"])
+@pytest.mark.parametrize("agent", ["claude", "codex", "opencode", "kilo", "agy"])
 @pytest.mark.parametrize("as_json", [False, True])
 @pytest.mark.parametrize(
     "endpoint",
@@ -260,6 +260,11 @@ def test_status_redacts_collector_secrets_in_all_output(
             tracker_home / ".codex" / "config.toml",
             f'[otel.exporter.otlp-http]\nendpoint = "{endpoint}"\n',
         )
+    elif agent == "agy":
+        from client.agents import agy
+
+        assert agy.configure(setup.agent_targets()["agy"], endpoint) == 0
+        capsys.readouterr()
     else:
         _write(
             tracker_home / ".config" / agent / "opencode.json",
@@ -274,11 +279,16 @@ def test_status_redacts_collector_secrets_in_all_output(
                 }
             ),
         )
-    assert status.run_status(as_json=as_json) == 1
+    # The Antigravity plugin stores no endpoint: it cannot be on the wrong one.
+    assert status.run_status(as_json=as_json) == (0 if agent == "agy" else 1)
     output = capsys.readouterr()
     assert "secret" not in output.out + output.err
-    assert "collector.example" in output.out
     state = setup.read_agent_states("https://tracker.example/v1/logs")[agent]
+    if agent == "agy":
+        assert state["configured_endpoint"] == "https://tracker.example/v1/logs"
+        assert state["status"] == "ready"
+        return
+    assert "collector.example" in output.out
     assert state["configured_endpoint"] == endpoint
     assert state["endpoint_matches"] is False
 

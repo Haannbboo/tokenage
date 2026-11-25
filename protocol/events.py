@@ -24,7 +24,7 @@ def sanitize_project(value: str) -> str:
 
 
 ProjectName = Annotated[str, AfterValidator(sanitize_project)]
-Agent = Literal["claude", "codex", "opencode", "kilo"]
+Agent = Literal["claude", "codex", "opencode", "kilo", "agy"]
 SessionId = Annotated[
     str, Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9_.:-]+$")
 ]

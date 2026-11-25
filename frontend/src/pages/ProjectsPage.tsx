@@ -7,7 +7,7 @@ import { useProjectsData } from '../hooks/useProjectsData'
 import { costPerSession, detailSearch, projectAverageLatency, projectSessionsUrl, projectStackMaximum, projectBuckets } from '../projectState'
 import { t } from '../i18n'
 import { EffortMixSection } from '../effort'
-import { cacheHitRate, distinctColors, formatCost, formatNumber, formatTime, getAgentDisplayName, getSourceIcon, modelColor, PALETTE, resolveTimezone, shortSessionId, sourceColor, toolColor } from '../utils'
+import { cacheHitRate, distinctColors, formatCost, formatNumber, formatTime, getAgentDisplayName, getSourceDisplayName, getSourceIcon, modelColor, PALETTE, resolveTimezone, shortSessionId, sourceColor, toolColor } from '../utils'
 import type { DateRangeOption, ProjectDetail, ProjectSummary } from '../types'
 
 function AgentMix({ agents }: { agents: Record<string, number> }) {
@@ -19,7 +19,7 @@ function ProjectBars({ title, values, colorOf, money = false, agents = false }: 
   const max = Math.max(1, ...rows.map(([, value]) => value))
   const colors = distinctColors(rows.map(([key]) => key), colorOf)
   return <section className="project-breakdown"><h3>{t(title)}</h3>{rows.length ? rows.map(([key, value]) => <div className="project-hbar" key={key}>
-    <span title={key}>{agents ? getAgentDisplayName(key) || t('Unknown') : key}</span><b>{money ? formatCost(value, 2) : formatNumber(value)}</b>
+    <span title={agents ? getSourceDisplayName(key) : key}>{agents ? getAgentDisplayName(key) || t('Unknown') : key}</span><b>{money ? formatCost(value, 2) : formatNumber(value)}</b>
     <div><i style={{ width: `${value / max * 100}%`, background: colors.get(key) }} /></div>
   </div>) : <p className="project-muted">{t('None')}</p>}</section>
 }

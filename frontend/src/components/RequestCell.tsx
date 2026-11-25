@@ -3,7 +3,7 @@ import type { UsageRow } from '../types'
 import type { RequestLogColumnId } from '../hooks/useRequestLogColumns'
 import { t } from '../i18n'
 import { EffortLevel } from '../effort'
-import { formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime, value, getProviderIcon, getModelIcon, getSourceIcon, shortSessionId, ToolBadge, formatModelName, formatProviderName, modelColor, providerColor } from '../utils'
+import { formatCost, formatLatency, formatNumber, formatRate, formatSpeed, formatTime, value, getProviderIcon, getModelIcon, getSourceDisplayName, getSourceIcon, shortSessionId, ToolBadge, formatModelName, formatProviderName, modelColor, providerColor } from '../utils'
 
 type RequestCellOptions = { tz?: string; colWidths: { model: number; device: number }; hoveredSession: string | null; setSessionFilter: (id: string) => void; recalculatingId: string | null; handleRecalculateCost: (id: string) => Promise<void>; stopToolPropagation?: boolean }
 
@@ -41,22 +41,26 @@ export function renderRequestCell(row: UsageRow, columnId: RequestLogColumnId | 
             </div>
           </td>
         )
-      case 'source':
+      case 'source': {
+        const source = row.client_source || ''
+        const label = getSourceDisplayName(source)
+        const iconLabel = label !== source ? label : undefined
         return (
-          <td style={{ padding: '8px', paddingLeft: '16px' }}>
+          <td title={iconLabel} aria-label={iconLabel} style={{ padding: '8px', paddingLeft: '16px' }}>
             <div style={{
               display: 'inline-flex',
               alignItems: 'center',
               maxWidth: '120px',
             }}>
-              {getSourceIcon(row.client_source ?? '') ?? (
+              {getSourceIcon(source) ?? (
                 <span className="entity-badge">
-                  {row.client_source || '—'}
+                  {label || '—'}
                 </span>
               )}
             </div>
           </td>
         )
+      }
       case 'device':
         return (
           <td style={{ color: row.device_name ? 'var(--text-secondary)' : 'var(--text-muted)', maxWidth: colWidths.device, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.device_name ?? undefined}>
